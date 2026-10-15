@@ -337,3 +337,31 @@ def test_default_loader_is_lazy(monkeypatch, qapp):
     monkeypatch.setitem(sys.modules, "spuza.preview", None)
     pf = Prefetcher(Catalog([]))  # constructing must not import spuza.preview
     pf.shutdown()
+
+
+def test_failed_index_is_not_retried_inside_window(make_pf):
+    calls = []
+
+    def flaky(path, max_side):
+        calls.append(Path(path).name)
+        if Path(path).name == "5.jpg":
+            raise RuntimeError("corrupt")
+        return Image.new("RGB", (4, 4)), None
+
+    cat, pf = make_pf(loader=flaky, ahead=3, behind=1)
+    errs = []
+    pf.failed.connect(lambda i, m: errs.append(i))
+    cat.go(5)
+    for _ in range(4):
+        pf.update(5)
+        assert pump(lambda: all(pf.cached(i) is not None for i in (4, 6, 7, 8)))
+        pump(lambda: False, timeout=0.05)
+    pf.update(6)
+    pump(lambda: False, timeout=0.1)
+    assert calls.count("5.jpg") == 1 and errs == [5]
+    assert pf.failed_reason(5) == "corrupt" and pf.failed_reason(6) is None
+    pf.update(15)  # 5 leaves the window: forgotten, a fresh visit may retry once
+    assert pf.failed_reason(5) is None
+    assert pump(lambda: pf.cached(15) is not None)
+    pf.update(5)
+    assert pump(lambda: calls.count("5.jpg") == 2)

@@ -248,6 +248,7 @@ class Prefetcher(QObject):
         self._cache: dict[int, QImage] = {}
         self._info: dict[int, object] = {}
         self._inflight: set[int] = set()
+        self._failed: dict[int, str] = {}
         self._window = (0, -1)
         self._closed = False
         self._lock = threading.Lock()
@@ -270,6 +271,9 @@ class Prefetcher(QObject):
     def info(self, i: int):
         return self._info.get(i)
 
+    def failed_reason(self, i: int) -> str | None:
+        return self._failed.get(i)
+
     def ready_ahead(self) -> int:
         n, i = 0, self.catalog.index + 1
         while i in self._cache:
@@ -286,13 +290,15 @@ class Prefetcher(QObject):
         for k in [k for k in self._cache if not lo <= k <= hi]:
             del self._cache[k]
             self._info.pop(k, None)
+        for k in [k for k in self._failed if not lo <= k <= hi]:
+            del self._failed[k]  # left the window: a fresh visit may retry once
         order = [i] + list(range(i + 1, hi + 1)) + list(range(i - 1, lo - 1, -1))
         for k in order:
             if lo <= k <= hi:
                 self._start(k)
 
     def _start(self, k: int) -> None:
-        if k in self._cache or k in self._inflight or self._closed:
+        if k in self._cache or k in self._inflight or k in self._failed or self._closed:
             return
         self._inflight.add(k)
         self.pool.start(_Job(self, k, self.catalog.pictures[k].primary))
@@ -306,6 +312,7 @@ class Prefetcher(QObject):
         if skipped:
             self._start(i)  # skipped while outside the window, but it is wanted again now
         elif err:
+            self._failed[i] = err
             self.failed.emit(i, err)
         else:
             self._cache[i] = img
