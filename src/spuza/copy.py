@@ -258,9 +258,7 @@ def run_copy(
         f"{human_size(res.bytes_copied)} written" + (", CANCELLED" if res.cancelled else "")
     )
     try:
-        res.log_path = _write_log(Path(log_path), "
-".join(lines) + "
-")
+        res.log_path = _write_log(Path(log_path), "\n".join(lines) + "\n")
     except OSError:
         res.log_path = None
     return res
