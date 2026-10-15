@@ -148,10 +148,10 @@ class MainWindow(QMainWindow):
             self.buttons[name] = b
             self.toolbar.addWidget(b)
         b = self.buttons
-        b["back"].clicked.connect(lambda: self.step(-1))
-        b["next"].clicked.connect(lambda: self.step(1))
-        b["mark"].clicked.connect(lambda: self.toggle_mark())
-        b["zoom"].clicked.connect(lambda: self.viewer.toggle_zoom())
+        b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
+        b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
+        b["mark"].clicked.connect(lambda: self._control(Qt.Key_Space, self.toggle_mark))
+        b["zoom"].clicked.connect(lambda: self._control(Qt.Key_Z, self.viewer.toggle_zoom))
         b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
         b["review"].clicked.connect(lambda: self.toggle_review())
         b["copy"].clicked.connect(lambda: self.open_copy())
@@ -206,6 +206,9 @@ class MainWindow(QMainWindow):
             self._moved()
 
     def go_to(self, i: int) -> None:
+        if self.stack.currentIndex() == 1:
+            self._select_in_review(i)  # review stays up; the viewer's picture does not move
+            return
         if len(self.catalog) and i != self.catalog.index:
             self.catalog.go(i)
             self._moved()
@@ -335,6 +338,7 @@ class MainWindow(QMainWindow):
         self.review.refresh()
         self.stack.setCurrentIndex(1)
         self.buttons["review"].setChecked(True)
+        self.buttons["fullscreen"].setEnabled(False)  # full-bleed is inert in review: show it
         self._focus_review()
 
     def _review_target(self):
@@ -349,6 +353,23 @@ class MainWindow(QMainWindow):
     def _focus_review(self) -> None:
         self._review_target().setFocus()
 
+    def _select_in_review(self, i: int) -> None:
+        """A picture was picked while review is shown: select it in the grid if it is marked, else ignore."""
+        r = self.review
+        row = r._row_of(i) if hasattr(r, "_row_of") else -1
+        if row >= 0:
+            r.view.setCurrentIndex(r.model.index(row, 0))
+        self._focus_review()
+
+    def _control(self, key, viewer_action) -> None:
+        """A toolbar control: in review it does what the same key does on the grid, else drives the viewer."""
+        if self.stack.currentIndex() == 1:
+            self.forward_to_review(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
+            self.buttons["zoom"].setChecked(self.viewer.zoomed)  # the viewer did not move
+            self.refresh_marks()
+        else:
+            viewer_action()
+
     def forward_to_review(self, e) -> None:
         """Hand a key event to the review grid (focus may have landed on the window)."""
         self._forwarding = True
@@ -362,6 +383,7 @@ class MainWindow(QMainWindow):
     def close_review(self) -> None:
         self.stack.setCurrentIndex(0)
         self.buttons["review"].setChecked(False)
+        self.buttons["fullscreen"].setEnabled(True)
         self.refresh_marks()
         self.setFocus()
 
