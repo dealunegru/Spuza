@@ -12,6 +12,13 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# One QApplication for the whole session, made before any test module is imported: a bare
+# QGuiApplication made first (test_catalog's fixture) cannot be upgraded and the first widget then
+# kills the process. A QApplication serves the QGuiApplication tests too, in any file order or subset.
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+QAPP = QApplication.instance() or QApplication([])
+
 REAL_SET = Path(os.environ.get("SPUZA_TEST_SET", "E:/tmp/spuza-test/jes"))
 RAF_NAME = "20250704_X-Pro2_9268.RAF"
 DNG_NAMES = [f"R00451{n}.DNG" for n in range(46, 51)]
