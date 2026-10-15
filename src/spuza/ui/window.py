@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self.is_bleed = False
         self._was_maximized = False
         self._t_key: float | None = None
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # can hold focus, so close_review can restore it
         self.setWindowTitle(f"Spuza — {self.root}")
         self.resize(1280, 800)
 
@@ -325,11 +326,23 @@ class MainWindow(QMainWindow):
         self.review.refresh()
         self.stack.setCurrentIndex(1)
         self.buttons["review"].setChecked(True)
+        self._focus_review()
+
+    def _focus_review(self) -> None:
+        """Keys must reach the grid: focus its zoom or list view (the widgets that handle them)."""
+        r = self.review
+        for name in ("zoom_view", "view"):
+            w = getattr(r, name, None)
+            if w is not None and w.isVisibleTo(r):
+                w.setFocus()
+                return
+        r.setFocus()
 
     def close_review(self) -> None:
         self.stack.setCurrentIndex(0)
         self.buttons["review"].setChecked(False)
         self.refresh_marks()
+        self.setFocus()
 
     def _review_open_index(self, i: int) -> None:
         self.catalog.go(i)
@@ -363,6 +376,9 @@ class MainWindow(QMainWindow):
                             | Qt.KeyboardModifier.MetaModifier):
             return super().keyPressEvent(e)
         k = e.key()
+        if self.stack.currentIndex() == 1 and k in (Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_J,
+                                                    Qt.Key_Left, Qt.Key_K, Qt.Key_Z):
+            return  # review page: these belong to the grid, never the hidden viewer
         if k in (Qt.Key_Space, Qt.Key_M):
             self.toggle_mark()
         elif k in (Qt.Key_Right, Qt.Key_J):
