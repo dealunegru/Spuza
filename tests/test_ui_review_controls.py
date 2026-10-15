@@ -204,3 +204,28 @@ def test_mark_button_disabled_and_unlit_with_no_selection(w):
     assert not mark.isEnabled() and not mark.isChecked()
     w.review.closed.emit()
     assert mark.isEnabled()
+
+
+def test_grid_unmark_button_updates_window(w):
+    in_review(w)
+    w.buttons["next"].click()  # grid row 1 = picture 3
+    assert w.review.selected_index() == 3
+    w.review.unmark_button.click()
+    assert not w.catalog.is_marked(3) and w.catalog.index == 0
+    assert w.lbl_marked.text().startswith("2 marked")
+    assert w.sidebar.counts()["Marked"] == 2
+    mark = w.buttons["mark"]
+    assert w.review.selected_index() == 5 and mark.isEnabled() and mark.isChecked()
+    for _ in range(2):  # unmark the rest: the empty page leaves nothing to act on
+        w.review.unmark_button.click()
+    assert w.review.selected_index() is None
+    assert w.catalog.marked_count == 0 and w.lbl_marked.text().startswith("0 marked")
+    assert not mark.isEnabled() and not mark.isChecked()
+
+
+def test_grid_zoom_button_opens_grid_zoom_not_viewer_zoom(w):
+    in_review(w)
+    w.buttons["next"].click()
+    w.review.zoom_button.click()
+    assert w.review.stack.currentIndex() == 2
+    assert not w.viewer.zoomed and not w.buttons["zoom"].isChecked()
