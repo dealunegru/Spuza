@@ -7,6 +7,7 @@ overwrite; the tests fail against such an implementation.
 import os
 from pathlib import Path
 
+import spuza.copy as copy_module
 from spuza.copy import plan_copy, run_copy
 
 
@@ -24,19 +25,42 @@ def _check(res, a, dest):
     assert not list(dest.glob("*.spuza-part"))
 
 
-def test_dst_created_during_failed_link_not_replaced(tmp_path, monkeypatch):
+def test_dst_appears_after_check_before_publish_not_replaced(tmp_path, monkeypatch):
+    """The other writer wins at the last moment: after any existence check, right before the
+    publishing call (os.rename in a check-then-rename publish, the O_EXCL open otherwise)."""
     a = _src(tmp_path)
     dest = tmp_path / "d"
     plan = plan_copy([[a]], dest)
-    monkeypatch.setattr(os, "rename", os.replace)
+    target = dest / "r.RAF"
+    fired = []
 
-    def racy_link(src, dst, *args, **kw):
+    def theirs_arrive():
+        if not fired:
+            fired.append(1)
+            target.write_bytes(b"theirs")
+
+    real_replace = os.replace
+
+    def racy_rename(src, dst, *args, **kw):
         if Path(dst).name == "r.RAF":
-            Path(dst).write_bytes(b"theirs")  # the other writer wins the race
+            theirs_arrive()
+        return real_replace(src, dst)  # POSIX rename semantics: silently replaces
+
+    real_open = open
+
+    def racy_open(file, mode="r", *args, **kw):
+        if "x" in mode and Path(file).name == "r.RAF":
+            theirs_arrive()
+        return real_open(file, mode, *args, **kw)
+
+    def no_link(*args, **kw):
         raise OSError("no hard links on this volume")
 
-    monkeypatch.setattr(os, "link", racy_link)
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(os, "rename", racy_rename)
+    monkeypatch.setattr(copy_module, "open", racy_open, raising=False)
     _check(run_copy(plan), a, dest)
+    assert fired
 
 
 def test_lexists_check_blind_to_dst_not_replaced(tmp_path, monkeypatch):
