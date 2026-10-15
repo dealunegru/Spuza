@@ -80,7 +80,7 @@ def test_space_in_review_unmarks_grid_selection():
         assert not w.catalog.is_marked(1) and w.catalog.is_marked(3)
         assert w.lbl_marked.text().startswith("1 marked")
         assert w.sidebar.counts()["Marked"] == 1
-        assert not w.buttons["mark"].isChecked()  # viewer picture 0 was never marked: untouched
+        assert w.buttons["mark"].isChecked()  # lit for the grid selection (3, marked), not viewer picture 0
         assert not w.catalog.is_marked(0)
     finally:
         w.close()

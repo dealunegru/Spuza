@@ -157,3 +157,30 @@ def test_after_review_closes_every_control_drives_the_viewer(w):
     assert w.is_bleed
     QTest.keyClick(w, Qt.Key_Escape)
     assert not w.is_bleed
+
+
+def test_mark_button_is_lit_for_what_is_shown(w):
+    mark = w.buttons["mark"]
+    assert not mark.isChecked()  # viewer picture 0 is unmarked
+    in_review(w)
+    assert mark.isEnabled() and mark.isChecked()  # grid selection 1 is marked
+    w.buttons["next"].click()
+    assert mark.isChecked()  # every grid row is marked
+    w.buttons["zoom"].click()  # the grid's zoom page: same rule
+    assert w.review.stack.currentIndex() == 2 and mark.isEnabled() and mark.isChecked()
+    mark.click()  # unmarks the zoomed picture
+    assert mark.isChecked() == (w.review.selected_index() is not None)
+    w.review.closed.emit()
+    assert mark.isEnabled() and not mark.isChecked()  # follows viewer picture 0 again
+
+
+def test_mark_button_disabled_and_unlit_with_no_selection(w):
+    for i in (1, 3, 5):
+        w.catalog.set_mark(i, False)
+    w.refresh_marks()
+    w.buttons["review"].click()  # the empty page
+    mark = w.buttons["mark"]
+    assert w.review.selected_index() is None
+    assert not mark.isEnabled() and not mark.isChecked()
+    w.review.closed.emit()
+    assert mark.isEnabled()

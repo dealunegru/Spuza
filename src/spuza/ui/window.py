@@ -22,6 +22,7 @@ from spuza.ui.inspector import Inspector
 from spuza.ui.viewer import Viewer
 
 DOT = "·"
+_NOT_IN_REVIEW = object()
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
                        Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
 # (name, label, key cap shown on the button, checkable)
@@ -250,7 +251,13 @@ class MainWindow(QMainWindow):
         cat, i = self.catalog, self.catalog.index
         pic = cat.current
         marked = bool(pic) and cat.is_marked(i)
-        self.buttons["mark"].setChecked(marked)
+        shown = self._review_shown_index()
+        if shown is _NOT_IN_REVIEW:
+            self.buttons["mark"].setEnabled(True)
+            self.buttons["mark"].setChecked(marked)
+        else:  # lit for what the user sees: the grid selection (or its zoom page)
+            self.buttons["mark"].setEnabled(shown is not None)
+            self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
         self.sidebar.set_counts(len(cat), cat.marked_count)
         if pic is not None:
             self.viewer.strip.set_state(cat.position_text(), marked, pic.stem, pic.kind, cat.marked_count)
@@ -339,6 +346,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1)
         self.buttons["review"].setChecked(True)
         self.buttons["fullscreen"].setEnabled(False)  # full-bleed is inert in review: show it
+        self.refresh_marks()
         self._focus_review()
 
     def _review_target(self):
@@ -352,6 +360,18 @@ class MainWindow(QMainWindow):
 
     def _focus_review(self) -> None:
         self._review_target().setFocus()
+
+    def _review_shown_index(self):
+        """Catalog index the review page shows (selection, or the zoom page's picture), None when
+        nothing is selected, _NOT_IN_REVIEW when the viewer is what is shown (or the review is a fake)."""
+        r = self.review
+        if self.stack.currentIndex() != 1 or not hasattr(r, "selected_index"):
+            return _NOT_IN_REVIEW
+        if getattr(getattr(r, "stack", None), "currentIndex", lambda: 0)() == 2:
+            z = getattr(r, "_zoom_index", None)
+            if z is not None:
+                return z
+        return r.selected_index()
 
     def _select_in_review(self, i: int) -> None:
         """A picture was picked while review is shown: select it in the grid if it is marked, else ignore."""
