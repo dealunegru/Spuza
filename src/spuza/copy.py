@@ -6,7 +6,6 @@ worker thread. The only file this module ever removes is its own half-written ``
 
 import os
 import shutil
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -139,17 +138,30 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path) -> CopyPlan:
 
 
 def _publish(tmp: Path, dst: Path) -> None:
-    """Move tmp onto dst, which must not exist; raises FileExistsError instead of overwriting."""
+    """Make tmp's bytes appear at dst, which must not exist; raises FileExistsError, never replaces."""
     try:
         os.link(tmp, dst)  # atomic and refuses to replace
     except FileExistsError:
         raise
     except OSError:
-        if sys.platform != "win32" and os.path.lexists(dst):
-            raise FileExistsError(str(dst)) from None
-        os.rename(tmp, dst)  # Windows rename refuses an existing target; no hard links on exFAT/FAT
-        return
-    os.unlink(tmp)
+        # No hard links (exFAT/FAT cards): stream into dst opened O_EXCL, so an existing dst is never
+        # replaced. If streaming fails, the half file under the final name is ours and is removed.
+        with open(dst, "xb") as fout:
+            try:
+                with open(tmp, "rb") as fin:
+                    shutil.copyfileobj(fin, fout, CHUNK)
+            except BaseException:
+                fout.close()
+                try:
+                    os.unlink(dst)
+                except OSError:
+                    pass
+                raise
+        shutil.copystat(tmp, dst)
+    try:
+        os.unlink(tmp)  # published already: a failure to tidy our temp is not a failed copy
+    except OSError:
+        pass
 
 
 def _free_name(dst: Path) -> Path:
@@ -246,10 +258,23 @@ def run_copy(
         f"{human_size(res.bytes_copied)} written" + (", CANCELLED" if res.cancelled else "")
     )
     try:
-        log_path = Path(log_path)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        res.log_path = log_path
+        res.log_path = _write_log(Path(log_path), "
+".join(lines) + "
+")
     except OSError:
         res.log_path = None
     return res
+
+
+def _write_log(path: Path, text: str) -> Path:
+    """Write text to a name that does not exist yet (path, else path-1, ...); never truncates."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for n in range(MAX_SUFFIX):
+        cand = path.with_name(_suffixed(path.name, n))
+        try:
+            with open(cand, "x", encoding="utf-8") as f:
+                f.write(text)
+            return cand
+        except FileExistsError:
+            continue
+    raise OSError(f"no free log name for {path.name}")

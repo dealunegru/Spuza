@@ -177,3 +177,58 @@ def test_free_space_and_human_size(tmp_path):
     assert human_size(1_200_000_000) == "1.2 GB"
     assert human_size(0) == "0 B"
     assert human_size(999) == "999 B"
+
+
+def _no_links(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no hard links on this volume")
+
+    monkeypatch.setattr(os, "link", boom)
+
+
+def test_no_hardlink_fallback_publishes(tmp_path, monkeypatch):
+    a = make(tmp_path / "s" / "f.RAF", b"fresh", mtime=1_500_000_000)
+    dest = tmp_path / "d"
+    plan = plan_copy([[a]], dest)
+    _no_links(monkeypatch)
+    res = run_copy(plan)
+    assert res.copied == [a] and (dest / "f.RAF").read_bytes() == b"fresh"
+    assert int((dest / "f.RAF").stat().st_mtime) == 1_500_000_000
+    assert not list(dest.glob("*.spuza-part"))
+
+
+def test_no_hardlink_fallback_never_replaces(tmp_path, monkeypatch):
+    a = make(tmp_path / "s" / "f.RAF", b"mine")
+    dest = tmp_path / "d"
+    plan = plan_copy([[a]], dest)
+    make(dest / "f.RAF", b"theirs")  # appears after planning
+    _no_links(monkeypatch)
+    res = run_copy(plan)
+    assert (dest / "f.RAF").read_bytes() == b"theirs"
+    assert (dest / "f-1.RAF").read_bytes() == b"mine" and res.copied == [a]
+    assert not list(dest.glob("*.spuza-part"))
+
+
+def test_unlink_failure_after_publish_is_not_a_failure(tmp_path, monkeypatch):
+    a = make(tmp_path / "s" / "f.RAF", b"data")
+    dest = tmp_path / "d"
+    plan = plan_copy([[a]], dest)
+    real = os.unlink
+
+    def flaky(p, *args, **kw):
+        if str(p).endswith(".spuza-part"):
+            raise PermissionError("locked")
+        return real(p, *args, **kw)
+
+    monkeypatch.setattr(os, "unlink", flaky)
+    res = run_copy(plan)
+    assert res.copied == [a] and not res.failed and (dest / "f.RAF").read_bytes() == b"data"
+
+
+def test_existing_log_never_truncated(tmp_path):
+    a = make(tmp_path / "s" / "a.RAF", b"aa")
+    mine = tmp_path / "my.log"
+    mine.write_text("precious", encoding="utf-8")
+    res = run_copy(plan_copy([[a]], tmp_path / "d"), log_path=mine)
+    assert mine.read_text(encoding="utf-8") == "precious"
+    assert res.log_path == tmp_path / "my-1.log" and "a.RAF" in res.log_path.read_text(encoding="utf-8")
