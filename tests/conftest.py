@@ -1,0 +1,25 @@
+"""Shared test setup.
+
+Qt runs headless everywhere (QT_QPA_PLATFORM=offscreen), so the suite passes on CI runners and on a
+desktop alike. The real camera files live outside the repo and are read-only; tests that need them
+skip when they are absent (CI has none). Set SPUZA_TEST_SET to point elsewhere.
+"""
+
+import os
+from pathlib import Path
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+REAL_SET = Path(os.environ.get("SPUZA_TEST_SET", "E:/tmp/spuza-test/jes"))
+RAF_NAME = "20250704_X-Pro2_9268.RAF"
+DNG_NAMES = [f"R00451{n}.DNG" for n in range(46, 51)]
+
+
+@pytest.fixture
+def real_set() -> Path:
+    """The read-only folder of real camera files; never write inside it."""
+    if not (REAL_SET / RAF_NAME).is_file():
+        pytest.skip(f"real test set not present at {REAL_SET}")
+    return REAL_SET

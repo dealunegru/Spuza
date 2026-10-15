@@ -1,0 +1,39 @@
+[project]
+name = "spuza"
+version = "0.1.0"
+description = "Fast photo culling: step through a card, mark, review, copy the marked pictures."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniel Mihaies" }]
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6-Essentials>=6.7",
+    "rawpy>=0.25",
+    "Pillow>=11",
+    "pillow-heif>=0.20",
+]
+
+[project.scripts]
+spuza = "spuza.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spuza"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+# The project gate (run from the repo root):
+#   uv run --project . ruff check --select F src tests && uv run --project . python -m pytest -q
