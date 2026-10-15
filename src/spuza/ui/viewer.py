@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 
-from PySide6.QtCore import QPointF, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtCore import QPointF, QTimer, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout,
                                QLabel, QWidget)
@@ -80,7 +80,15 @@ class BleedStrip(QFrame):
         for w in (self.dot, self.pos, self.name):
             lay.addWidget(w)
         lay.addStretch(1)
+        self.note = QLabel()
+        self.note.setStyleSheet("color: #ffd9a0; font-weight: 600;")
+        self.note.hide()
+        lay.addWidget(self.note)
+        lay.addSpacing(16)
         lay.addWidget(self.count)
+        self._note_timer = QTimer(self)  # single shot, one per message
+        self._note_timer.setSingleShot(True)
+        self._note_timer.timeout.connect(self.expire_note)
         self.marked = False
         self.hide()
 
@@ -91,6 +99,15 @@ class BleedStrip(QFrame):
         self.pos.setText(pos)
         self.name.setText(f"{name}  [{kind}]" if name else "")
         self.count.setText(f"{marked_count} marked")
+
+    def show_note(self, text: str, ms: int = 5000) -> None:
+        self.note.setText(text)
+        self.note.show()
+        self._note_timer.start(ms)
+
+    def expire_note(self) -> None:
+        self._note_timer.stop()
+        self.note.hide()
 
     def text(self) -> str:
         return f"{self.pos.text()}  {self.name.text()}  {self.count.text()}"

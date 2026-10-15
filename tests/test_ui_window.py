@@ -324,3 +324,18 @@ def test_theme_follows_scheme_switch(win):
         win.retheme()
         assert theme.current().dark is dark
         assert win.grab().width() > 0
+
+
+def test_message_in_bleed_shows_on_strip_and_expires(win):
+    key(win, Qt.Key_F)
+    key(win, Qt.Key_C)  # nothing marked
+    note = win.viewer.strip.note
+    assert not note.isHidden() and "marked" in note.text().lower()
+    win.viewer.strip.expire_note()  # what the single-shot timer does after 5 s
+    assert note.isHidden()
+
+
+def test_message_outside_bleed_goes_to_status_bar(win):
+    key(win, Qt.Key_C)
+    assert "marked" in win.statusBar().currentMessage().lower()
+    assert win.viewer.strip.note.isHidden()

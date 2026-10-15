@@ -278,7 +278,10 @@ class MainWindow(QMainWindow):
 
     def say(self, text: str) -> None:
         self.last_message = text
-        self.statusBar().showMessage(text, 5000)
+        if self.is_bleed:  # the status bar is hidden in full-bleed; use the strip
+            self.viewer.strip.show_note(text, 5000)
+        else:
+            self.statusBar().showMessage(text, 5000)
 
     # -- modes ------------------------------------------------------------------------------------
     def set_bleed(self, on: bool) -> None:
