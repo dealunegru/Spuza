@@ -143,3 +143,73 @@ def test_r_closes_review_and_empty_review_still_takes_esc():
         assert w.stack.currentIndex() == 0
     finally:
         w.close()
+
+
+def test_f_is_inert_in_review_and_keys_keep_working():
+    w = open_review()
+    try:
+        press(Qt.Key_F)
+        assert not w.is_bleed and w.stack.currentIndex() == 1
+        w.buttons["fullscreen"].click()  # the toolbar button is just as inert
+        assert not w.is_bleed and not w.buttons["fullscreen"].isChecked()
+        press(Qt.Key_Space)
+        assert not w.catalog.is_marked(1) and w.catalog.is_marked(3)
+    finally:
+        w.close()
+
+
+def test_window_forwards_review_keys_when_it_holds_focus():
+    w = open_review(marked=(1, 3, 5))
+    try:
+        w.setFocus()  # wherever focus lands, the window must pass the grid's keys on
+        assert QApplication.focusWidget() is w
+        press(Qt.Key_Right)
+        assert w.review.selected_index() == 3  # moved exactly one row: not handled twice
+        assert w.catalog.index == 0
+        w.setFocus()
+        press(Qt.Key_Space)
+        assert not w.catalog.is_marked(3) and w.catalog.marked_count == 2
+        w.setFocus()
+        press(Qt.Key_Return)
+        assert w.stack.currentIndex() == 0 and w.catalog.index in (1, 5)
+    finally:
+        w.close()
+
+
+def test_filmstrip_pick_during_review_keeps_grid_keys_alive():
+    w = open_review()
+    try:
+        w.filmstrip.picked.emit(4)
+        w.setFocus()
+        press(Qt.Key_Z)
+        assert w.review.stack.currentIndex() == 2 and w.stack.currentIndex() == 1
+        w.setFocus()
+        press(Qt.Key_Escape)  # leaves the grid's zoom only
+        assert w.review.stack.currentIndex() == 1 and w.stack.currentIndex() == 1
+        w.setFocus()
+        press(Qt.Key_Space)
+        assert not w.catalog.is_marked(1)
+    finally:
+        w.close()
+
+
+def test_esc_order_with_bleed_then_review():
+    w = make()
+    w.resize(1000, 700)
+    w.show()
+    w.activateWindow()
+    QTest.qWaitForWindowActive(w, 3000)
+    pump(lambda: w.viewer.has_image)
+    w.catalog.set_mark(1, True)
+    w.refresh_marks()
+    QTest.keyClick(w, Qt.Key_F)
+    assert w.is_bleed
+    QTest.keyClick(w, Qt.Key_R)
+    assert w.stack.currentIndex() == 1 and w.is_bleed
+    try:
+        press(Qt.Key_Escape)  # first Esc: review closes, bleed stays
+        assert w.stack.currentIndex() == 0 and w.is_bleed
+        press(Qt.Key_Escape)  # second: bleed ends
+        assert not w.is_bleed
+    finally:
+        w.close()

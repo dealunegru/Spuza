@@ -11,8 +11,8 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
+from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from spuza.copy import human_size
@@ -22,6 +22,8 @@ from spuza.ui.inspector import Inspector
 from spuza.ui.viewer import Viewer
 
 DOT = "·"
+GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
+                       Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
 # (name, label, key cap shown on the button, checkable)
 BUTTONS = [
     ("back", "Back", "←/K", False),
@@ -118,6 +120,7 @@ class MainWindow(QMainWindow):
         self._sheet = None
         self.last_message = ""
         self.is_bleed = False
+        self._forwarding = False
         self._was_maximized = False
         self._t_key: float | None = None
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # can hold focus, so close_review can restore it
@@ -206,6 +209,8 @@ class MainWindow(QMainWindow):
         if len(self.catalog) and i != self.catalog.index:
             self.catalog.go(i)
             self._moved()
+            if self.stack.currentIndex() == 1:
+                self._focus_review()
 
     def _moved(self) -> None:
         self._t_key = time.perf_counter()
@@ -286,7 +291,8 @@ class MainWindow(QMainWindow):
 
     # -- modes ------------------------------------------------------------------------------------
     def set_bleed(self, on: bool) -> None:
-        if on == self.is_bleed:
+        if on == self.is_bleed or (on and self.stack.currentIndex() == 1):
+            self.buttons["fullscreen"].setChecked(self.is_bleed)  # full-bleed is inert in review
             return
         self.is_bleed = on
         for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
@@ -298,7 +304,10 @@ class MainWindow(QMainWindow):
         else:
             self.showMaximized() if self._was_maximized else self.showNormal()
         self.buttons["fullscreen"].setChecked(on)
-        self.setFocus()
+        if self.stack.currentIndex() == 1:
+            self._focus_review()
+        else:
+            self.setFocus()
 
     def toggle_review(self) -> None:
         if self.stack.currentIndex() == 1:
@@ -328,15 +337,27 @@ class MainWindow(QMainWindow):
         self.buttons["review"].setChecked(True)
         self._focus_review()
 
-    def _focus_review(self) -> None:
-        """Keys must reach the grid: focus its zoom or list view (the widgets that handle them)."""
+    def _review_target(self):
+        """The widget of the review page that handles keys: its zoom or list view, else the page."""
         r = self.review
         for name in ("zoom_view", "view"):
             w = getattr(r, name, None)
             if w is not None and w.isVisibleTo(r):
-                w.setFocus()
-                return
-        r.setFocus()
+                return w
+        return r
+
+    def _focus_review(self) -> None:
+        self._review_target().setFocus()
+
+    def forward_to_review(self, e) -> None:
+        """Hand a key event to the review grid (focus may have landed on the window)."""
+        self._forwarding = True
+        try:
+            self._focus_review()
+            QApplication.sendEvent(self._review_target(), QKeyEvent(
+                e.type(), e.key(), e.modifiers(), e.text(), e.isAutoRepeat(), e.count()))
+        finally:
+            self._forwarding = False
 
     def close_review(self) -> None:
         self.stack.setCurrentIndex(0)
@@ -376,9 +397,13 @@ class MainWindow(QMainWindow):
                             | Qt.KeyboardModifier.MetaModifier):
             return super().keyPressEvent(e)
         k = e.key()
-        if self.stack.currentIndex() == 1 and k in (Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_J,
-                                                    Qt.Key_Left, Qt.Key_K, Qt.Key_Z):
-            return  # review page: these belong to the grid, never the hidden viewer
+        if self.stack.currentIndex() == 1:
+            if k in GRID_KEYS and not self._forwarding:
+                self.forward_to_review(e)  # the grid owns these; the hidden viewer never sees them
+                e.accept()
+                return
+            if k in GRID_KEYS and k != Qt.Key_Escape or k in (Qt.Key_J, Qt.Key_K):
+                return  # the grid ignored it (or a fake review did): never drive the hidden viewer
         if k in (Qt.Key_Space, Qt.Key_M):
             self.toggle_mark()
         elif k in (Qt.Key_Right, Qt.Key_J):
