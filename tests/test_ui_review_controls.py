@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QShortcut
+from PySide6.QtGui import QAction, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractButton
 
@@ -29,6 +29,7 @@ REVIEW_TABLE = {
     "fullscreen": "disabled", "review": "global", "copy": "global",
     "sidebar:All": "global", "sidebar:Marked": "global",
     "shortcut:F11": "disabled", "filmstrip": "grid",
+    "review:Unmark": "grid", "review:Zoom": "grid",
 }
 
 
@@ -68,15 +69,33 @@ def in_review(w):
     return w
 
 
+# Widgets that are Qt internals, not controls of ours. Anything else a window owns must be in the table.
+INTERNAL_BUTTONS = {"qt_toolbar_ext_button"}  # the toolbar's overflow chevron
+
+
+def _control_key(b, w):
+    name = b.objectName()
+    if name in INTERNAL_BUTTONS:
+        return None
+    if name.startswith("btn_"):
+        return name[4:]
+    if w.sidebar.isAncestorOf(b):
+        return f"sidebar:{b.text()}"
+    if w.review is not None and w.review.isAncestorOf(b):
+        return f"review:{b.text()}"  # the grid's own buttons: they act on the grid by construction
+    return f"{type(b).__name__}:{b.text() or name}"  # unknown: not in the table, so the test fails
+
+
 def test_table_covers_every_control(w):
-    found = {f"{b.objectName()[4:]}" for b in w.toolbar.findChildren(QAbstractButton)
-             if b.objectName().startswith("btn_")}
-    others = {b.objectName() for b in w.toolbar.findChildren(QAbstractButton)
-              if not b.objectName().startswith("btn_") and b.objectName() != "qt_toolbar_ext_button"}
-    assert not others, f"toolbar buttons without an object name / table row: {others}"
-    found |= {f"sidebar:{n}" for n in w.sidebar.row_names()}
+    in_review(w)  # opens the review page so its buttons exist
+    found = {"filmstrip"}
+    for b in w.findChildren(QAbstractButton):
+        k = _control_key(b, w)
+        if k is not None:
+            found.add(k)
     found |= {f"shortcut:{s.key().toString()}" for s in w.findChildren(QShortcut)}
-    found.add("filmstrip")
+    found |= {f"shortcut:{a.shortcut().toString()}" for a in w.findChildren(QAction)
+              if not a.shortcut().isEmpty()}
     assert found == set(REVIEW_TABLE), f"unlisted: {found - set(REVIEW_TABLE)}, stale: {set(REVIEW_TABLE) - found}"
 
 
@@ -137,6 +156,7 @@ def test_filmstrip_pick_selects_in_grid_when_marked_else_ignored(w):
     in_review(w)
     w.filmstrip.picked.emit(3)  # marked: the grid selects it, review stays, viewer picture unchanged
     assert w.stack.currentIndex() == 1 and w.review.selected_index() == 3 and w.catalog.index == 0
+    assert w.review.view.currentIndex().row() == 1  # rows are [1, 3, 5]: the right ROW is current
     w.filmstrip.picked.emit(4)  # not marked: nothing to select
     assert w.stack.currentIndex() == 1 and w.review.selected_index() == 3 and w.catalog.index == 0
 

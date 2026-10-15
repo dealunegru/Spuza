@@ -376,7 +376,7 @@ class MainWindow(QMainWindow):
     def _select_in_review(self, i: int) -> None:
         """A picture was picked while review is shown: select it in the grid if it is marked, else ignore."""
         r = self.review
-        row = r._row_of(i) if hasattr(r, "_row_of") else -1
+        row = r._row_of(i)  # no hasattr guard: if the sibling renames this, the pick must fail loudly
         if row >= 0:
             r.view.setCurrentIndex(r.model.index(row, 0))
         self._focus_review()
