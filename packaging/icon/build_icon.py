@@ -3,7 +3,7 @@
     uv run python packaging/icon/build_icon.py [--out DIR]
 
 Writes spuza.ico (Windows), spuza.icns (macOS) and spuza.png (runtime window icon) into DIR (default:
-packaging/icon for the ico/icns, src/spuza/assets for the png/ico copy). Swap spuza.svg for any plain SVG
+packaging/icon for the ico/icns, src/spuza/assets for the png copy). Swap spuza.svg for any plain SVG
 and rerun; the outputs are committed, so CI and PyInstaller never need the renderer.
 
 Renderer: resvg-py (dev dependency group). It is pure Rust with abi3 wheels for windows-latest
