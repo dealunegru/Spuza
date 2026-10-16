@@ -36,12 +36,12 @@ Build it here (Windows or Mac, any Python with uv):
 uv build
 ```
 
-That writes `dist/spuza-0.1.1-py3-none-any.whl` (about 40 KB, pure Python; the heavy parts,
+That writes `dist/spuza-0.1.2-py3-none-any.whl` (about 40 KB, pure Python; the heavy parts,
 PySide6 and rawpy, are fetched from PyPI at install time). Get the file onto the Mac
 (AirDrop, mail, USB), install `uv` as in 1, then:
 
 ```
-uv tool install --python 3.13 ~/Downloads/spuza-0.1.1-py3-none-any.whl
+uv tool install --python 3.13 ~/Downloads/spuza-0.1.2-py3-none-any.whl
 ```
 
 Update: send a new wheel and run the same line with `--force`.
