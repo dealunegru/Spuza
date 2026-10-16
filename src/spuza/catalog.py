@@ -80,7 +80,7 @@ def scan(root: Path) -> list[Picture]:
                         continue
                     groups.setdefault(stem.lower(), []).append((name, ext, st.st_size, st.st_mtime))
         except OSError:
-            continue
+            pass  # unreadable or failed mid-iteration: keep what was collected and pair it
         for members in groups.values():
             pictures.extend(_pair(d, members))
     pictures.sort(key=lambda p: (p.mtime, p.primary.name.lower(), str(p.primary.parent)))
