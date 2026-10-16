@@ -8,9 +8,23 @@ import time
 from pathlib import Path
 
 from spuza import __version__
+from spuza.ui.settings import AHEAD_RANGE, BEHIND_RANGE, read_window
 
 _T0 = time.perf_counter()  # fallback "process start" when the OS will not tell us
 BENCH_WAIT_S = 30.0  # longest any single wait in --bench may take
+
+
+def _int_in(lo: int, hi: int):
+    def conv(text: str) -> int:
+        try:
+            n = int(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+        if not lo <= n <= hi:
+            raise argparse.ArgumentTypeError(f"{n} is outside {lo}..{hi}")
+        return n
+
+    return conv
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--demo", metavar="PATH", help="open this folder and print timings to stderr")
     p.add_argument("--bench", action="store_true",
                    help="with --demo: run a scripted session (step all, Z on raws, step back) and exit")
+    p.add_argument("--ahead", type=_int_in(*AHEAD_RANGE), metavar="N",
+                   help=f"pictures to decode ahead, {AHEAD_RANGE[0]}..{AHEAD_RANGE[1]}"
+                        " (this run only; the saved preference is untouched)")
+    p.add_argument("--behind", type=_int_in(*BEHIND_RANGE), metavar="N",
+                   help=f"pictures to keep behind, {BEHIND_RANGE[0]}..{BEHIND_RANGE[1]}"
+                        " (this run only; the saved preference is untouched)")
     p.add_argument("--version", action="version", version=f"spuza {__version__}")
     return p
 
@@ -29,6 +49,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if a.bench and not a.demo:
         p.error("--bench needs --demo PATH")
     return a
+
+
+def window_from(args, prefs) -> tuple[int, int]:
+    """(ahead, behind): each CLI flag overrides the saved preference. Reads `prefs`, never writes it."""
+    ahead, behind = read_window(prefs)
+    return (ahead if args.ahead is None else args.ahead,
+            behind if args.behind is None else args.behind)
 
 
 def choose_root(cards: list[Path]) -> Path | None:
@@ -178,7 +205,10 @@ def main(argv: list[str] | None = None) -> int:
             _say("spuza: no card found and no folder chosen")
             return 1
     catalog = Catalog(scan(root))
-    prefetcher = Prefetcher(catalog)
+    from spuza.ui.settings import open_settings
+
+    ahead, behind = window_from(args, open_settings())
+    prefetcher = Prefetcher(catalog, ahead=ahead, behind=behind)
     window = MainWindow(catalog, prefetcher, root)
     if args.bench:
         theme.apply(app, theme.is_dark(app))
