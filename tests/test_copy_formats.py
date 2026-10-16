@@ -13,6 +13,12 @@ from spuza.ui.copy_sheet import CopySheet
 _APP = QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _logs_dir(tmp_path, monkeypatch):
+    """Copy logs go to a per-test folder, never the real app-data one (and never the destination)."""
+    monkeypatch.setenv("SPUZA_LOGS_DIR", str(tmp_path / "spuza-logs"))
+
+
 def wait_for(cond, timeout=10.0):
     import time
 
@@ -64,7 +70,7 @@ def test_no_companion_clause_when_none(tmp_path):
 
 def test_companions_copied_and_reported(tmp_path):
     out = tmp_path / "out"
-    sheet = CopySheet([make(tmp_path)], out)
+    sheet = CopySheet([make(tmp_path)], out, organise=False)
     finish(sheet)
     assert sorted(f.name for f in out.iterdir() if not f.name.endswith(".log")) == [
         "IMG_0001.RAF", "IMG_0001.mov", "IMG_0001.xmp"]
@@ -83,7 +89,7 @@ def test_companion_name_collision_renames_whole_group(tmp_path):
 def test_twins_reported_never_copied(tmp_path):
     out = tmp_path / "out"
     p = make(tmp_path, with_twin=True)
-    sheet = CopySheet([p], out)
+    sheet = CopySheet([p], out, organise=False)
     msg = "1 twin file on the second card not copied (same as the first)"
     assert msg in sheet.plan_label.text()
     finish(sheet)

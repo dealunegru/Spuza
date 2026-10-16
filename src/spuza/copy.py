@@ -1,6 +1,6 @@
 """Copy the marked pictures to a folder, never overwriting or touching anything that exists.
 
-Pure Python (no Qt): the UI calls ``plan_copy`` to show what will happen, then ``run_copy`` on a
+Plain Python (no widgets; it imports only catalog's extension sets): the UI calls ``plan_copy`` to show what will happen, then ``run_copy`` on a
 worker thread. The only file this module ever removes is its own half-written ``.spuza-part`` temp.
 """
 
@@ -11,8 +11,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from spuza.catalog import KNOWN_EXTS, RAW_EXTS
+
 CHUNK = 1024 * 1024
 MAX_SUFFIX = 10_000  # bound on the "-N" search for a free name
+RAW_DIR, SOC_DIR, ED_DIR = "raw", "soc", "ed"  # the folders an organised copy makes in the destination
+ENV_LOGS = "SPUZA_LOGS_DIR"  # overrides logs_dir(); tests set it so they never touch real app data
 
 
 @dataclass
@@ -29,6 +33,7 @@ class CopyPlan:
     items: list[CopyItem] = field(default_factory=list)
     total_bytes: int = 0  # bytes that will actually be written
     pictures: int = 0
+    organise: bool = False  # raw/soc/ed folders in dest (see plan_copy)
 
 
 @dataclass
@@ -93,22 +98,39 @@ def _size(p: Path) -> int:
         return 0
 
 
-def plan_copy(groups: Sequence[Sequence[Path]], dest: Path) -> CopyPlan:
-    """Decide, per file, copy / skip / rename. Creates nothing."""
+def _subdir(f: Path, has_raw: bool) -> str:
+    """The folder an organised copy puts `f` in: raw for raw files, soc for other pictures, companions with the group."""
+    ext = f.suffix.lower()
+    if ext in RAW_EXTS:
+        return RAW_DIR
+    if ext in KNOWN_EXTS:
+        return SOC_DIR
+    return RAW_DIR if has_raw else SOC_DIR
+
+
+def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = False) -> CopyPlan:
+    """Decide, per file, copy / skip / rename. Creates nothing.
+
+    With ``organise`` each file targets ``dest/raw`` or ``dest/soc`` (companions follow the group's picture:
+    raw if the group has a raw file, else soc); a RAF+JPG pair splits. Names are checked per target folder.
+    """
     dest = Path(dest)
-    plan = CopyPlan(dest=dest)
-    taken: set[str] = set()  # names claimed by this plan (case-folded: Windows/macOS volumes)
+    plan = CopyPlan(dest=dest, organise=bool(organise))
+    taken: set[tuple[str, str]] = set()  # (folder, name) claimed by this plan, case-folded (Windows/macOS volumes)
     for group in groups:
         files = [Path(f) for f in group]
         if not files:
             continue
         plan.pictures += 1
+        has_raw = any(f.suffix.lower() in RAW_EXTS for f in files)
+        subs = [_subdir(f, has_raw) if organise else "" for f in files]
+        folders = [dest / sub if sub else dest for sub in subs]
         names = [f.name for f in files]
         # suffix 0: every file either free or an identical copy already there
         actions: list[str] | None = []
-        for f in files:
-            target = dest / f.name
-            if f.name.casefold() in taken:
+        for f, sub, folder in zip(files, subs, folders):
+            target = folder / f.name
+            if (sub, f.name.casefold()) in taken:
                 actions = None
                 break
             if not os.path.lexists(target):
@@ -122,19 +144,33 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path) -> CopyPlan:
         if actions is None:
             n = 1
             while n < MAX_SUFFIX and any(
-                _suffixed(nm, n).casefold() in taken or os.path.lexists(dest / _suffixed(nm, n))
-                for nm in names
+                (sub, _suffixed(nm, n).casefold()) in taken or os.path.lexists(folder / _suffixed(nm, n))
+                for nm, sub, folder in zip(names, subs, folders)
             ):
                 n += 1
             actions = ["rename"] * len(files)
-        for f, act in zip(files, actions):
+        for f, act, sub, folder in zip(files, actions, subs, folders):
             name = _suffixed(f.name, n)
-            taken.add(name.casefold())
+            taken.add((sub, name.casefold()))
             size = _size(f)
-            plan.items.append(CopyItem(f, dest / name, size, act))
+            plan.items.append(CopyItem(f, folder / name, size, act))
             if act != "skip":
                 plan.total_bytes += size
     return plan
+
+
+def logs_dir() -> Path:
+    """`<QStandardPaths.AppDataLocation>/logs` (never created here); $SPUZA_LOGS_DIR wins. Never inside a destination."""
+    env = os.environ.get(ENV_LOGS)
+    if env:
+        return Path(env)
+    try:
+        from PySide6.QtCore import QStandardPaths
+
+        base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    except Exception:
+        base = ""
+    return (Path(base) if base else Path.home() / ".spuza") / "logs"
 
 
 def _publish(tmp: Path, dst: Path) -> None:
@@ -187,6 +223,12 @@ def run_copy(
     done = 0
     notes: list[str] = []
     plan.dest.mkdir(parents=True, exist_ok=True)
+    if plan.organise:  # all three always exist after an organised copy; ed stays empty for Lightroom exports
+        for sub in (RAW_DIR, SOC_DIR, ED_DIR):
+            try:
+                (plan.dest / sub).mkdir(exist_ok=True)
+            except OSError:
+                pass  # a file in the way: its pictures fail one by one and are reported
 
     def report(src: Path) -> None:
         if progress:
@@ -251,7 +293,7 @@ def run_copy(
         notes.append(f"{tag} {item.src} -> {final}")
 
     if log_path is None:
-        log_path = plan.dest / f"spuza-copy-{datetime.now():%Y%m%d-%H%M%S}.log"
+        log_path = logs_dir() / f"spuza-copy-{datetime.now():%Y%m%d-%H%M%S}.log"
     lines = [f"Spuza copy to {plan.dest}", *notes]
     lines.append(
         f"Totals: {len(res.copied)} copied, {len(res.skipped)} skipped, {len(res.failed)} failed, "

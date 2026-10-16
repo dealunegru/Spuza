@@ -4,6 +4,10 @@ The sheet only edits; the window saves and applies on accept. ``values()`` is th
 ``memory_text()`` the plain text of the live memory line. Advanced mode adds three rows (decode threads,
 peaking threshold, remember marks); they are hidden, and the classic sheet is exactly as shipped, until the
 Advanced box is ticked.
+
+Three classic rows (always visible) say what a copy does: organise the destination into raw / soc / ed,
+eject the card afterwards, quit Spuza afterwards. ``seeded_*`` is what each started as, so the window saves
+only a changed value. Reset to defaults sets them back to on (the shipped default) along with the spins.
 """
 
 from __future__ import annotations
@@ -25,7 +29,8 @@ from spuza.ui import settings
 class PrefsSheet(QDialog):
     def __init__(self, ahead: int, behind: int, max_side: int = 2560, parent=None, *,
                  advanced: bool = False, threads: int = settings.DEFAULT_THREADS,
-                 peaking_threshold: int = settings.DEFAULT_PEAKING_THRESHOLD, resume: bool = True):
+                 peaking_threshold: int = settings.DEFAULT_PEAKING_THRESHOLD, resume: bool = True,
+                 organise: bool = True, eject_after: bool = True, quit_after: bool = True):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.max_side = max_side
@@ -51,6 +56,13 @@ class PrefsSheet(QDialog):
         self.resume_check = QCheckBox("Remember marks between runs")
         self.seeded_resume = bool(resume)
         self.resume_check.setChecked(self.seeded_resume)
+        self.organise_check = QCheckBox("Copy into raw / soc / ed folders")
+        self.eject_check = QCheckBox("Eject the card after copying")
+        self.quit_check = QCheckBox("Quit Spuza after copying")
+        self.seeded_organise, self.seeded_eject, self.seeded_quit = bool(organise), bool(eject_after), bool(quit_after)
+        self.organise_check.setChecked(self.seeded_organise)
+        self.eject_check.setChecked(self.seeded_eject)
+        self.quit_check.setChecked(self.seeded_quit)
         self.note_label = QLabel("The ADVANCED marker changes now; decode threads apply at the next launch.")
         self.note_label.setWordWrap(True)
         self.reset_button = QPushButton("Reset to defaults")
@@ -70,6 +82,9 @@ class PrefsSheet(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         lay.addWidget(self.memory_label)
+        lay.addWidget(self.organise_check)
+        lay.addWidget(self.eject_check)
+        lay.addWidget(self.quit_check)
         lay.addWidget(self.advanced_check)
         lay.addWidget(self.note_label)
         lay.addWidget(self.reset_button)
@@ -102,6 +117,15 @@ class PrefsSheet(QDialog):
     def resume(self) -> bool:
         return self.resume_check.isChecked()
 
+    def organise(self) -> bool:
+        return self.organise_check.isChecked()
+
+    def eject_after(self) -> bool:
+        return self.eject_check.isChecked()
+
+    def quit_after(self) -> bool:
+        return self.quit_check.isChecked()
+
     def values(self) -> tuple[int, int]:
         return self.ahead_spin.value(), self.behind_spin.value()
 
@@ -110,9 +134,12 @@ class PrefsSheet(QDialog):
 
     def reset_to_defaults(self) -> None:
         """Set the spins to the defaults; nothing is saved until OK. The mode checkbox and threads are left alone
-        (a mode is not a tuning value)."""
+        (a mode is not a tuning value); the three copy rows go back to on, their shipped default."""
         self.ahead_spin.setValue(settings.DEFAULT_AHEAD)
         self.behind_spin.setValue(settings.DEFAULT_BEHIND)
+        self.organise_check.setChecked(True)
+        self.eject_check.setChecked(True)
+        self.quit_check.setChecked(True)
 
     def _update_memory(self) -> None:
         a, b = self.values()

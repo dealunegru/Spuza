@@ -7,8 +7,16 @@ overwrite; the tests fail against such an implementation.
 import os
 from pathlib import Path
 
+import pytest
+
 import spuza.copy as copy_module
 from spuza.copy import plan_copy, run_copy
+
+
+@pytest.fixture(autouse=True)
+def _logs_dir(tmp_path, monkeypatch):
+    """Copy logs go to a per-test folder, never the real app-data one (and never the destination)."""
+    monkeypatch.setenv("SPUZA_LOGS_DIR", str(tmp_path / "spuza-logs"))
 
 
 def _src(tmp_path: Path) -> Path:
