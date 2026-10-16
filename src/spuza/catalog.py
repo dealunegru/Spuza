@@ -1,11 +1,15 @@
 """The picture list, the cursor and marks over it, and the background prefetcher.
 
-Pure-Python parts: `scan`, `find_cards`, `Picture`, `Catalog`. Qt only enters in `Prefetcher`.
+Pure-Python parts: `scan`, `scan_card`, `find_cards`, `Picture`, `Catalog`. Qt only enters in `Prefetcher`.
 
 Pairing rule: within ONE directory, files sharing a stem (case-insensitive) group together. A RAW
-(.raf/.dng) is the primary; the first JPEG (.jpg/.jpeg, by name) becomes its sidecar. With two raws on
-one stem (RAF and DNG) they stay separate pictures and the JPEG pairs with the first raw by name.
-Any further JPEG on the stem, and every other format (PNG, HEIC, ...), is its own picture.
+(.raf/.dng/.arw/.cr3/...) is the primary; the first JPEG (.jpg/.jpeg, by name) becomes its sidecar, and a
+HEIF (.hif) on the stem joins the same picture (it is the sidecar only when there is no JPEG). With two
+raws on one stem they stay separate pictures and the JPEG/HIF pair with the first raw by name. Any further
+JPEG or HIF on the stem, and every other format (PNG, HEIC, a lone HIF, ...), is its own picture.
+Every other file on the stem (Live Photo MOV, XMP, THM, WAV, any unknown extension) is a companion of the
+stem's first picture: it rides in `files` and `companions` and counts in `size_bytes`, but is never a
+picture. Non-picture files on no picture's stem are reported as `others`, never dropped.
 """
 
 from __future__ import annotations
@@ -24,12 +28,15 @@ from PySide6.QtGui import QImage
 from spuza.ui import settings  # imports only QSettings; the defaults live in one place
 
 # Same values as spuza.preview; duplicated so importing this module never imports the decoders.
-RAW_EXTS = frozenset({".raf", ".dng"})
+RAW_EXTS = frozenset({".raf", ".dng", ".arw", ".nef", ".nrw", ".pef", ".3fr", ".cr2", ".orf", ".rw2", ".cr3"})
 JPEG_EXTS = frozenset({".jpg", ".jpeg"})
-IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif"})
+HEIF_EXTS = frozenset({".hif", ".heif", ".heic"})
+IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff"}) | HEIF_EXTS
 KNOWN_EXTS = RAW_EXTS | IMAGE_EXTS
 
 _SKIP_DIRS = {"system volume information", "$recycle.bin"}
+
+_Member = tuple[str, str, int, float]  # name, lowercase ext, size, mtime
 
 
 @dataclass(frozen=True)
@@ -45,9 +52,17 @@ class Picture:
     twins: tuple[Path, ...] = ()  # the same files on a second card (dual-slot backup); never copied, only reported
 
 
-def _kind(ext: str, has_sidecar: bool) -> str:
+@dataclass(frozen=True)
+class ScanResult:
+    pictures: list[Picture]
+    others: tuple[Path, ...]  # non-picture files on no picture's stem: counted and reported
+    unreadable: tuple[Path, ...]  # entries whose is_dir/stat raised OSError (and directories that could not be listed)
+
+
+def _kind(ext: str, has_jpeg: bool, has_hif: bool = False) -> str:
     if ext in RAW_EXTS:
-        return f"{ext[1:].upper()}+JPG" if has_sidecar else f"{ext[1:].upper()} only"
+        parts = [ext[1:].upper()] + (["JPG"] if has_jpeg else []) + (["HIF"] if has_hif else [])
+        return "+".join(parts) if len(parts) > 1 else f"{parts[0]} only"
     return "JPG" if ext in JPEG_EXTS else ext[1:].upper()
 
 
@@ -57,12 +72,22 @@ def _hidden(name: str) -> bool:
 
 def scan(root: Path) -> list[Picture]:
     """All pictures under `root`, in approximate capture order (mtime of primary, then name)."""
-    # directory -> stem.lower() -> list of (name, ext, size, mtime)
+    return scan_card(root).pictures
+
+
+def scan_card(root: Path) -> ScanResult:
+    """Walk `root`: the pictures (by mtime of primary, then name), the other files, the unreadable entries.
+
+    Skipped without report, as before: dot-files and dot-directories, `System Volume Information`,
+    `$RecycleBin`, and symlinks. Everything else is a picture, a companion, an "other", or unreadable.
+    """
     pictures: list[Picture] = []
+    others: list[Path] = []
+    unreadable: list[Path] = []
     stack = [str(root)]
     while stack:
         d = stack.pop()
-        groups: dict[str, list[tuple[str, str, int, float]]] = {}
+        groups: dict[str, list[_Member]] = {}
         try:
             with os.scandir(d) as it:
                 for e in it:
@@ -76,41 +101,52 @@ def scan(root: Path) -> list[Picture]:
                         if e.is_symlink():
                             continue
                         stem, ext = os.path.splitext(name)
-                        ext = ext.lower()
-                        if ext not in KNOWN_EXTS:
-                            continue
                         st = e.stat()
                     except OSError:
+                        unreadable.append(Path(d, name))
                         continue
-                    groups.setdefault(stem.lower(), []).append((name, ext, st.st_size, st.st_mtime))
+                    groups.setdefault(stem.lower(), []).append((name, ext.lower(), st.st_size, st.st_mtime))
         except OSError:
-            pass  # unreadable or failed mid-iteration: keep what was collected and pair it
+            unreadable.append(Path(d))  # failed to list or failed mid-iteration: pair what was collected
         for members in groups.values():
-            pictures.extend(_pair(d, members))
+            pics, rest = _pair(d, members)
+            pictures.extend(pics)
+            others.extend(rest)
     pictures.sort(key=lambda p: (p.mtime, p.primary.name.lower(), str(p.primary.parent)))
-    return pictures
+    return ScanResult(pictures, tuple(sorted(others, key=str)), tuple(sorted(unreadable, key=str)))
 
 
-def _pair(d: str, members: list[tuple[str, str, int, float]]) -> list[Picture]:
+def _pair(d: str, members: list[_Member]) -> tuple[list[Picture], list[Path]]:
+    """One directory's one stem -> (its pictures, its non-picture files when no picture owns them)."""
     members = sorted(members, key=lambda m: m[0].lower())
     raws = [m for m in members if m[1] in RAW_EXTS]
     jpegs = [m for m in members if m[1] in JPEG_EXTS]
-    others = [m for m in members if m[1] not in RAW_EXTS and m[1] not in JPEG_EXTS]
+    hifs = [m for m in members if m[1] == ".hif"]
+    companions = [m for m in members if m[1] not in KNOWN_EXTS]
+    jpeg_side = jpegs.pop(0) if raws and jpegs else None
+    hif_side = hifs.pop(0) if raws and hifs else None
+    sidecar = jpeg_side or hif_side
+    singles = [m for m in members if m in jpegs or m in hifs
+               or (m[1] in IMAGE_EXTS and m[1] not in JPEG_EXTS and m[1] != ".hif")]
     out: list[Picture] = []
-    sidecar = None
-    if raws and jpegs:
-        sidecar = jpegs.pop(0)
     for i, (name, ext, size, mtime) in enumerate(raws):
         p = Path(d, name)
-        side = sidecar if i == 0 else None
-        files = (p,) + ((Path(d, side[0]),) if side else ())
-        total = size + (side[2] if side else 0)
-        out.append(Picture(os.path.splitext(name)[0], p, Path(d, side[0]) if side else None, files,
-                           _kind(ext, side is not None), total, mtime))
-    for name, ext, size, mtime in jpegs + others:
+        sides = [m for m in (jpeg_side, hif_side) if m] if i == 0 else []
+        out.append(Picture(os.path.splitext(name)[0], p, Path(d, sidecar[0]) if sides and sidecar else None,
+                           (p,) + tuple(Path(d, m[0]) for m in sides),
+                           _kind(ext, bool(sides and jpeg_side), bool(sides and hif_side)),
+                           size + sum(m[2] for m in sides), mtime))
+    for name, ext, size, mtime in singles:
         p = Path(d, name)
         out.append(Picture(os.path.splitext(name)[0], p, None, (p,), _kind(ext, False), size, mtime))
-    return out
+    if not out:
+        return [], [Path(d, m[0]) for m in companions]
+    comp = tuple(Path(d, m[0]) for m in companions)
+    if comp:
+        f = out[0]
+        out[0] = Picture(f.stem, f.primary, f.sidecar, f.files + comp, f.kind,
+                         f.size_bytes + sum(m[2] for m in companions), f.mtime, comp, f.twins)
+    return out, []
 
 
 def _glob_dirs(*patterns: str) -> list[Path]:
