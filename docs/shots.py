@@ -76,7 +76,7 @@ def _run(root: Path, out: Path) -> int:
     viewer = window.viewer
     # Show neutral folders, never this machine's paths.
     window.sidebar.set_root(Path("D:/Photos/Card"))
-    keepers = Path(Path.home().anchor) / "Photos" / "Keepers"  # a drive that exists, so free space shows
+    keepers = Path(os.path.normpath(Path(Path.home().anchor) / "Selects"))  # a drive that exists, so free space shows
     win_mod.default_copy_dest = lambda: keepers
 
     def pump(seconds: float) -> None:
@@ -145,7 +145,12 @@ def _run(root: Path, out: Path) -> int:
     if catalog.marked_count != 3:
         raise SystemExit(f"expected 3 marked, got {catalog.marked_count}")
     save_png("workbench.png", work)
-    pal = [f.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE) for f, _ in frames]
+    # One palette for every frame, built from all of them (full size, so the small green ticks count).
+    strip = Image.new("RGB", (OUT_WIDTH, work.height * len(frames)))
+    for k, (f, _) in enumerate(frames):
+        strip.paste(f, (0, k * work.height))
+    shared = strip.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    pal = [f.quantize(palette=shared, dither=Image.Dither.NONE) for f, _ in frames]
     pal[0].save(out / "hero.gif", save_all=True, append_images=pal[1:], duration=[d for _, d in frames],
                 loop=0, optimize=True, disposal=1)
 
@@ -193,12 +198,13 @@ def _run(root: Path, out: Path) -> int:
     cv.close_compare()
     pump(0.5)
 
-    window.go_to(1)
-    wait_picture(1)
+    window.go_to(2)  # the striped picture: the most edges of the samples
+    wait_picture(2)
     window.set_peaking(True)
     if window.peaking is None:
         raise SystemExit("peaking overlay was not built")
-    wait_until(lambda: window.peaking.mask_for(1) is not None, "the peaking mask")
+    window.peaking.set_threshold(15)  # this shot only: lower than the saved default, so the red reads at a glance
+    wait_until(lambda: window.peaking.mask_for(2) is not None, "the peaking mask")
     pump(1.0)
     save_png("peaking.png", grab())
 
