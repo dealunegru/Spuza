@@ -55,7 +55,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 ## Culling a card
 
 Spuza is built for the first pass over a shoot: hundreds of frames and a handful of keepers.
-When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows) and opens it. To open a folder instead, give its path: `spuza ~/Pictures/trip`. With two cards in (a camera with two slots, say), Spuza lists both, opens the first, and the status bar names the other and how many of its pictures are copies of this card's; `spuza --card 2` opens the second. Pictures are listed in the order the camera took them: by capture time, then by the camera's shot counter on Ricoh and Fujifilm bodies, then by name.
+When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows) and opens it. To open a folder instead, give its path: `spuza ~/Pictures/trip`. With two cards in (a camera with two slots, say), Spuza lists both, opens the first, and the status bar names the other and how many of its pictures are copies of this card's; `spuza --card 2` opens the second. Pictures are listed in the order the camera took them: by capture time, then by the camera's shot counter on Ricoh, Fujifilm and Nikon bodies, then by name; files without capture data follow, by file date.
 
 <p align="center">
   <img src="docs/img/workbench.png" alt="The workbench: the picture, the filmstrip, the inspector and the marked count" width="900">
@@ -111,7 +111,7 @@ The sheet shows the plan before anything is copied: how many files, how many byt
   <img src="docs/img/copy.png" alt="The copy sheet: destination, the plan, and the Copy button" width="900">
 </p>
 
-- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together.
+- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together. The same goes for a `HIF` beside a raw, and for any other file with the picture's name (an `XMP`, a `THM`, a Live Photo's `MOV`).
 - If a file is already in the folder with identical content, it is skipped.
 - If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
 - Each copy writes a log, `spuza-copy-<date>-<time>.log`, into the destination folder: every file copied, skipped or renamed, and the totals.
@@ -179,7 +179,7 @@ A feature that proves itself moves to classic. How flags are added and promoted 
 | HEIF | `HIF` (Fujifilm, Canon), `HEIC`, `HEIF` | as is; a `HIF` beside a raw of the same name is one picture with it, like a JPEG |
 | Other | `PNG`, `GIF`, `BMP`, `TIF`, `TIFF` | as is |
 
-Any other file with the same name as a picture (an `XMP`, a `THM`, the `MOV` of a Live Photo) is copied with that picture. Files that are not pictures and belong to none are counted and named in the copy sheet, never copied silently or dropped silently.
+Any other file with the same name as a picture (an `XMP`, a `THM`, the `MOV` of a Live Photo) is copied with that picture. Files that are not pictures and belong to none are not copied; the copy sheet counts them and lists them in its tooltip, and it counts files it could not read. Hidden files, system folders and symlinks are skipped without a note.
 
 ## Speed
 
