@@ -6,7 +6,8 @@ runs advanced; a feature that earns its place is promoted to classic.
 
 ## Switching
 
-- Preferences, checkbox "Advanced mode": saved, applies from the next launch.
+- Preferences, checkbox "Advanced mode": saved. Ticking or unticking it switches the mode and the
+  marker at once; a feature that is set up at startup (decode threads) follows at the next launch.
 - `spuza --advanced` or `spuza --classic`: this run only. The saved preference is not touched, and
   `--classic` wins over a saved advanced mode. Giving both is an error.
 

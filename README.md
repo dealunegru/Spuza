@@ -134,7 +134,7 @@ Files that already exist with identical content are skipped, not overwritten.
 
 ### Classic and advanced mode
 
-Spuza opens in classic mode, which is everything it has shipped. Advanced mode adds features still being tried out: tick "Advanced mode" in Preferences (saved, applies from the next launch), or run `spuza --advanced` (or `spuza --classic`) for one run only; the saved preference is not touched. Advanced mode shows `(advanced)` in the window title and an `ADVANCED` tag in the status strip. See [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
+Spuza opens in classic mode, which is everything it has shipped. Advanced mode adds features still being tried out: tick "Advanced mode" in Preferences (saved; the mode and its marker switch at once, decode threads at the next launch), or run `spuza --advanced` (or `spuza --classic`) for one run only; the saved preference is not touched. Advanced mode shows `(advanced)` in the window title and an `ADVANCED` tag in the status strip. See [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
 
 ## How it stays fast
 
