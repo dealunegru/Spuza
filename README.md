@@ -1,159 +1,222 @@
-<pre align="center">
-   _____ ____  __  _______   ___
-  / ___// __ \/ / / /__  /  /   |
-  \__ \/ /_/ / / / /  / /  / /| |
- ___/ / ____/ /_/ /  / /__/ ___ |
-/____/_/    \____/  /____/_/  |_|
-</pre>
-
-<p align="center">
-  <img src="docs/screenshot-cull.png" alt="Spuza culling a card: the picture, the filmstrip, the marked keepers" width="900">
-</p>
-
 <h1 align="center">Spuza</h1>
 
 <p align="center">
-  Fast photo culling for camera cards.<br>
-  Card in, first picture on screen in under a second, one key per decision.
+  Photo culling for camera cards: step through a card, mark the keepers, copy them off.<br>
+  One key per decision, and the next pictures are already decoded.
+</p>
+
+<p align="center">
+  <img src="docs/img/hero.gif" alt="Spuza stepping through a card and marking pictures" width="900">
 </p>
 
 <p align="center">
   <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-black" alt="macOS Apple Silicon">
-  <img src="https://img.shields.io/badge/Windows-10%2F11-blue" alt="Windows">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+  <img src="https://img.shields.io/badge/version-0.4.0-informational" alt="Version 0.4.0">
 </p>
 
----
-
-## What it does
-
-Spuza is for the first pass over a shoot: hundreds of frames, a handful of keepers.
-It opens the card, shows the first picture at once, and gets out of the way.
-
-- **Step** through the card with one key. The next pictures are already decoded, so a step takes about 10 ms.
-- **Mark** a keeper, keep going. Go back and mark later; nothing is lost.
-- **Marks live in Spuza, not in your files.** Nothing is ever written to a picture, its EXIF or the card; the only thing Spuza writes is the copy you ask for, into the folder you pick.
-- **Move on mark**, if you like: with `A` on, marking a picture shows the next one, so a pass over the card is one key per frame.
-- **Review** every marked picture on one contact sheet. Unmark what did not survive a second look.
-- **Zoom** to 100% for the sharpness check. On a raw file this triggers a full decode in the background.
-- **Copy** the keepers to a folder on your drive. A raw file travels with its JPEG twin.
-
-Nothing on the card is ever modified or deleted.
-
-## Install
-
-### macOS (Apple Silicon, macOS 14 or newer)
-
-Two lines in Terminal. The first installs [uv](https://docs.astral.sh/uv/), the Python tool manager; the second installs Spuza.
+**Mac** (Apple Silicon), in Terminal:
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Open a **new** Terminal window, then:
-
-```sh
 uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
 ```
 
-That is all. Put a card in and run:
+**Windows**, in PowerShell:
 
-```sh
-spuza
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
 ```
 
-| | |
+Open a new terminal window after the first line, then run `spuza` with a card in.
+Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the release page.
+
+## What's new
+
+- **0.4.0**: four features in advanced mode: Compare (`N`), Focus peaking (`P`), AF point (`O`), and Resume, with Start fresh (`U`).
+- **0.3.3**: classic and advanced mode. Advanced mode is a switch in Preferences, and its first setting is the number of decode threads.
+- **0.3.2**: 12 pictures are now decoded ahead and 8 kept behind (it was 8 and 3). A Preferences sheet sets those numbers, and `--ahead` and `--behind` set them for one run.
+- **0.3.1**: the inspector shows aperture, shutter, ISO, focal length and camera. Right-click a picture to show it in Finder or Explorer. Fixes a crash on macOS.
+- **0.3.0**: 15 fixes:
+  - 16-bit greyscale files are no longer clipped.
+  - `Z` gives a true 100% view on Retina screens, and the filmstrip is sharp there.
+  - Several copy sheet fixes.
+  - Copies go to `~/Pictures/Spuza` by default, never to the card.
+- **0.2.0**: move on mark (`A`). Marking a picture shows the next one.
+- **0.1.3**: a wheel and an unsigned Mac app on every release, and `spuza --version` prints the right version.
+
+## Culling a card
+
+Spuza is built for the first pass over a shoot: hundreds of frames and a handful of keepers.
+When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows) and opens it. To open a folder instead, give its path: `spuza ~/Pictures/trip`.
+
+<p align="center">
+  <img src="docs/img/workbench.png" alt="The workbench: the picture, the filmstrip, the inspector and the marked count" width="900">
+</p>
+
+| Key | Does |
 |---|---|
-| Update | `uv tool upgrade spuza` |
-| Remove | `uv tool uninstall spuza` |
-| Open a folder instead of a card | `spuza ~/Pictures/trip` |
+| `→` or `J` | next picture |
+| `←` or `K` | previous picture |
+| `Space` or `M` | mark or unmark the picture |
+| `A` | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
+| `Z` | 100% zoom; on a raw file the full decode runs in the background |
+| `F` | full screen, picture only |
+| `Esc` | leave full screen or the review |
+| `R` | review the marked pictures |
+| `C` | copy the marked pictures to a folder |
+| `Cmd-,` (`Ctrl-,` on Windows) | Preferences |
 
-> **Why uv and not an installer?** Spuza is a Python application. `uv tool install` gives it its own private Python and dependencies, puts one `spuza` command on your PATH, and upgrades or removes it cleanly. No system Python is touched and nothing needs admin rights.
+Every key also has a toolbar button with its shortcut printed on it.
+The inspector on the right shows the file names and sizes, the preview's size and decode time, aperture, shutter, ISO, focal length and camera.
+Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 
-### macOS app bundle
+**Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only three things: the copies you ask for, its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
 
-Every [release](https://github.com/fungimasters/Spuza/releases/latest) also carries `Spuza-macos.zip`, a self-contained `Spuza.app` built by CI on a macOS runner.
-Unzip it and drag `Spuza.app` to Applications.
+<p align="center">
+  <img src="docs/img/bleed.png" alt="Full screen: the picture alone, with a one-line status strip" width="900">
+</p>
 
-The bundle is not code-signed, so macOS refuses the first launch. Open **System Settings > Privacy & Security**, scroll to the message about Spuza and click **Open Anyway**. This is needed once. The Terminal alternative is:
+## Review
+
+`R` shows every marked picture on one contact sheet, so you can take a second look.
+
+<p align="center">
+  <img src="docs/img/review.png" alt="Review: the marked pictures on one contact sheet" width="900">
+</p>
+
+| Key | Does in the review |
+|---|---|
+| `↑` `↓` `←` `→` | move through the sheet |
+| `Space` or `M` | unmark the selected picture |
+| `Z` | 100% view of the selected picture (`Esc` returns to the sheet) |
+| `Enter` | open the selected picture in the workbench |
+| `Esc` | back to the card |
+
+Unmarking takes a picture off the list. Spuza never deletes anything.
+
+## Copying
+
+`C` opens the copy sheet. It starts at `~/Pictures/Spuza`, and you can pick any other folder.
+The sheet shows the plan before anything is copied: how many files, how many bytes, and what is already in that folder.
+
+<p align="center">
+  <img src="docs/img/copy.png" alt="The copy sheet: destination, the plan, and the Copy button" width="900">
+</p>
+
+- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together.
+- If a file is already in the folder with identical content, it is skipped.
+- If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
+
+## Preferences
+
+`Cmd-,` (`Ctrl-,` on Windows) or the toolbar button opens Preferences:
+
+- **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). Below them, the memory those previews take.
+- **Advanced mode**: see below.
+- Advanced mode only:
+  - **Decode threads** (1-8, default 3, applied at the next launch).
+  - **Peaking threshold** (1-255, default 60).
+  - **Remember marks between runs** (default on).
+- **Reset to defaults**.
+
+<p align="center">
+  <img src="docs/img/prefs.png" alt="Preferences in advanced mode" width="600">
+</p>
+
+## Classic and advanced mode
+
+Spuza opens in classic mode, which has every feature that has shipped. Advanced mode adds the features that are still being tried out.
+
+- To switch for good, tick "Advanced mode" in Preferences. The setting is saved, and the mode changes at once; decode threads follow at the next launch.
+- To switch for one run, use `spuza --advanced` or `spuza --classic`. The saved preference is not touched.
+
+In advanced mode the window title reads `Spuza (advanced)` and the status strip shows an `ADVANCED` tag.
+A feature that proves itself moves to classic. How flags are added and promoted is in [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
+
+| Key | Does (advanced mode) | Flag |
+|---|---|---|
+| `N` | **Compare.** Shows this picture and the next side by side; `N` again adds the next one, up to four. | `compare_view` |
+| `P` | **Focus peaking.** Paints the sharp edges red on the big picture and on each compare cell. Remembered between runs. | `focus_peaking` |
+| `O` | **AF point.** Draws a ring where the camera focused, and `Z` then opens the 100% view on that spot. | `focus_point` |
+| `U` | **Start fresh.** Clears this card's marks and its saved session. `U` again within 10 seconds undoes it. | `resume_session` |
+
+<p align="center">
+  <img src="docs/img/compare.png" alt="Compare: two pictures side by side" width="900">
+</p>
+
+**Compare** in detail:
+- `←` and `→` (or `J` and `K`) move the frame between the pictures, and `Space` marks the one with the frame.
+- `Z` zooms the framed picture and its neighbour to 100% together, and dragging pans both.
+- `Esc` returns to the picture that had the frame.
+- From the review, `Ctrl`-click (`Cmd`-click on a Mac) two to four marked pictures, then press `N`.
+
+<p align="center">
+  <img src="docs/img/peaking.png" alt="Focus peaking: sharp edges painted red" width="900">
+</p>
+
+**AF point** works with Fujifilm RAF files from the X-T4, X-T5, X100V and X-T50. Other files have no ring.
+
+**Resume** puts back each card's marks and your place the next time you open the same card, and a banner says what it restored. The session file is in Spuza's app-data folder, never on the card. Sessions older than 30 days are deleted at start. To turn Resume off, untick "Remember marks between runs".
+
+**Decode threads** (`decode_threads`) sets how many pictures are decoded at once, from 1 to 8. Classic always uses 3.
+
+## Formats
+
+| Family | Files | Shown as |
+|---|---|---|
+| Raw | Fujifilm `RAF`, `DNG` (cameras and phones) | the full-size JPEG preview embedded in the raw file |
+| JPEG | `JPG`, `JPEG` | as is |
+| Other | `PNG`, `GIF`, `BMP`, `TIF`, `TIFF`, `HEIC`, `HEIF` | as is |
+
+Spuza does not list other files.
+
+## Speed
+
+- **Raw files are not demosaiced while you step.** Each raw file carries a JPEG preview made by the camera. Spuza reads it straight out of the file and shows that. The full decode runs only when you press `Z`, and only if the preview is smaller than the sensor.
+- **Prefetch.** The pictures ahead of and behind the current one are decoded on worker threads, so a step only swaps in an image that is already decoded.
+
+Measured on Windows with 0.4.0, using `spuza --demo <folder> --bench`. The test card held five Ricoh GR III DNGs (28.5-28.9 MB each) and one Fujifilm X-Pro2 RAF (23 MB):
+
+| | Measured |
+|---|---|
+| First picture on screen | 839 ms; 1125 ms on the first run after a build |
+| Step, mean | 5.7 ms |
+| `Z` full decode of the X-Pro2 RAF (0.3.1) | 3.4-3.5 s, in the background |
+| Memory after 300 steps, default window of 12 ahead and 8 behind (0.3.2) | 229-259 MB |
+
+These numbers have not been measured on a Mac yet. To set the prefetch window for one run, use `--ahead N --behind N`.
+
+## Mac app
+
+Every [release](https://github.com/fungimasters/Spuza/releases/latest) also has `Spuza-macos.zip`. It holds a self-contained `Spuza.app` that CI builds on a macOS runner. Unzip it and drag `Spuza.app` to Applications.
+
+The app is not code-signed, so macOS blocks the first launch. To allow it:
+
+1. Open **System Settings > Privacy & Security**.
+2. Scroll to the message about Spuza and click **Open Anyway**.
+
+You only need to do this once. The Terminal alternative is:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Spuza.app
 ```
 
-### Windows
+## Command line
 
-```powershell
-uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
-spuza
-```
-
-Spuza scans removable drives for a `DCIM` folder, or takes a folder on the command line.
-
-## Using Spuza
-
-<p align="center">
-  <img src="docs/screenshot-review.png" alt="Review: the marked pictures on one contact sheet" width="900">
-</p>
-
-| Key | Does |
+| | |
 |---|---|
-| `Space` or `M` | mark / unmark the picture |
-| `A` | move on mark: on or off (marking then shows the next picture; remembered between runs) |
-| `→` or `J` | next picture |
-| `←` or `K` | previous picture |
-| `Z` | 100% zoom (full decode of a raw file runs in the background) |
-| `F` | full-screen, picture only (`Esc` returns) |
-| `R` | review the marked pictures on a contact sheet |
-| `C` | copy the marked pictures to a folder |
-| `Cmd-,` (`Ctrl-,` on Windows) | preferences: how many pictures are decoded ahead and kept behind |
+| `spuza` | open the first camera card found |
+| `spuza <folder>` | open a folder |
+| `--advanced`, `--classic` | the mode for this run only |
+| `--ahead N`, `--behind N` | the prefetch window for this run only |
+| `--demo <folder> --bench` | open a folder, step through it scripted, print timings, exit |
+| `--version` | print the version |
+| `uv tool upgrade spuza` | update |
+| `uv tool uninstall spuza` | remove |
 
-Every key is also a button in the toolbar, with its shortcut printed on it.
-The sidebar shows the source and the counts; the inspector shows the file, its size and how long it took to decode.
-
-<p align="center">
-  <img src="docs/screenshot-fullscreen.png" alt="Full-screen: the picture alone, with a one-line status" width="900">
-</p>
-
-### Formats
-
-| Family | Files | Shown as |
-|---|---|---|
-| Raw | Fujifilm `RAF`, `DNG` (cameras and phones) | the full-size JPEG preview embedded in the raw |
-| JPEG | `JPG`, `JPEG` | as is |
-| Other | `PNG`, `GIF`, `BMP`, `TIFF`, `HEIC` | as is |
-
-A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are **one picture**: one entry in the filmstrip, one mark, and both files are copied together.
-
-### Copying
-
-`C` opens the copy sheet: pick a destination folder, see the plan (how many files, how many bytes, what is already there), and go.
-Files that already exist with identical content are skipped, not overwritten.
-
-### Classic and advanced mode
-
-Spuza opens in classic mode, which is everything it has shipped. Advanced mode adds features still being tried out: tick "Advanced mode" in Preferences (saved; the mode and its marker switch at once, decode threads at the next launch), or run `spuza --advanced` (or `spuza --classic`) for one run only; the saved preference is not touched. Advanced mode shows `(advanced)` in the window title and an `ADVANCED` tag in the status strip. See [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
-
-### Advanced-mode features
-
-These four exist only in advanced mode; in classic their keys do nothing and their buttons are hidden.
-
-| Key | Does |
-|---|---|
-| `N` | **Compare.** Shows this picture and the next side by side; `N` again adds the following one, up to four. In review, select two to four marked pictures (`Ctrl`/`Cmd`-click) and press `N`. `←`/`→` move between them, `Space` marks the one with the frame, `Z` zooms the focused one and its neighbour to 100% together, and dragging pans them in step. `Esc` returns to the picture that had the frame. |
-| `P` | **Focus peaking.** Paints the sharp edges red on the big picture (and on each compare cell). Remembered between runs; the strength is "Peaking threshold" in Preferences. |
-| `O` | **AF point.** Draws a thin ring where the camera focused, and `Z` then opens the 100% view on that spot instead of the centre. Fujifilm RAFs from the X-T4, X-T5, X100V and X-T50 only; other files simply have no ring. |
-| `U` | **Start fresh.** Clears this card's marks and forgets its saved session; `U` again within 10 seconds undoes it. |
-
-**Resume.** Spuza remembers each card's marks and your place and puts them back the next time you open the same card; a banner at the bottom says what it restored. The session is a small file in Spuza's app-data folder, never on the card, and nothing is ever written to your pictures. Turn it off with "Remember marks between runs" in Preferences; sessions older than 30 days are deleted at start.
-
-## How it stays fast
-
-- **No demosaicing on the way through.** A raw file carries a camera-made JPEG preview. Spuza slices it straight out of the file (RAF header offsets, DNG SubIFDs) in a few milliseconds and shows that. The expensive full decode runs only when you press `Z`, and only if the preview is smaller than the sensor.
-- **Prefetch.** The pictures ahead of and behind the current one are decoded in a thread pool, so a step is a texture swap. The default window is 12 ahead and 8 behind (about 21 pictures); at 2560 px each picture is about 13 MB, so that is about 275 MB of previews; the process as a whole sits around 1.7x that on macOS and Linux (their allocators keep freed decode buffers), less on Windows. Change it in Preferences, or with `--ahead N --behind N` for one run.
-- **Measured.** `spuza --demo <folder> --bench` prints the first-paint time, every step, and every full decode. On a six-file test set (five Ricoh GR DNGs of 29 MB, one Fujifilm X-Pro2 RAF) the step mean is about 10 ms and the first picture is on screen in under a second.
+Why uv and not an installer? Spuza is a Python application. `uv tool install` gives it its own Python and its own dependencies, and it puts one `spuza` command on your PATH. Updating or removing it is clean, it never touches the system Python, and it needs no admin rights.
 
 ## Development
 
@@ -164,17 +227,18 @@ uv sync
 uv run spuza --demo docs/samples
 ```
 
-The project gate, run from the repository root:
+To run the gate from the repository root:
 
 ```sh
 uv run --project . ruff check --select F src tests && uv run --project . python -m pytest -q
 ```
 
-CI runs the gate on Linux, Windows and macOS 15 and builds the unsigned `Spuza.app`.
-Pushing a tag `vX.Y.Z` publishes a GitHub release with the wheel and the app bundle.
-The screenshots in this README come from `docs/screenshots.py`, which drives the real window headless over `docs/samples`.
+- **CI** runs the gate on Linux, Windows and macOS 15, and it builds the unsigned `Spuza.app`.
+- **Releases.** Pushing a tag `vX.Y.Z` publishes a GitHub release. The steps are in [RELEASING.md](RELEASING.md).
+- **README check.** `docs/check_readme.py` runs as part of the test suite. It fails if this README misses a key, flag, command-line option, file format or the current version.
+- **Images.** `uv run python docs/shots.py` makes every image in this README. It drives the real window over `docs/samples`.
 
-Built with [PySide6](https://doc.qt.io/qtforpython-6/), [rawpy](https://github.com/letmaik/rawpy), [Pillow](https://python-pillow.org/) and [pillow-heif](https://github.com/bigcat88/pillow_heif). Python 3.12 or newer.
+Spuza is built with [PySide6](https://doc.qt.io/qtforpython-6/), [rawpy](https://github.com/letmaik/rawpy), [Pillow](https://python-pillow.org/) and [pillow-heif](https://github.com/bigcat88/pillow_heif). It needs Python 3.12 or newer; CI tests 3.13.
 
 ## License
 
