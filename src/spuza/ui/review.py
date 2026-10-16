@@ -140,7 +140,7 @@ class ReviewGrid(QWidget):
         self._pool.setMaxThreadCount(2)
         self._zoom_index: int | None = None
         self._zoom_fit = True
-        self._zoom_loading: int | None = None
+        self._zoom_loading: set[int] = set()  # ZOOM_SIDE decodes in flight
         self._zoom_big: dict[int, QImage] = {}
 
         self.header = QLabel()
@@ -274,12 +274,11 @@ class ReviewGrid(QWidget):
 
     def _on_loaded(self, i: int, img, max_side: int, err: str) -> None:
         if max_side == ZOOM_SIDE:
-            if self._zoom_loading == i:
-                self._zoom_loading = None
-                if img is not None and not img.isNull():
-                    self._zoom_big[i] = img
-                    if self._zoom_index == i:
-                        self._set_zoom_image(img)
+            self._zoom_loading.discard(i)
+            if img is not None and not img.isNull():
+                self._zoom_big[i] = img
+                if self._zoom_index == i:
+                    self._set_zoom_image(img)
             return
         self._inflight.discard(i)
         if img is None or img.isNull():
@@ -328,8 +327,11 @@ class ReviewGrid(QWidget):
             img = th.toImage() if th is not None else None
         if img is not None:
             self._set_zoom_image(img)
-        if i not in self._zoom_big and self._zoom_loading is None:
-            self._zoom_loading = i
+        else:  # nothing for this picture yet: do not leave the previous one under the new caption
+            self.scene.clear()
+            self._zoom_item = None
+        if i not in self._zoom_big and i not in self._zoom_loading:
+            self._zoom_loading.add(i)
             self._pool.start(_Job(self._sig, self._get_loader(), i, self.catalog.pictures[i].primary, ZOOM_SIDE))
         self.zoom_view.setFocus()
 
@@ -373,6 +375,8 @@ class ReviewGrid(QWidget):
 
     def _handle_key(self, ev: QKeyEvent) -> bool:
         k = ev.key()
+        if ev.isAutoRepeat() and k in (Qt.Key.Key_M, Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            return True  # a held key must not unmark a run of pictures or reopen repeatedly
         zooming = self.stack.currentIndex() == PAGE_ZOOM
         if k in (Qt.Key.Key_M, Qt.Key.Key_Space):  # never Delete: nothing is deleted
             self.unmark_selected()
