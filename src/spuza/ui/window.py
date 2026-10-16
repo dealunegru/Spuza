@@ -165,8 +165,9 @@ class MainWindow(QMainWindow):
     step_timed = Signal(int, float)  # picture index, ms from key handled to its pixmap set
 
     def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None, resume=True,
-                 card_note=""):
+                 card_note="", card_mount: Path | None = None):
         super().__init__(parent)
+        self.card_mount = Path(card_mount) if card_mount else None  # the detected camera card to eject, else None
         self._resume_allowed = bool(resume)  # False for --bench: a scripted run neither reads nor writes sessions
         self.catalog, self.prefetcher, self.root = catalog, prefetcher, Path(root)
         self.prefs = prefs if prefs is not None else settings.open_settings()
@@ -344,11 +345,11 @@ class MainWindow(QMainWindow):
         if not len(self.catalog):
             return
         i = self.catalog.index
-        now_marked = self.catalog.toggle_mark(i)
+        self.catalog.toggle_mark(i)
         self.filmstrip.item_changed(i)
         self.refresh_marks()
-        if now_marked and self.advance_on_mark and self.stack.currentIndex() == 0:
-            self.step(1)  # "move on mark": a keeper is decided, show the next one (last picture: stays)
+        if self.advance_on_mark and self.stack.currentIndex() == 0:
+            self.step(1)  # "move on mark": mark or unmark, the pick is decided; show the next (last: stays)
 
     def set_advance_on_mark(self, on: bool, announce: bool = True) -> None:
         """Toggle and persist "move on mark"; the toolbar button mirrors it."""
@@ -445,6 +446,7 @@ class MainWindow(QMainWindow):
         self.last_message = text
         if self.is_bleed:  # the status bar is hidden in full-bleed; use the strip
             self.viewer.strip.show_note(text, 5000)
+            self.viewer.reveal_strip()
         else:
             self.statusBar().showMessage(text, 5000)
 
@@ -457,7 +459,7 @@ class MainWindow(QMainWindow):
         for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
             w.setVisible(not on)
         self.toolbar2.setVisible(not on and self._next_row_wanted())
-        self.viewer.strip.setVisible(on)
+        self.viewer.set_bleed(on)  # hidden; pointer movement reveals it
         if self._compare_strip is not None:
             self._compare_strip.setVisible(on)
         if on:
@@ -588,7 +590,9 @@ class MainWindow(QMainWindow):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
         return CopySheet(pictures, default_dest=default_dest, parent=parent,
-                         others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()))
+                         others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()),
+                         organise=settings.read_organise(self.prefs), eject_after=settings.read_eject_after(self.prefs),
+                         quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount)
 
     def open_copy(self) -> None:
         marked = self.catalog.marked()
@@ -598,6 +602,9 @@ class MainWindow(QMainWindow):
         factory = self.copy_sheet_factory or self._default_copy_sheet_factory
         try:
             self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self)
+            quit_signal = getattr(self._sheet, "quit_requested", None)
+            if quit_signal is not None:
+                quit_signal.connect(self.close)  # the normal close path: closeEvent saves and flushes as usual
             (getattr(self._sheet, "open", None) or self._sheet.show)()
         except Exception as exc:  # noqa: BLE001
             self.say(f"Copy is not available: {exc}")
@@ -608,7 +615,10 @@ class MainWindow(QMainWindow):
         return PrefsSheet(ahead, behind, max_side, parent=parent, advanced=features.is_advanced(),
                           threads=settings.read_threads(self.prefs),
                           peaking_threshold=settings.read_peaking_threshold(self.prefs),
-                          resume=settings.read_resume_on(self.prefs))
+                          resume=settings.read_resume_on(self.prefs),
+                          organise=settings.read_organise(self.prefs),
+                          eject_after=settings.read_eject_after(self.prefs),
+                          quit_after=settings.read_quit_after(self.prefs))
 
     def _show_mode(self) -> None:
         adv = features.is_advanced()
@@ -671,6 +681,13 @@ class MainWindow(QMainWindow):
             if r != getattr(sheet, "seeded_resume", r):
                 settings.write_resume_on(self.prefs, r)
                 remember = r
+        for name, write in (("organise", settings.write_organise), ("eject_after", settings.write_eject_after),
+                            ("quit_after", settings.write_quit_after)):  # classic rows: saved in any mode, if flipped
+            getter = getattr(sheet, name, None)
+            if callable(getter):
+                v = bool(getter())
+                if v != getattr(sheet, "seeded_" + {"eject_after": "eject", "quit_after": "quit"}.get(name, name), v):
+                    write(self.prefs, v)
         self.prefs.sync()
         if changed:
             self.set_advanced(adv)

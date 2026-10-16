@@ -125,3 +125,34 @@ def read_resume_on(s: QSettings) -> bool:
 
 def write_resume_on(s: QSettings, on: bool) -> None:
     s.setValue(RESUME_ON, bool(on))
+
+
+# Friend round 2: what a copy does with the destination and the card (classic Preferences rows; all on by default).
+COPY_ORGANISE = "copy/organise"  # raw / soc / ed folders in the destination
+COPY_EJECT = "copy/eject"  # eject the card after a successful copy
+COPY_QUIT = "copy/quit"  # quit Spuza after a successful copy
+
+
+def read_organise(s: QSettings) -> bool:
+    return read_bool(s, COPY_ORGANISE, True)
+
+
+def write_organise(s: QSettings, on: bool) -> None:
+    s.setValue(COPY_ORGANISE, bool(on))
+
+
+def read_eject_after(s: QSettings) -> bool:
+    return read_bool(s, COPY_EJECT, True)
+
+
+def write_eject_after(s: QSettings, on: bool) -> None:
+    s.setValue(COPY_EJECT, bool(on))
+
+
+def read_quit_after(s: QSettings) -> bool:
+    return read_bool(s, COPY_QUIT, True)
+
+
+def write_quit_after(s: QSettings, on: bool) -> None:
+    s.setValue(COPY_QUIT, bool(on))
+

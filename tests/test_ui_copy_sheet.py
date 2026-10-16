@@ -20,6 +20,12 @@ from spuza.ui.copy_sheet import CopySheet
 _APP = QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _logs_dir(tmp_path, monkeypatch):
+    """Copy logs go to a per-test folder, never the real app-data one (and never the destination)."""
+    monkeypatch.setenv("SPUZA_LOGS_DIR", str(tmp_path / "spuza-logs"))
+
+
 @pytest.fixture(scope="module")
 def qapp():
     return _APP
@@ -109,7 +115,7 @@ def test_real_copy_through_worker(qapp, tmp_path):
     pics = make_card(tmp_path)
     before = digests(tmp_path / "card")
     out = tmp_path / "out"
-    sheet = CopySheet(pics, out)
+    sheet = CopySheet(pics, out, organise=False)
     ticks, results, started = [], [], []
     sheet.progress.connect(lambda d, t: ticks.append((d, t)))
     sheet.finished.connect(results.append)

@@ -3,7 +3,15 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from spuza.copy import CopyResult, free_space, human_size, plan_copy, run_copy
+
+
+@pytest.fixture(autouse=True)
+def _logs_dir(tmp_path, monkeypatch):
+    """Copy logs go to a per-test folder, never the real app-data one (and never the destination)."""
+    monkeypatch.setenv("SPUZA_LOGS_DIR", str(tmp_path / "spuza-logs"))
 
 
 def make(path: Path, data: bytes, mtime: int | None = None) -> Path:
@@ -148,7 +156,9 @@ def test_target_appearing_meanwhile_is_not_overwritten(tmp_path):
     assert any(p.read_bytes() == b"mine" for p in dest.glob("r-*.RAF"))
 
 
-def test_log_lists_every_file(tmp_path):
+def test_log_lists_every_file(tmp_path, monkeypatch):
+    logs = tmp_path / "logs-here"
+    monkeypatch.setenv("SPUZA_LOGS_DIR", str(logs))
     s = tmp_path / "s"
     a = make(s / "a.RAF", b"aa")
     b = make(s / "b.RAF", b"bb")
@@ -158,7 +168,7 @@ def test_log_lists_every_file(tmp_path):
     make(dest / "b.RAF", b"bb")
     make(dest / "c.RAF", b"zz")
     res = run_copy(plan_copy([[a], [b], [c], [gone]], dest))
-    assert isinstance(res, CopyResult) and res.log_path is not None and res.log_path.parent == dest
+    assert isinstance(res, CopyResult) and res.log_path is not None and res.log_path.parent == logs
     assert res.log_path.name.startswith("spuza-copy-") and res.log_path.suffix == ".log"
     text = res.log_path.read_text(encoding="utf-8")
     for name in ("a.RAF", "b.RAF", "c.RAF", "c-1.RAF", "gone.RAF"):
