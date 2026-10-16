@@ -83,16 +83,16 @@ def test_memory_line_updates_live():
     sheet.ahead_spin.setValue(30)
     assert sheet.memory_text() == f"about {settings.window_mb(30, 8, 2560)} MB of previews"
     sheet.behind_spin.setValue(0)
-    assert sheet.memory_text() == f"about {settings.window_mb(30, 0, 2560)} MB of memory"
+    assert sheet.memory_text() == f"about {settings.window_mb(30, 0, 2560)} MB of previews"
     small = PrefsSheet(12, 8, 1280)
-    assert small.memory_text() == f"about {settings.window_mb(12, 8, 1280)} MB of memory"
+    assert small.memory_text() == f"about {settings.window_mb(12, 8, 1280)} MB of previews"
 
 
 def test_reset_to_defaults_sets_spins_only():
     sheet = PrefsSheet(40, 0, 2560)
     sheet.reset_button.click()
     assert sheet.values() == (settings.DEFAULT_AHEAD, settings.DEFAULT_BEHIND) == (12, 8)
-    assert sheet.memory_text() == "about 275 MB of memory"
+    assert sheet.memory_text() == "about 275 MB of previews"
     assert stored_window() == (12, 8)  # defaults either way; nothing was written
     assert not settings.open_settings().contains(settings.PREFETCH_AHEAD)
 

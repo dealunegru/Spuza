@@ -22,7 +22,10 @@ from spuza.ui import settings
 CARD_SIZE = 1000
 STEPS = 300
 STEP_TIMEOUT_S = 30.0
-GROWTH_BOUND_MB = 60  # 150 -> 300: a leak of one preview (13 MB) per ~4 steps would blow this
+# 150 -> 300: a leak of one preview (13 MB) per ~4 steps would be +487 MB, far above this. The bound is
+# not tighter because the working set is still settling at step 150: five Windows runs measured the
+# 150 -> 300 delta at -20, 0, +28, +65 and +126 MB with the same plateau (about base + window) each time.
+GROWTH_BOUND_MB = 150
 SLACK_MB = 120  # decoder arenas, allocator fragmentation, Qt/PIL import cost on top of the window
 
 
