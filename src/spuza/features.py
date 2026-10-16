@@ -45,6 +45,20 @@ def set_mode(m: str) -> None:
     _mode = m
 
 
+def resolve_mode(cli: str | None, prefs) -> str:
+    """This run's mode: the CLI choice, else the saved preference, else classic. Reads `prefs`, never writes."""
+    if cli in MODES:
+        return cli
+    from spuza.ui import settings
+
+    return ADVANCED if settings.read_advanced(prefs) else CLASSIC
+
+
+def classic_flags() -> frozenset[str]:
+    """Names of the flags that are part of classic mode."""
+    return frozenset(n for n, f in FLAGS.items() if f.classic)
+
+
 def is_advanced() -> bool:
     return _mode == ADVANCED
 

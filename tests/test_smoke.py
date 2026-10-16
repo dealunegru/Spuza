@@ -75,6 +75,19 @@ def test_bench_exits_zero_offscreen(tmp_path, capsys):
     assert err.count("picture ") >= 5
 
 
+def test_bench_exits_zero_in_advanced_mode(tmp_path, capsys, monkeypatch):
+    from spuza import features
+
+    seen = []
+    real = features.set_mode
+    monkeypatch.setattr(features, "set_mode", lambda m: (seen.append(m), real(m)))
+    root = make_samples(tmp_path / "s")
+    assert main(["--demo", str(root), "--bench", "--advanced"]) == 0
+    assert seen == ["advanced"] and features.mode() == "advanced"
+    assert "total" in capsys.readouterr().err
+    assert not (tmp_path / "spuza-prefs.ini").exists()
+
+
 def test_bench_on_empty_folder_exits_1(tmp_path):
     (tmp_path / "e").mkdir()
     assert main(["--demo", str(tmp_path / "e"), "--bench"]) == 1
