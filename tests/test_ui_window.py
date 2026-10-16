@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from spuza.catalog import Catalog, Picture, Prefetcher
 from spuza.preview import PreviewInfo
-from spuza.ui.window import MainWindow
+from spuza.ui.window import MainWindow, default_copy_dest
 
 # A QApplication must exist before any other test file's fixture makes a bare QGuiApplication
 # (test_catalog does, and then widgets abort). Collection imports this module first, so create it here.
@@ -206,7 +206,7 @@ def test_copy_opens_sheet_with_marked_and_default_dest(win):
     win.copy_sheet_factory = Sheet
     key(win, Qt.Key_M)
     key(win, Qt.Key_C)
-    assert seen["pictures"] == [PICS[0]] and seen["dest"] == ROOT / "Spuza"
+    assert seen["pictures"] == [PICS[0]] and seen["dest"] == default_copy_dest()
     assert seen["parent"] is win and seen["opened"]
 
 
