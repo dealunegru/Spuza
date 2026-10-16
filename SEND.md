@@ -28,7 +28,7 @@ System Settings > Privacy & Security, scroll to the message about Spuza, click *
 then launch again. Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Spuza.app`.
 The app has no command line; it scans the mounted cards when it opens.
 
-## 3. The wheel (no network access to GitHub needed on the Mac)
+## 3. The wheel (the Mac does not need to reach GitHub)
 
 Build it here (Windows or Mac, any Python with uv):
 

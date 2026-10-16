@@ -78,7 +78,7 @@ Every key also has a toolbar button with its shortcut printed on it.
 The inspector on the right shows the file names and sizes, the preview's size and decode time, aperture, shutter, ISO, focal length and camera.
 Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 
-**Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only three things: the copies you ask for, its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
+**Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only four things: the copies you ask for, a log of each copy beside them, its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
 
 <p align="center">
   <img src="docs/img/bleed.png" alt="Full screen: the picture alone, with a one-line status strip" width="900">
@@ -114,12 +114,13 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 - A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together.
 - If a file is already in the folder with identical content, it is skipped.
 - If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
+- Each copy writes a log, `spuza-copy-<date>-<time>.log`, into the destination folder: every file copied, skipped or renamed, and the totals.
 
 ## Preferences
 
 `Cmd-,` (`Ctrl-,` on Windows) or the toolbar button opens Preferences:
 
-- **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). Below them, the memory those previews take.
+- **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
 - **Advanced mode**: see below.
 - Advanced mode only:
   - **Decode threads** (1-8, default 3, applied at the next launch).
