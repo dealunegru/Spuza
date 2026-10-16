@@ -103,11 +103,11 @@ def test_missing_cli_flag(root):
 
 
 def test_badge_lagging_pyproject(root):
-    py = root / "pyproject.toml"
-    py.write_text(py.read_text(encoding="utf-8").replace('version = "0.4.0"', 'version = "0.4.1"', 1),
-                  encoding="utf-8")
-    t = good_readme(root).replace("badge/version-0.4.1-", "badge/version-0.4.0-")
-    _one(root, t, "no static version badge for 0.4.1")
+    # version-independent: a hard-coded pair here went green by accident at 0.4.1 and red at 0.5.0
+    ver = cr.tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    t = good_readme(root).replace(f"badge/version-{ver}-", "badge/version-0.0.0-")
+    assert t != good_readme(root)
+    _one(root, t, f"no static version badge for {ver}")
 
 
 def test_whats_new_missing_version(root):
