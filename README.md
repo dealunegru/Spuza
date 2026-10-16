@@ -1,3 +1,11 @@
+<pre align="center">
+   _____ ____  __  _______   ___
+  / ___// __ \/ / / /__  /  /   |
+  \__ \/ /_/ / / / /  / /  / /| |
+ ___/ / ____/ /_/ /  / /__/ ___ |
+/____/_/    \____/  /____/_/  |_|
+</pre>
+
 <p align="center">
   <img src="docs/screenshot-cull.png" alt="Spuza culling a card: the picture, the filmstrip, the marked keepers" width="900">
 </p>
@@ -26,6 +34,7 @@ It opens the card, shows the first picture at once, and gets out of the way.
 
 - **Step** through the card with one key. The next pictures are already decoded, so a step takes about 10 ms.
 - **Mark** a keeper, keep going. Go back and mark later; nothing is lost.
+- **Move on mark**, if you like: with `A` on, marking a picture shows the next one, so a pass over the card is one key per frame.
 - **Review** every marked picture on one contact sheet. Unmark what did not survive a second look.
 - **Zoom** to 100% for the sharpness check. On a raw file this triggers a full decode in the background.
 - **Copy** the keepers to a folder on your drive. A raw file travels with its JPEG twin.
@@ -91,6 +100,7 @@ Spuza scans removable drives for a `DCIM` folder, or takes a folder on the comma
 | Key | Does |
 |---|---|
 | `Space` or `M` | mark / unmark the picture |
+| `A` | move on mark: on or off (marking then shows the next picture; remembered between runs) |
 | `→` or `J` | next picture |
 | `←` or `K` | previous picture |
 | `Z` | 100% zoom (full decode of a raw file runs in the background) |

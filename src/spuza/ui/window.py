@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, Q
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from spuza.copy import human_size
-from spuza.ui import theme
+from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
 from spuza.ui.inspector import Inspector
 from spuza.ui.viewer import Viewer
@@ -30,6 +30,7 @@ BUTTONS = [
     ("back", "Back", "←/K", False),
     ("next", "Next", "→/J", False),
     ("mark", "Mark", "Space/M", True),
+    ("advance", "Move on mark", "A", True),
     ("zoom", "Zoom 100%", "Z", True),
     ("fullscreen", "Full screen", "F", True),
     ("review", "Review", "R", True),
@@ -111,9 +112,11 @@ class Sidebar(QWidget):
 class MainWindow(QMainWindow):
     step_timed = Signal(int, float)  # picture index, ms from key handled to its pixmap set
 
-    def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None):
+    def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None):
         super().__init__(parent)
         self.catalog, self.prefetcher, self.root = catalog, prefetcher, Path(root)
+        self.prefs = prefs if prefs is not None else settings.open_settings()
+        self.advance_on_mark = settings.read_bool(self.prefs, settings.ADVANCE_ON_MARK, False)
         self.clock, self._t_open = clock, clock()
         self.review_factory = None
         self.copy_sheet_factory = None
@@ -152,6 +155,7 @@ class MainWindow(QMainWindow):
         b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
         b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
         b["mark"].clicked.connect(lambda: self._control(Qt.Key_Space, self.toggle_mark))
+        b["advance"].clicked.connect(lambda: self.set_advance_on_mark(not self.advance_on_mark))
         b["zoom"].clicked.connect(lambda: self._control(Qt.Key_Z, self.viewer.toggle_zoom))
         b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
         b["review"].clicked.connect(lambda: self.toggle_review())
@@ -191,6 +195,9 @@ class MainWindow(QMainWindow):
         self.sidebar.show_marked.connect(self.open_review)
         QShortcut(QKeySequence(QKeySequence.StandardKey.FullScreen), self,
                   activated=lambda: self.set_bleed(not self.is_bleed))
+        advance = QShortcut(QKeySequence("A"), self, context=Qt.ShortcutContext.WindowShortcut,
+                            activated=lambda: self.set_advance_on_mark(not self.advance_on_mark))
+        advance.setAutoRepeat(False)  # a held A must not flip the preference back and forth
 
         self._tick = QTimer(self)  # elapsed clock; repeating, stopped in closeEvent
         self._tick.setInterval(1000)
@@ -198,6 +205,7 @@ class MainWindow(QMainWindow):
         self._tick.start()
 
         self.retheme()
+        self.buttons["advance"].setChecked(self.advance_on_mark)
         prefetcher.update(catalog.index)
         self._render_current()
 
@@ -225,9 +233,21 @@ class MainWindow(QMainWindow):
         if not len(self.catalog):
             return
         i = self.catalog.index
-        self.catalog.toggle_mark(i)
+        now_marked = self.catalog.toggle_mark(i)
         self.filmstrip.item_changed(i)
         self.refresh_marks()
+        if now_marked and self.advance_on_mark and self.stack.currentIndex() == 0:
+            self.step(1)  # "move on mark": a keeper is decided, show the next one (last picture: stays)
+
+    def set_advance_on_mark(self, on: bool, announce: bool = True) -> None:
+        """Toggle and persist "move on mark"; the toolbar button mirrors it."""
+        on = bool(on)
+        self.advance_on_mark = on
+        self.prefs.setValue(settings.ADVANCE_ON_MARK, on)
+        self.prefs.sync()
+        self.buttons["advance"].setChecked(on)
+        if announce:
+            self.say("Move on mark: on (marking shows the next picture)" if on else "Move on mark: off")
 
     # -- rendering --------------------------------------------------------------------------------
     def _render_current(self) -> None:
@@ -447,7 +467,8 @@ class MainWindow(QMainWindow):
             if k in GRID_KEYS and k != Qt.Key_Escape or k in (Qt.Key_J, Qt.Key_K):
                 return  # the grid ignored it (or a fake review did): never drive the hidden viewer
         if k in (Qt.Key_Space, Qt.Key_M):
-            self.toggle_mark()
+            if not e.isAutoRepeat():  # a held key marks one picture, never a run (move on mark would)
+                self.toggle_mark()
         elif k in (Qt.Key_Right, Qt.Key_J):
             self.step(1)
         elif k in (Qt.Key_Left, Qt.Key_K):

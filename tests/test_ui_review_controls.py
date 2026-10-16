@@ -25,10 +25,10 @@ ROOT = Path("/cards/X")
 
 # control -> behaviour while review is shown
 REVIEW_TABLE = {
-    "back": "grid", "next": "grid", "mark": "grid", "zoom": "grid",
+    "back": "grid", "next": "grid", "mark": "grid", "advance": "global", "zoom": "grid",
     "fullscreen": "disabled", "review": "global", "copy": "global",
     "sidebar:All": "global", "sidebar:Marked": "global",
-    "shortcut:F11": "disabled", "filmstrip": "grid",
+    "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
     "review:Unmark": "grid", "review:Zoom": "grid",
 }
 
@@ -143,6 +143,9 @@ def test_global_controls_stay_global(w):
     in_review(w)
     w.buttons["review"].click()
     assert w.stack.currentIndex() == 0
+    in_review(w)
+    w.buttons["advance"].click()  # a preference: toggles from anywhere, review stays, viewer does not move
+    assert w.advance_on_mark and w.stack.currentIndex() == 1 and w.catalog.index == 0
 
 
 def test_f11_shortcut_inert_in_review(w):
@@ -150,6 +153,17 @@ def test_f11_shortcut_inert_in_review(w):
     for s in w.findChildren(QShortcut):
         s.activated.emit()
     assert not w.is_bleed
+
+
+def test_a_toggles_move_on_mark_while_the_real_grid_has_focus(w):
+    in_review(w)
+    target = w._review_target()
+    assert target is w.review.view and target.hasFocus()
+    QTest.keyClick(target, Qt.Key_A)  # the list view would swallow a printable key; the window shortcut wins
+    assert w.advance_on_mark and w.buttons["advance"].isChecked()
+    assert w.stack.currentIndex() == 1 and w.catalog.index == 0
+    QTest.keyClick(target, Qt.Key_A)
+    assert not w.advance_on_mark
 
 
 def test_filmstrip_pick_selects_in_grid_when_marked_else_ignored(w):

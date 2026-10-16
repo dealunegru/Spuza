@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -103,7 +105,7 @@ def test_keys_move_index_and_status(win):
 
 def test_toolbar_has_every_key_with_its_cap(win):
     caps = {n: b.cap for n, b in win.buttons.items()}
-    assert caps == {"back": "←/K", "next": "→/J", "mark": "Space/M", "zoom": "Z",
+    assert caps == {"back": "←/K", "next": "→/J", "mark": "Space/M", "advance": "A", "zoom": "Z",
                     "fullscreen": "F", "review": "R", "copy": "C"}
     assert win.buttons["zoom"].text().startswith("Zoom 100%")
     for b in win.buttons.values():
@@ -339,3 +341,89 @@ def test_message_outside_bleed_goes_to_status_bar(win):
     key(win, Qt.Key_C)
     assert "marked" in win.statusBar().currentMessage().lower()
     assert win.viewer.strip.note.isHidden()
+
+
+# -- move on mark ---------------------------------------------------------------------------------
+def test_move_on_mark_is_off_by_default_and_marking_stays(win):
+    assert not win.advance_on_mark and not win.buttons["advance"].isChecked()
+    key(win, Qt.Key_Space)
+    assert win.catalog.is_marked(0) and win.catalog.index == 0
+
+
+def test_a_toggles_move_on_mark_and_says_so(win):
+    key(win, Qt.Key_A)
+    assert win.advance_on_mark and win.buttons["advance"].isChecked()
+    assert win.last_message.startswith("Move on mark: on")
+    key(win, Qt.Key_A)
+    assert not win.advance_on_mark and not win.buttons["advance"].isChecked()
+    assert win.last_message == "Move on mark: off"
+    win.buttons["advance"].click()
+    assert win.advance_on_mark and win.buttons["advance"].isChecked()
+
+
+def test_marking_moves_on_but_unmarking_does_not(win):
+    key(win, Qt.Key_A)
+    key(win, Qt.Key_Space)  # marks 0, shows 1
+    assert win.catalog.is_marked(0) and win.catalog.index == 1
+    key(win, Qt.Key_M)  # marks 1, shows 2
+    assert win.catalog.is_marked(1) and win.catalog.index == 2
+    key(win, Qt.Key_Left)  # back to 1 ...
+    key(win, Qt.Key_Space)  # ... unmark it: stays, so the decision is visible
+    assert not win.catalog.is_marked(1) and win.catalog.index == 1
+    assert win.lbl_marked.text().startswith("1 marked")
+
+
+def test_marking_the_last_picture_stays_on_it(win):
+    key(win, Qt.Key_A)
+    win.go_to(5)
+    key(win, Qt.Key_Space)
+    assert win.catalog.is_marked(5) and win.catalog.index == 5
+
+
+def test_mark_button_click_also_moves_on(win):
+    key(win, Qt.Key_A)
+    win.buttons["mark"].click()
+    assert win.catalog.is_marked(0) and win.catalog.index == 1
+
+
+def test_move_on_mark_does_not_move_the_viewer_from_review(win):
+    key(win, Qt.Key_A)
+    key(win, Qt.Key_Space)  # mark 0 -> on 1
+    key(win, Qt.Key_R)  # the fake review ignores keys; the hidden viewer must not move either
+    key(win, Qt.Key_Space)
+    assert win.stack.currentIndex() == 1 and win.catalog.index == 1
+    win.toggle_mark()  # even a direct call while review is up marks in place, no advance
+    assert win.catalog.is_marked(1) and win.catalog.index == 1
+    key(win, Qt.Key_A)  # the toggle itself is a window shortcut: works from review (real grid: controls test)
+    assert win.stack.currentIndex() == 1 and not win.advance_on_mark
+
+
+def test_held_space_marks_one_picture_not_a_run(win):
+    key(win, Qt.Key_A)
+    key(win, Qt.Key_Space)  # the real press: marks 0, shows 1
+    for _ in range(4):  # the OS repeats while the key is held
+        QApplication.sendEvent(win, QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key_Space,
+                                              Qt.KeyboardModifier.NoModifier, " ", True, 1))
+    assert win.catalog.marked_count == 1 and win.catalog.index == 1
+    for _ in range(3):  # a held A does not flip the preference either
+        QApplication.sendEvent(win, QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key_A,
+                                              Qt.KeyboardModifier.NoModifier, "a", True, 1))
+    assert win.advance_on_mark
+
+
+def test_move_on_mark_persists_across_windows(clock):
+    cat = Catalog(PICS)
+    pf = Prefetcher(cat, loader=fake_loader)
+    w = MainWindow(cat, pf, ROOT, clock=clock)
+    w.set_advance_on_mark(True)
+    w.close()
+    w.deleteLater()
+    QTest.qWait(0)
+    assert "advance_on_mark=true" in Path(os.environ["SPUZA_SETTINGS_FILE"]).read_text()  # on disk, not
+    cat2 = Catalog(PICS)                                                                   # a shared cache
+    pf2 = Prefetcher(cat2, loader=fake_loader)
+    w2 = MainWindow(cat2, pf2, ROOT, clock=clock)
+    try:
+        assert w2.advance_on_mark and w2.buttons["advance"].isChecked()
+    finally:
+        w2.close()

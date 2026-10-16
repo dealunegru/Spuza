@@ -24,6 +24,12 @@ RAF_NAME = "20250704_X-Pro2_9268.RAF"
 DNG_NAMES = [f"R00451{n}.DNG" for n in range(46, 51)]
 
 
+@pytest.fixture(autouse=True)
+def isolated_prefs(tmp_path, monkeypatch):
+    """Every test gets its own preferences file: nothing reaches the registry / plist, nothing leaks."""
+    monkeypatch.setenv("SPUZA_SETTINGS_FILE", str(tmp_path / "spuza-prefs.ini"))
+
+
 @pytest.fixture
 def real_set() -> Path:
     """The read-only folder of real camera files; never write inside it."""
