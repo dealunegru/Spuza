@@ -19,6 +19,9 @@
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+then, in a new Terminal window:
+```sh
 uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
 ```
 
@@ -26,10 +29,13 @@ uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+then, in a new PowerShell window:
+```powershell
 uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
 ```
 
-Open a new terminal window after the first line, then run `spuza` with a card in.
+Then run `spuza` with a card in.
 Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the release page.
 
 ## What's new
