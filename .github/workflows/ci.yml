@@ -15,13 +15,13 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Qt runtime libraries (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
       - run: uv python install 3.13
       - run: uv sync --python 3.13
       - run: uv run ruff check --select F src tests
@@ -31,15 +31,38 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
       - run: uv sync --python 3.13 --group build
       - name: Build Spuza.app (unsigned)
         run: uv run pyinstaller packaging/spuza.spec --noconfirm
       - name: Zip the bundle
         run: ditto -c -k --keepParent dist/Spuza.app dist/Spuza-macos.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Spuza-macos-unsigned
           path: dist/Spuza-macos.zip
           if-no-files-found: error
+
+  release:
+    # A tag v* (e.g. v0.1.0) publishes a GitHub release with the wheel and the unsigned .app.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, app]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv build
+      - uses: actions/download-artifact@v8
+        with:
+          name: Spuza-macos-unsigned
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/Spuza-macos.zip \
+            --title "Spuza $GITHUB_REF_NAME" --generate-notes

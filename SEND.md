@@ -1,40 +1,58 @@
-# Sending Spuza as a bundle
+# Sending Spuza to the Mac
 
-Until the GitHub repository exists, Spuza ships as one wheel file plus one install line.
-Build the wheel here (Windows or Mac, any Python with uv):
+Three ways, in order of preference. All need Apple Silicon and a current macOS.
+
+## 1. One install line (needs the GitHub repository to be public)
+
+In Terminal:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+open a new Terminal window, then
+
+```
+uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
+```
+
+Run it: `spuza` (card in; Spuza scans `/Volumes/*` for `DCIM`), or `spuza /path/to/folder`.
+Update: `uv tool upgrade spuza`. Remove: `uv tool uninstall spuza`.
+
+## 2. The app
+
+Every release at <https://github.com/fungimasters/Spuza/releases> carries `Spuza-macos.zip`
+(about 43 MB), built unsigned by CI on a macOS runner. Unzip, drag `Spuza.app` to
+Applications. The first launch is refused because the app is not signed: open
+System Settings > Privacy & Security, scroll to the message about Spuza, click **Open Anyway**,
+then launch again. Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Spuza.app`.
+The app has no command line; it scans the mounted cards when it opens.
+
+## 3. The wheel (works while the repository is private)
+
+Build it here (Windows or Mac, any Python with uv):
 
 ```
 uv build
 ```
 
-That writes `dist/spuza-0.1.0-py3-none-any.whl` (about 40 KB; it is pure Python, so the same
-file installs on Windows, Apple Silicon and Intel Macs; the heavy parts, PySide6 and rawpy,
-are fetched from PyPI at install time).
+That writes `dist/spuza-0.1.1-py3-none-any.whl` (about 40 KB, pure Python; the heavy parts,
+PySide6 and rawpy, are fetched from PyPI at install time). Get the file onto the Mac
+(AirDrop, mail, USB), install `uv` as in 1, then:
 
-## What the friend does on the Mac (Apple Silicon, current macOS)
+```
+uv tool install --python 3.13 ~/Downloads/spuza-0.1.1-py3-none-any.whl
+```
 
-1. Get the `.whl` file onto the Mac (AirDrop, mail, USB), for example into `~/Downloads`.
-2. If `uv` is not installed yet, in Terminal:
-
-   ```
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-
-   then open a new Terminal window.
-3. Install Spuza as a tool:
-
-   ```
-   uv tool install --python 3.13 ~/Downloads/spuza-0.1.0-py3-none-any.whl
-   ```
-
-4. Run it: `spuza` (card in; Spuza scans `/Volumes/*` for `DCIM`), or `spuza /path/to/folder`.
-
-Update: send a new wheel and run the same install line with `--force`.
-Remove: `uv tool uninstall spuza`.
+Update: send a new wheel and run the same line with `--force`.
 
 ## Verified
 
-- 2026-10-16, Windows: `uv tool install --python 3.13 dist/spuza-0.1.0-py3-none-any.whl` installed
-  one executable; `spuza --demo <six test files> --bench` from the installed tool: 6 pictures,
-  0 failed, step mean 21.6 ms under load, one background full decode on the X-Pro2 RAF.
-- Not yet run on a Mac. First run there fetches PySide6 (about 100 MB) and rawpy.
+- 2026-10-16, Windows: the wheel installed as a uv tool; `spuza --demo <six test files> --bench`
+  from the installed tool: 6 pictures, 0 failed, step mean 21.6 ms under load, one background
+  full decode on the X-Pro2 RAF.
+- 2026-10-16, Windows: the install line of 1 run against the (then private) repository with
+  the owner's credentials installed spuza 0.1.0; the six test files ran with 0 failed,
+  step mean 12.1 ms.
+- 2026-10-16, CI: tests green on Linux, Windows and macOS 15; `Spuza.app` built on macOS 15
+  (118 MB unpacked, Qt, libraw and libheif inside). Not yet launched on a Mac.

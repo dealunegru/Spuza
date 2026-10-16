@@ -1,10 +1,12 @@
 # PyInstaller spec: windowed onedir bundle "Spuza.app" (macOS).
 # Build from the repo root:  uv run --group build pyinstaller packaging/spuza.spec --noconfirm
+import tomllib
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
 
 HERE = Path(SPECPATH)  # noqa: F821  (injected by PyInstaller)
+VERSION = tomllib.loads((HERE.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 
 datas, binaries, hiddenimports = [], [], []
 for pkg in ("rawpy", "pillow_heif"):
@@ -47,5 +49,10 @@ app = BUNDLE(  # noqa: F821
     coll,
     name="Spuza.app",
     bundle_identifier="com.fungimasters.spuza",
-    info_plist={"CFBundleName": "Spuza", "NSHighResolutionCapable": True},
+    info_plist={
+        "CFBundleName": "Spuza",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
+        "NSHighResolutionCapable": True,
+    },
 )

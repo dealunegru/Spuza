@@ -29,6 +29,13 @@ line (or if `uv` is not found), then run `spuza`.
 
 Update: `uv tool upgrade spuza`
 
+### Or the app
+
+Each release at <https://github.com/fungimasters/Spuza/releases> carries `Spuza-macos.zip`:
+unzip it and drag `Spuza.app` into Applications. It is not signed, so the first launch is
+refused; open System Settings > Privacy & Security, scroll to the message about Spuza and
+click **Open Anyway** (once). Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Spuza.app`.
+
 ## Windows
 
 From a clone of the repository:
