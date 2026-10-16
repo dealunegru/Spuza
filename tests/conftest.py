@@ -5,6 +5,7 @@ desktop alike. The real camera files live outside the repo and are read-only; te
 skip when they are absent (CI has none). Set SPUZA_TEST_SET to point elsewhere.
 """
 
+import gc
 import os
 from pathlib import Path
 
@@ -19,6 +20,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 QAPP = QApplication.instance() or QApplication([])
 
+from spuza.ui import gcguard  # noqa: E402
+
+gcguard.install(QAPP)
+
 REAL_SET = Path(os.environ.get("SPUZA_TEST_SET", "E:/tmp/spuza-test/jes"))
 RAF_NAME = "20250704_X-Pro2_9268.RAF"
 DNG_NAMES = [f"R00451{n}.DNG" for n in range(46, 51)]
@@ -28,6 +33,13 @@ DNG_NAMES = [f"R00451{n}.DNG" for n in range(46, 51)]
 def isolated_prefs(tmp_path, monkeypatch):
     """Every test gets its own preferences file: nothing reaches the registry / plist, nothing leaks."""
     monkeypatch.setenv("SPUZA_SETTINGS_FILE", str(tmp_path / "spuza-prefs.ini"))
+
+
+@pytest.fixture(autouse=True)
+def gc_on_gui_thread():
+    """Free each test's leaked widgets here on the main thread, before the next test starts pool workers."""
+    yield
+    gc.collect()
 
 
 @pytest.fixture

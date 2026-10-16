@@ -1,5 +1,6 @@
 """ReviewGrid: marked pictures only, unmark, zoom, keys, percentage, thumbnails (offscreen)."""
 
+import threading
 import time
 from pathlib import Path
 
@@ -232,13 +233,16 @@ def test_inflight_is_bounded(qapp, monkeypatch):
     seen = []
 
     g = None
+    ready = threading.Event()  # set once `g` is assigned: ReviewGrid() already pumps jobs inside __init__
 
     def loader(path, max_side):
+        assert ready.wait(5)
         seen.append(len(g._inflight))
         return Image.new("RGB", (10, 10)), None
 
     cat = catalog(n=12, marked=tuple(range(12)))
     g = ReviewGrid(cat, None, loader=loader)
+    ready.set()
     assert wait_for(lambda: len(g._thumbs) == 12)
     assert max(seen) <= 2
     g.close()
