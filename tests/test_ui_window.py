@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from pathlib import Path
 
 import pytest
 from PIL import Image
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from spuza.catalog import Catalog, Picture, Prefetcher
 from spuza.preview import PreviewInfo
@@ -141,13 +142,33 @@ def test_sidebar_all_above_marked(win):
     assert win.sidebar.root_text().endswith("X-PRO2")
 
 
-def test_ready_and_elapsed_are_live(win, clock):
-    pump(lambda: win.lbl_ready.text() != "next 0 ready")
-    assert win.lbl_ready.text() == f"next {win.prefetcher.ready_ahead()} ready"
-    assert win.lbl_elapsed.text() == "00:00"
+def _status_texts(win):
+    return [lb.text() for lb in win.statusBar().findChildren(QLabel)]
+
+
+def test_status_strip_has_no_ready_label_or_timer_text(win, clock):
+    pump(lambda: win.prefetcher.ready_ahead() > 0)
+    key(win, Qt.Key_Right)
     clock.box[0] += 75
     win.refresh_status()
-    assert win.lbl_elapsed.text() == "01:15"
+    for t in _status_texts(win):
+        assert not re.search(r"next \d+ ready", t) and not re.search(r"\d\d:\d\d", t), t
+
+
+def test_window_has_no_repeating_one_second_timer(win):
+    assert not hasattr(win, "_tick")
+    assert not [t for t in win.findChildren(QTimer) if t.isActive() and t.interval() == 1000 and not t.isSingleShot()]
+
+
+def test_position_and_marked_text_update(win):
+    assert win.lbl_pos.text() == "1 of 6" and win.lbl_marked.text() == "0 marked · 0 B"
+    key(win, Qt.Key_Right)
+    key(win, Qt.Key_M)
+    assert win.lbl_pos.text() == "2 of 6" and win.lbl_marked.text() == "1 marked · 28 MB"
+
+
+def test_prefetch_still_runs(win):
+    pump(lambda: win.prefetcher.ready_ahead() > 0)
 
 
 def test_full_bleed_toggle_and_esc(win):

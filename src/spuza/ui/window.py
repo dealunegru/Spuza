@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
         self.catalog, self.prefetcher, self.root = catalog, prefetcher, Path(root)
         self.prefs = prefs if prefs is not None else settings.open_settings()
         self.advance_on_mark = settings.read_bool(self.prefs, settings.ADVANCE_ON_MARK, False)
-        self.clock, self._t_open = clock, clock()
+        self.clock = clock  # kept for callers that pass it; the status strip no longer uses it
         self.review_factory = None
         self.copy_sheet_factory = None
         self.review = None
@@ -187,11 +187,8 @@ class MainWindow(QMainWindow):
 
         sb = self.statusBar()
         self.lbl_pos, self.lbl_marked = QLabel(), QLabel()
-        self.lbl_ready, self.lbl_elapsed = QLabel(), QLabel()
         sb.addWidget(self.lbl_pos)
         sb.addWidget(self.lbl_marked)
-        sb.addPermanentWidget(self.lbl_ready)
-        sb.addPermanentWidget(self.lbl_elapsed)
 
         prefetcher.ready.connect(self._on_ready)
         prefetcher.failed.connect(self._on_failed)
@@ -205,11 +202,6 @@ class MainWindow(QMainWindow):
         advance = QShortcut(QKeySequence("A"), self, context=Qt.ShortcutContext.WindowShortcut,
                             activated=lambda: self.set_advance_on_mark(not self.advance_on_mark))
         advance.setAutoRepeat(False)  # a held A must not flip the preference back and forth
-
-        self._tick = QTimer(self)  # elapsed clock; repeating, stopped in closeEvent
-        self._tick.setInterval(1000)
-        self._tick.timeout.connect(self.refresh_status)
-        self._tick.start()
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
@@ -295,11 +287,8 @@ class MainWindow(QMainWindow):
 
     def refresh_status(self) -> None:
         cat = self.catalog
-        secs = max(0, int(self.clock() - self._t_open))
         self.lbl_pos.setText(cat.position_text())
         self.lbl_marked.setText(f"{cat.marked_count} marked {DOT} {human_size(cat.marked_bytes)}")
-        self.lbl_ready.setText(f"next {self.prefetcher.ready_ahead()} ready")
-        self.lbl_elapsed.setText(f"{secs // 60:02d}:{secs % 60:02d}")
 
     def _on_ready(self, i: int, _img, _info) -> None:
         self.filmstrip.item_changed(i)
@@ -520,7 +509,6 @@ class MainWindow(QMainWindow):
         theme.follow(app, self.retheme)
 
     def closeEvent(self, e) -> None:
-        self._tick.stop()
         self.prefetcher.shutdown()
         self.viewer.shutdown()
         super().closeEvent(e)
