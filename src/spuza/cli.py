@@ -235,6 +235,21 @@ def run_bench(app, w) -> int:
     return 0 if ok else 1
 
 
+def card_mount_for(root: Path, cards, run: CardRun | None = None) -> Path | None:
+    """The detected camera card the opened `root` lives on, else None: only a card is ever ejected."""
+    if run is not None:
+        return Path(run.cards[run.chosen])
+    try:
+        r = Path(root).resolve()
+        for c in cards:
+            cr = Path(c).resolve()
+            if r == cr or cr in r.parents:
+                return Path(c)
+    except OSError:
+        pass
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = Path(args.demo or args.path) if (args.demo or args.path) else None
@@ -277,7 +292,13 @@ def main(argv: list[str] | None = None) -> int:
     extra = {} if threads == DEFAULT_THREADS else {"threads": threads}
     prefetcher = Prefetcher(catalog, ahead=ahead, behind=behind, **extra)
     # a scripted --bench starts at picture 1 and must not read or overwrite a real session
-    window = MainWindow(catalog, prefetcher, root, resume=not args.bench, **({"card_note": note} if note else {}))
+    mount = None
+    if not args.bench:  # nothing extra on the timing path
+        from spuza.catalog import find_cards
+
+        mount = card_mount_for(root, run.cards if run is not None else find_cards(), run)
+    window = MainWindow(catalog, prefetcher, root, resume=not args.bench, card_mount=mount,
+                        **({"card_note": note} if note else {}))
     if args.bench:
         theme.apply(app, theme.is_dark(app))
     else:

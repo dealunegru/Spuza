@@ -165,8 +165,9 @@ class MainWindow(QMainWindow):
     step_timed = Signal(int, float)  # picture index, ms from key handled to its pixmap set
 
     def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None, resume=True,
-                 card_note=""):
+                 card_note="", card_mount: Path | None = None):
         super().__init__(parent)
+        self.card_mount = Path(card_mount) if card_mount else None  # the detected camera card to eject, else None
         self._resume_allowed = bool(resume)  # False for --bench: a scripted run neither reads nor writes sessions
         self.catalog, self.prefetcher, self.root = catalog, prefetcher, Path(root)
         self.prefs = prefs if prefs is not None else settings.open_settings()
@@ -589,7 +590,9 @@ class MainWindow(QMainWindow):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
         return CopySheet(pictures, default_dest=default_dest, parent=parent,
-                         others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()))
+                         others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()),
+                         organise=settings.read_organise(self.prefs), eject_after=settings.read_eject_after(self.prefs),
+                         quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount)
 
     def open_copy(self) -> None:
         marked = self.catalog.marked()
@@ -599,6 +602,9 @@ class MainWindow(QMainWindow):
         factory = self.copy_sheet_factory or self._default_copy_sheet_factory
         try:
             self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self)
+            quit_signal = getattr(self._sheet, "quit_requested", None)
+            if quit_signal is not None:
+                quit_signal.connect(self.close)  # the normal close path: closeEvent saves and flushes as usual
             (getattr(self._sheet, "open", None) or self._sheet.show)()
         except Exception as exc:  # noqa: BLE001
             self.say(f"Copy is not available: {exc}")
@@ -609,7 +615,10 @@ class MainWindow(QMainWindow):
         return PrefsSheet(ahead, behind, max_side, parent=parent, advanced=features.is_advanced(),
                           threads=settings.read_threads(self.prefs),
                           peaking_threshold=settings.read_peaking_threshold(self.prefs),
-                          resume=settings.read_resume_on(self.prefs))
+                          resume=settings.read_resume_on(self.prefs),
+                          organise=settings.read_organise(self.prefs),
+                          eject_after=settings.read_eject_after(self.prefs),
+                          quit_after=settings.read_quit_after(self.prefs))
 
     def _show_mode(self) -> None:
         adv = features.is_advanced()
@@ -672,6 +681,13 @@ class MainWindow(QMainWindow):
             if r != getattr(sheet, "seeded_resume", r):
                 settings.write_resume_on(self.prefs, r)
                 remember = r
+        for name, write in (("organise", settings.write_organise), ("eject_after", settings.write_eject_after),
+                            ("quit_after", settings.write_quit_after)):  # classic rows: saved in any mode, if flipped
+            getter = getattr(sheet, name, None)
+            if callable(getter):
+                v = bool(getter())
+                if v != getattr(sheet, "seeded_" + {"eject_after": "eject", "quit_after": "quit"}.get(name, name), v):
+                    write(self.prefs, v)
         self.prefs.sync()
         if changed:
             self.set_advanced(adv)
