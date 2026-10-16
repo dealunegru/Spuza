@@ -205,6 +205,13 @@ def test_windows_eject_checks_the_drive_is_gone_bounded():
     assert len(sleeps) == eject_mod.WIN_CHECKS - 1 and sum(sleeps) <= 5.0
 
 
+def test_windows_root_with_a_quote_is_escaped():
+    run = Recorder(Done())
+    eject_mod.eject(Path("//srv/it's/share"), run=run, platform="win32", sleep=lambda s: None, exists=lambda p: False)
+    script = run.calls[0][0][-1]
+    assert ".ParseName('" in script and "it''s" in script and "it's" not in script
+
+
 def test_windows_nonzero_and_unsupported_platform():
     ok, why = eject_mod.eject(Path("E:/"), run=Recorder(Done(1, err="denied")), platform="win32")
     assert not ok and "denied" in why
