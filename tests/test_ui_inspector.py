@@ -21,9 +21,10 @@ def test_rows_with_values():
     w = Inspector()
     w.set_picture(_pic(), _info(Exif("f/2.8", "1/250 s", "ISO 200", "18 mm", "RICOH GR III")))
     t = w.plain()
-    for row in ("Aperture: f/2.8", "Shutter: 1/250 s", "ISO: ISO 200", "Focal length: 18 mm",
+    for row in ("Aperture: f/2.8", "Shutter: 1/250 s", "ISO: 200", "Focal length: 18 mm",
                 "Camera: RICOH GR III"):
         assert row in t
+    assert "ISO: ISO" not in t  # the value already says ISO; the row must not repeat it
     assert "f/2.8" in w.label.text() and "1/250 s" in w.label.text()
     assert "Preview: pillow" in t and "Not marked" in t  # existing rows kept
 

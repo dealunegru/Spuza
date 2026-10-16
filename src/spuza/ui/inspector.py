@@ -27,7 +27,7 @@ def exif_lines(info) -> list[str]:
     """Aperture / shutter / ISO rows always; focal and model only when the file has them. "--" = missing."""
     ex = getattr(info, "exif", None)
     rows = [("Aperture", getattr(ex, "aperture", None)), ("Shutter", getattr(ex, "shutter", None)),
-            ("ISO", getattr(ex, "iso", None))]
+            ("ISO", (getattr(ex, "iso", None) or "").removeprefix("ISO ") or None)]  # value is "ISO 200"
     out = [f"{k}: {v or '--'}" for k, v in rows]
     for k, v in (("Focal length", getattr(ex, "focal", None)), ("Camera", getattr(ex, "model", None))):
         if v:
