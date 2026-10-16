@@ -52,6 +52,7 @@ class PreviewInfo:
     nbytes: int  # preview payload bytes read (file size for open formats)
     ms: float  # wall time of load()
     exif: _exif.Exif | None = None  # basic EXIF read on the worker; None when the file carries none
+    focus: object | None = None  # spuza.focus.FocusInfo, read on the worker only while focus_point is on
 
 
 # ---- container slicing ------------------------------------------------------------------------
