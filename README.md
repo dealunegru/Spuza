@@ -43,7 +43,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 - **0.4.0**: four features in advanced mode: Compare (`N`), Focus peaking (`P`), AF point (`O`), and Resume, with Start fresh (`U`).
 - **0.3.3**: classic and advanced mode. Advanced mode is a switch in Preferences, and its first setting is the number of decode threads.
 - **0.3.2**: 12 pictures are now decoded ahead and 8 kept behind (it was 8 and 3). A Preferences sheet sets those numbers, and `--ahead` and `--behind` set them for one run.
-- **0.3.1**: the inspector shows aperture, shutter, ISO, focal length and camera. Right-click a picture to show it in Finder or Explorer. Fixes a crash on macOS.
+- **0.3.1**: the inspector shows aperture, shutter, ISO, focal length and camera. Right-click a picture to show it in Finder or Explorer. The status strip loses the clock and the "next N ready" label, and the filmstrip loses its green bars. Fixes a rare crash caused by cleanup running on the wrong thread.
 - **0.3.0**: 15 fixes:
   - 16-bit greyscale files are no longer clipped.
   - `Z` gives a true 100% view on Retina screens, and the filmstrip is sharp there.
@@ -188,10 +188,10 @@ Measured on Windows with 0.4.0, using `spuza --demo <folder> --bench`. The test 
 
 | | Measured |
 |---|---|
-| First picture on screen | 839 ms; 1125 ms on the first run after a build |
+| First picture on screen | 839-1125 ms over two runs |
 | Step, mean | 5.7 ms |
 | `Z` full decode of the X-Pro2 RAF (0.3.1) | 3.4-3.5 s, in the background |
-| Memory after 300 steps, default window of 12 ahead and 8 behind (0.3.2) | 229-259 MB |
+| Memory after 300 steps, default window of 12 ahead and 8 behind (0.3.2, a different card: 1000 JPEGs of 3000x2000) | 229-259 MB |
 
 These numbers have not been measured on a Mac yet. To set the prefetch window for one run, use `--ahead N --behind N`.
 
