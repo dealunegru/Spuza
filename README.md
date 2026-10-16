@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.4.0-informational" alt="Version 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.4.1-informational" alt="Version 0.4.1">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -40,6 +40,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## What's new
 
+- **0.4.1**: Nothing is left behind on copy: a HIF, XMP, THM or Live Photo MOV travels with its picture, and files that are not pictures are counted. Bursts are listed in the order the camera shot them. HIF, ARW, NEF, NRW, PEF, 3FR, CR2, ORF, RW2 and CR3 open. With two cards in, Spuza says so and `--card` picks one. Releases now include a Windows build.
 - **0.4.0**: four features in advanced mode: Compare (`N`), Focus peaking (`P`), AF point (`O`), and Resume, with Start fresh (`U`).
 - **0.3.3**: classic and advanced mode. Advanced mode is a switch in Preferences, and its first setting is the number of decode threads.
 - **0.3.2**: 12 pictures are now decoded ahead and 8 kept behind (it was 8 and 3). A Preferences sheet sets those numbers, and `--ahead` and `--behind` set them for one run.
