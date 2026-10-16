@@ -3,7 +3,9 @@
 Contract for the window (wired by spz-nx-wire): build one `PeakingOverlay(viewer)`; call `set_on(...)` when P
 toggles; call `show(index, qimg)` after each `viewer.show_image(index, ...)` with the cached preview. The mask is
 computed on this object's own low-priority single-thread pool, never on the GUI thread and never ahead of decodes;
-until it is ready the plain picture shows, and a step is never held back.
+until it is ready the plain picture shows, and a step is never held back. The job is debounced by one
+single-shot timer (SETTLE_MS): each show() restarts it, so a fast walk computes no masks (a 60-110 ms job per step
+competed with the decode threads for CPU and the GIL); a cached mask is placed at once.
 
 Masks are kept for at most KEEP (2) pictures: the current one and the one before it. The overlay is a child item of
 the viewer's picture item, so it shares its transform; it is rescaled to the item's pixmap on every pixmap swap.
@@ -13,13 +15,14 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsPixmapItem
 
 from .. import features, peaking
 
 KEEP = 2  # masks cached: current + previous picture
+SETTLE_MS = 150  # a mask job starts only after the same picture has been on screen this long (a step never waits)
 
 
 class _Job(QRunnable):
@@ -58,6 +61,10 @@ class PeakingOverlay(QObject):
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._pool.setThreadPriority(QThread.Priority.LowPriority)
+        self._settle = QTimer(self)  # the settle delay: fires _start_pending once the picture has stayed
+        self._settle.setSingleShot(True)
+        self._settle.setInterval(SETTLE_MS)
+        self._settle.timeout.connect(self._start_pending)
         self._item = QGraphicsPixmapItem(viewer.image_item())
         self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self._item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -77,6 +84,7 @@ class PeakingOverlay(QObject):
         self._token += 1
         if on:
             return
+        self._settle.stop()
         self._pool.clear()
         self._hide()
         self._cache.clear()
@@ -93,7 +101,7 @@ class PeakingOverlay(QObject):
         self._cache.clear()
         self._hide()
         if self._on and self._index is not None:
-            self._submit(self._index, self._qimg)
+            self._settle.start()
 
     def show(self, index: int, qimg: QImage | None) -> None:
         """The viewer now shows picture `index` from preview `qimg` (None: nothing to peak). No-op while off."""
@@ -101,6 +109,7 @@ class PeakingOverlay(QObject):
             return
         self._token += 1
         self._pool.clear()
+        self._settle.stop()
         self._index, self._qimg = index, qimg
         if qimg is None or qimg.isNull():
             self._hide()
@@ -111,7 +120,7 @@ class PeakingOverlay(QObject):
             self._place(index, hit)
             return
         self._hide()
-        self._submit(index, qimg)
+        self._settle.start()  # restarts on every show(): the job starts only for a picture that stayed
 
     def mask_for(self, index: int) -> QImage | None:
         """The finished overlay image for `index`, if cached (for compare cells and tests)."""
@@ -120,11 +129,16 @@ class PeakingOverlay(QObject):
     def shutdown(self, timeout_ms: int = 3000) -> None:
         self._on = False
         self._token += 1
+        self._settle.stop()
         self._pool.clear()
         self._pool.waitForDone(timeout_ms)
         self._hide()
 
     # -- internals
+
+    def _start_pending(self) -> None:
+        if self._on and self._index is not None:
+            self._submit(self._index, self._qimg)
 
     def _submit(self, index: int, qimg: QImage | None) -> None:
         if qimg is None or qimg.isNull():

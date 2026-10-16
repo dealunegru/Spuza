@@ -211,3 +211,53 @@ def test_none_preview_shows_nothing(rig):
     v.show_message("x")
     ov.show(0, None)
     assert not _item(ov).isVisible()
+
+
+def test_burst_of_shows_starts_no_job_and_the_last_picture_gets_exactly_one(rig, monkeypatch):
+    from spuza.ui import peaking_overlay as po
+
+    features.set_mode(features.ADVANCED)
+    v, ov = rig
+    ov.set_on(True)
+    calls = []
+    real = peaking.mask_image
+
+    def counting(qimg, *a, **k):
+        calls.append(1)
+        return real(qimg, *a, **k)
+
+    monkeypatch.setattr(peaking, "mask_image", counting)
+    assert ov._settle.isSingleShot() and ov._settle.interval() == po.SETTLE_MS == 150
+    for i in range(8):  # a fast walk: each show restarts the settle timer
+        _show(v, ov, i, _checker())
+    assert ov._settle.isActive() and not calls
+    assert _pump(lambda: ov.mask_for(7) is not None)
+    _settle()
+    assert len(calls) == 1 and ov.mask_for(0) is None  # one job, for the last picture only
+
+
+def test_cached_mask_shows_immediately_without_the_delay(rig):
+    features.set_mode(features.ADVANCED)
+    v, ov = rig
+    ov.set_on(True)
+    img = _checker()
+    _show(v, ov, 0, img)
+    assert _pump(lambda: _item(ov).isVisible())
+    _show(v, ov, 1, _checker())
+    assert _pump(lambda: ov.mask_for(1) is not None)
+    _show(v, ov, 0, img)  # back to a cached picture
+    assert _item(ov).isVisible() and not ov._settle.isActive()
+
+
+def test_off_and_shutdown_stop_the_settle_timer(rig):
+    features.set_mode(features.ADVANCED)
+    v, ov = rig
+    ov.set_on(True)
+    _show(v, ov, 0, _checker())
+    assert ov._settle.isActive()
+    ov.set_on(False)
+    assert not ov._settle.isActive()
+    ov.set_on(True)
+    _show(v, ov, 0, _checker())
+    ov.shutdown()
+    assert not ov._settle.isActive()

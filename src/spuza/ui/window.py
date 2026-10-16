@@ -84,6 +84,7 @@ NEXT_BUTTONS = [
 ]
 COMPARE_KEYS = frozenset({Qt.Key_Left, Qt.Key_Right, Qt.Key_J, Qt.Key_K, Qt.Key_Space, Qt.Key_M, Qt.Key_Z,
                           Qt.Key_N, Qt.Key_Escape})
+PEAKING_WARM_MS = 3000  # a saved-on peaking at start is built when the prefetch goes idle, or after this at the latest
 MASK_WAIT_MS = 3000  # the longest closeEvent waits for compare's mask workers
 
 
@@ -185,6 +186,7 @@ class MainWindow(QMainWindow):
         self._cmp_gen = 0
         self._cmp_masked: set[int] = set()
         self._banner = None
+        self._peaking_wait = False
         self._pruned = False
         self._prune_thread = None
         self._sheet = None
@@ -306,7 +308,7 @@ class MainWindow(QMainWindow):
             ctl = self._ensure_resume()
             self._banner = ctl.restore() if ctl is not None else None
         prefetcher.update(catalog.index)
-        self._enter_next_features()  # after update(): importing numpy for peaking must not delay the first decodes
+        self._enter_next_features(defer=True)  # after update(): importing numpy for peaking must not delay the first decodes
         self._render_current()
 
     # -- navigation -------------------------------------------------------------------------------
@@ -702,17 +704,38 @@ class MainWindow(QMainWindow):
             self.marker = FocusMarker(self.viewer)
         return self.marker
 
-    def _enter_next_features(self) -> None:
-        """Start-up, or a live switch to advanced: restore the saved peaking / ring states, show the buttons."""
+    def _enter_next_features(self, defer: bool = False) -> None:
+        """Start-up, or a live switch to advanced: restore the saved peaking / ring states, show the buttons.
+
+        At start-up (`defer`) a saved-on peaking is built later: importing numpy while the first pictures decode
+        delays them (measured: one bench step waited 50-80 ms), so it waits for the prefetch to go idle."""
         if features.enabled("focus_peaking"):
             on = settings.read_peaking_on(self.prefs)
-            if on or self.peaking is not None:  # built only when wanted: numpy stays unimported while P is off
+            if on and defer and self.peaking is None:
+                self._peaking_wait = True
+                self.prefetcher.ready.connect(self._maybe_build_peaking)
+                QTimer.singleShot(PEAKING_WARM_MS, self._build_waiting_peaking)
+            elif on or self.peaking is not None:  # built only when wanted: numpy stays unimported while P is off
                 self._ensure_peaking().set_on(on)
         if features.enabled("focus_point"):
             on = settings.read_focus_marker(self.prefs)
             if on or self.marker is not None:
                 self._ensure_marker().set_on(on)
         self._sync_next_buttons()
+
+    def _maybe_build_peaking(self, *_args) -> None:
+        if self._peaking_wait and not getattr(self.prefetcher, "_inflight", None):
+            self._build_waiting_peaking()
+
+    def _build_waiting_peaking(self) -> None:
+        if not self._peaking_wait:
+            return
+        self._peaking_wait = False
+        if features.enabled("focus_peaking") and settings.read_peaking_on(self.prefs) and self.peaking is None:
+            self._ensure_peaking().set_on(True)
+            if len(self.catalog):
+                self.peaking.show(self.catalog.index, self.prefetcher.cached(self.catalog.index))
+            self._sync_next_buttons()
 
     def _leave_next_features(self) -> None:
         """A live switch to classic (run BEFORE the mode flips: the ring ignores set_on in classic)."""

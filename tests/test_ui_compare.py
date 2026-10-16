@@ -140,10 +140,10 @@ def test_focus_keys_never_leave_the_set_and_border_follows(env):
     key(view, Qt.Key.Key_Left)
     assert view.focused_index() == 1
     key(view, Qt.Key.Key_Right)
-    key(view, Qt.Key.Key_K)
+    key(view, Qt.Key.Key_J)  # J = next (right), as in the window
     key(view, Qt.Key.Key_Right)
     assert view.focused_index() == 3 and view.border_colour(3) == acc and view.border_colour(1) == "transparent"
-    key(view, Qt.Key.Key_J)
+    key(view, Qt.Key.Key_K)  # K = back (left)
     assert view.focused_index() == 2
     assert seen == [1, 2, 3, 2]
 

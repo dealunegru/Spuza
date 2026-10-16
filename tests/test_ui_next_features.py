@@ -295,7 +295,8 @@ def test_saved_peaking_comes_back_at_start_with_its_threshold(made):
     settings.write_peaking_threshold(s, 90)
     s.sync()
     w = ready(made(True), 0)
-    assert w.peaking.is_on() and w.peaking._threshold == 90
+    pump(lambda: w.peaking is not None and w.peaking.is_on())  # built once the prefetch went idle
+    assert w.peaking._threshold == 90
     pump(lambda: w.peaking.mask_for(0) is not None)
 
 
@@ -466,6 +467,7 @@ def test_switching_to_classic_hides_everything_and_back_restores_it(made):
     w.catalog.go(FOCUS_AT)
     w._moved()
     pump(lambda: w.viewer.index == FOCUS_AT and w.viewer.has_image)
+    pump(lambda: w.peaking is not None and w.peaking.is_on())
     assert all(w._next_actions[n].isVisible() for n in w.next_buttons) and w.marker.visible()
     key(w, Qt.Key_N)
     assert w._compare_shown()
@@ -562,3 +564,12 @@ def test_bench_runs_without_resume(tmp_path, monkeypatch):
     assert cli.main(["--demo", str(tmp_path), "--bench", "--advanced"]) == 0
     assert seen == {"allowed": False, "resume": None}
     assert session_files() == []
+
+
+def test_j_is_next_and_k_is_back_inside_compare(made):
+    w = ready(made(True), 2)
+    key(w, Qt.Key_N)
+    key(w, Qt.Key_J)
+    assert w.compare.focused_index() == 1
+    key(w, Qt.Key_K)
+    assert w.compare.focused_index() == 0
