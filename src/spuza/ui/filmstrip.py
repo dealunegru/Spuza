@@ -56,6 +56,10 @@ class _Delegate(QStyledItemDelegate):
             p.fillRect(box, QColor(c.stage))
             lw, lh = thumb.deviceIndependentSize().toSize().toTuple()  # logical size: the pixmap has a DPR
             p.drawPixmap(box.x() + (THUMB_W - lw) // 2, box.y() + (THUMB_H - lh) // 2, thumb)
+        if i in s.highlight:
+            p.setPen(QPen(QColor(c.text), 2, Qt.PenStyle.DashLine))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(cell.adjusted(-2, -2, 2, 2))
         if i == s.current:
             p.setPen(QPen(QColor(c.accent), 3))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -95,6 +99,7 @@ class Filmstrip(QListView):
         super().__init__(parent)
         self.catalog, self.prefetcher, self.current = catalog, prefetcher, 0
         self._memo: dict[int, QPixmap] = {}
+        self.highlight: frozenset[int] = frozenset()  # compare's cells; empty in classic
         self._model = _Model(self)
         self.setModel(self._model)
         self.setItemDelegate(_Delegate(self))
@@ -157,6 +162,13 @@ class Filmstrip(QListView):
         self._model.touch(i, i)
         if len(self.catalog):
             self.scrollTo(self._model.index(i), QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def set_highlight(self, indices) -> None:
+        """Outline these cells (compare's set); empty clears."""
+        old, self.highlight = self.highlight, frozenset(int(i) for i in indices)
+        for i in old | self.highlight:
+            if i not in old or i not in self.highlight:
+                self._model.touch(i, i)
 
     def item_changed(self, i: int) -> None:
         """A thumbnail arrived or a mark flipped."""
