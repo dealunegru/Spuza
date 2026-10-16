@@ -55,8 +55,9 @@ def eject(mount: Path, timeout: float = 20.0, run=subprocess.run, platform: str 
             return (True, "unmounted") if ok2 else (False, why2 or why)
         if platform.startswith("win"):
             root = _drive_root(mount)
+            quoted = root.replace("'", "''")  # inside a single-quoted PowerShell string
             script = ("(New-Object -ComObject Shell.Application).Namespace(17)"
-                      f".ParseName('{root}').InvokeVerb('Eject')")
+                      f".ParseName('{quoted}').InvokeVerb('Eject')")
             ok, why = _try(run, ["powershell", "-NoProfile", "-Command", script], timeout)
             if not ok:
                 return False, why

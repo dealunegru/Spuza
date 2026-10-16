@@ -1,6 +1,6 @@
 """Copy the marked pictures to a folder, never overwriting or touching anything that exists.
 
-Plain Python (no widgets; it imports only catalog's extension sets): the UI calls ``plan_copy`` to show what will happen, then ``run_copy`` on a
+Plain Python, no widgets (it imports spuza.catalog for the extension sets, which loads Qt core): the UI calls ``plan_copy`` to show what will happen, then ``run_copy`` on a
 worker thread. The only file this module ever removes is its own half-written ``.spuza-part`` temp.
 """
 

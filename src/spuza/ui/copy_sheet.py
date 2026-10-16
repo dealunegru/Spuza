@@ -68,7 +68,7 @@ def _show_name() -> str:
 class _Signals(QObject):
     progress = Signal(int, int)
     done = Signal(object)
-    ejected = Signal(bool, str)
+    ejected = Signal(bool, str, int)  # ok, reason, generation of the copy it belongs to
 
 
 class _CopyJob(QRunnable):
@@ -93,9 +93,9 @@ class _CopyJob(QRunnable):
 
 
 class _EjectJob(QRunnable):
-    def __init__(self, fn, target: Path, sig: _Signals):
+    def __init__(self, fn, target: Path, sig: _Signals, gen: int):
         super().__init__()
-        self.fn, self.target, self.sig = fn, target, sig
+        self.fn, self.target, self.sig, self.gen = fn, target, sig, gen
         self.setAutoDelete(False)
 
     def run(self) -> None:
@@ -103,7 +103,7 @@ class _EjectJob(QRunnable):
             ok, why = self.fn(self.target)
         except Exception as exc:  # noqa: BLE001 - eject must never kill the thread
             ok, why = False, f"{type(exc).__name__}: {exc}"
-        self.sig.ejected.emit(bool(ok), str(why))
+        self.sig.ejected.emit(bool(ok), str(why), self.gen)
 
 
 class CopySheet(QDialog):
@@ -154,6 +154,9 @@ class CopySheet(QDialog):
         self._sig.done.connect(self._on_done)
         self._sig.ejected.connect(self._on_ejected)
         self._eject_job = None
+        self._eject_pool = QThreadPool()  # its own pool: a later copy is never queued behind a slow eject
+        self._eject_pool.setMaxThreadCount(1)
+        self._gen = 0  # bumped by a new copy, a new destination and close: an older eject result is then ignored
         self._job = None
         self._closing = False  # closed mid-copy: finish closing when the worker's result arrives
 
@@ -277,6 +280,7 @@ class CopySheet(QDialog):
     def _reset_for_new_destination(self) -> None:
         """After a finished copy, a new folder gets a fresh sheet: the same marks can go to a second drive."""
         self.result = None
+        self._gen += 1
         self._stop_countdown()
         self.status_label.hide()
         self.stay_button.hide()
@@ -349,6 +353,10 @@ class CopySheet(QDialog):
             return
         self.running = True
         self._dismissed = False
+        self._gen += 1
+        self._stop_countdown()
+        self.status_label.hide()
+        self.stay_button.hide()
         self._cancel.clear()
         self.copy_button.setEnabled(False)
         self.choose_button.setEnabled(False)
@@ -436,12 +444,14 @@ class CopySheet(QDialog):
             self._maybe_quit()
         elif self.eject_after:
             self._status("Ejecting the card…")
-            self._eject_job = _EjectJob(self.eject_fn, self.eject_target, self._sig)
-            self._pool.start(self._eject_job)
+            self._eject_job = _EjectJob(self.eject_fn, self.eject_target, self._sig, self._gen)
+            self._eject_pool.start(self._eject_job)
         else:
             self._maybe_quit()
 
-    def _on_ejected(self, ok: bool, why: str) -> None:
+    def _on_ejected(self, ok: bool, why: str, gen: int = -1) -> None:
+        if gen != self._gen:
+            return  # stale: another copy, destination or close happened since
         self._eject_job = None
         self._status("Card ejected." if ok else f"Could not eject the card: {why}.")
         self._maybe_quit()
@@ -452,7 +462,7 @@ class CopySheet(QDialog):
         self.status_label.show()
 
     def _maybe_quit(self) -> None:
-        if not self.quit_after or self._dismissed:
+        if not self.quit_after or self._dismissed or self.running:
             return
         self._remaining = max(0, int(self.countdown_seconds))
         self._show_countdown()
@@ -501,7 +511,7 @@ class CopySheet(QDialog):
 
     def wait_idle(self, timeout_ms: int = 10000) -> bool:
         """Block until the worker thread has finished; bounded by timeout_ms."""
-        return self._pool.waitForDone(timeout_ms)
+        return self._pool.waitForDone(timeout_ms) and self._eject_pool.waitForDone(timeout_ms)
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         if self.running:
@@ -515,6 +525,7 @@ class CopySheet(QDialog):
             ev.ignore()
             return
         self._dismissed = True
+        self._gen += 1
         self._stop_countdown()  # closing the sheet by hand also cancels a pending quit
         super().closeEvent(ev)
 

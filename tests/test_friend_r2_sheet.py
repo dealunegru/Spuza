@@ -188,3 +188,38 @@ def test_prefs_seeded_values_and_reset_sets_them_on():
     assert sheet.organise() and sheet.eject_after() and sheet.quit_after()
     assert not settings.open_settings().contains(settings.COPY_ORGANISE)  # nothing written by the sheet
 
+
+
+def test_stale_eject_result_cannot_quit_during_a_second_copy(tmp_path):
+    import threading
+
+    release = threading.Event()
+    sheet = CopySheet(make_card(tmp_path), tmp_path / "out", eject_after=True, quit_after=True,
+                      eject_target=Path("/Volumes/CARD"))
+
+    def slow_eject(mount):
+        release.wait(10)  # bounded
+        return True, ""
+
+    sheet.eject_fn = slow_eject
+    sheet.countdown_seconds, sheet.countdown_interval_ms = 1, 10
+    quits, done = [], []
+    sheet.quit_requested.connect(lambda: quits.append(1))
+    sheet.finished.connect(done.append)
+    try:
+        sheet.copy_button.click()
+        assert wait_for(lambda: done)
+        assert wait_for(lambda: sheet.status_label.text() == "Ejecting the card…")
+        sheet.choose_folder = lambda *a: str(tmp_path / "second")
+        sheet.choose_button.click()  # new destination: the pending eject is now stale
+        sheet.eject_after = sheet.quit_after = False  # the second copy asks for neither
+        done.clear()
+        sheet.copy_button.click()
+        release.set()  # the first eject finishes late
+        assert wait_for(lambda: done)
+        assert sheet.wait_idle()
+        wait_for(lambda: quits, 0.5)
+        assert quits == [] and sheet.status_label.isHidden() and sheet.stay_button.isHidden()
+    finally:
+        release.set()
+        sheet.wait_idle()
