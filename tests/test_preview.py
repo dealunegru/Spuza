@@ -192,3 +192,40 @@ def test_report_error_is_a_value(tmp_path):
     r = pv.report(p)
     assert r["error"] and r["file"] == "bad.jpg"
     assert pv.sensor_size(p) is None
+
+
+# ---- exif on PreviewInfo ----------------------------------------------------------------------
+
+def _exif_jpeg() -> bytes:
+    im = Image.new("RGB", (80, 40), (1, 2, 3))
+    e = Image.Exif()
+    e[0x0110] = "Cam"
+    sub = e.get_ifd(0x8769)
+    sub[0x829D] = 4.0
+    sub[0x829A] = 0.01
+    sub[0x8827] = 800
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", exif=e)
+    return buf.getvalue()
+
+
+def test_load_carries_exif(tmp_path):
+    p = tmp_path / "a.jpg"
+    p.write_bytes(_exif_jpeg())
+    _im, info = load(p)
+    assert (info.exif.aperture, info.exif.shutter, info.exif.iso, info.exif.model) == \
+        ("f/4", "1/100 s", "ISO 800", "Cam")
+    p2 = tmp_path / "b.jpg"
+    p2.write_bytes(_jpeg())
+    assert load(p2)[1].exif is None
+    assert pv.PreviewInfo(p, "pillow", 1, 1, 1, 0.0).exif is None  # default keeps old constructors working
+
+
+def test_corrupt_exif_does_not_break_load(tmp_path):
+    data = bytearray(_exif_jpeg())
+    i = data.index(b"Exif\x00\x00") + 6
+    data[i + 4:i + 60] = b"\xff" * 56  # trash the TIFF header's IFD offset and first entries
+    p = tmp_path / "c.jpg"
+    p.write_bytes(bytes(data))
+    im, info = load(p)
+    assert im.size == (80, 40) and info.source == "pillow"

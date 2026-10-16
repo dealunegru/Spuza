@@ -75,6 +75,9 @@ def _app():
     if app is None:
         app = QApplication(sys.argv[:1])
     app.setApplicationName("Spuza")
+    from spuza.ui import gcguard
+
+    gcguard.install(app)
     return app
 
 
