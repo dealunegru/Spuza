@@ -17,6 +17,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from spuza import exif as _exif
+
 RAW_EXTS = {".raf", ".dng"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 HEIF_EXTS = {".heic", ".heif"}
@@ -49,6 +51,7 @@ class PreviewInfo:
     height: int
     nbytes: int  # preview payload bytes read (file size for open formats)
     ms: float  # wall time of load()
+    exif: _exif.Exif | None = None  # basic EXIF read on the worker; None when the file carries none
 
 
 # ---- container slicing ------------------------------------------------------------------------
@@ -247,23 +250,24 @@ def load(path, max_side: int | None = 2560):
     except OSError as e:
         raise PreviewError(f"cannot stat {path}: {e}") from e
 
-    def done(im, source, native, nbytes):
+    def done(im, source, native, nbytes, data=None):
+        ex = _exif.read(data, path)  # fails soft; bytes already in memory first, file header second
         ms = (time.perf_counter() - t0) * 1000
-        return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms)
+        return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms, ex)
 
     if ext in RAW_EXTS:
         got = _slice(path)
         if got:
             try:
                 im, native = _decode(got[0], max_side, got[2])
-                return done(im, got[1], native, len(got[0]))
+                return done(im, got[1], native, len(got[0]), got[0])
             except PreviewError:
                 pass
         data = _rawpy_thumb(path)
         if data:
             try:
                 im, native = _decode(data, max_side)
-                return done(im, "rawpy-thumb", native, len(data))
+                return done(im, "rawpy-thumb", native, len(data), data)
             except PreviewError:
                 pass
         try:

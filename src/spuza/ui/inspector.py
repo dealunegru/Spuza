@@ -23,6 +23,18 @@ def explain(pic) -> tuple[str, bool]:
     return f"{pic.kind}: one file", False
 
 
+def exif_lines(info) -> list[str]:
+    """Aperture / shutter / ISO rows always; focal and model only when the file has them. "--" = missing."""
+    ex = getattr(info, "exif", None)
+    rows = [("Aperture", getattr(ex, "aperture", None)), ("Shutter", getattr(ex, "shutter", None)),
+            ("ISO", getattr(ex, "iso", None))]
+    out = [f"{k}: {v or '--'}" for k, v in rows]
+    for k, v in (("Focal length", getattr(ex, "focal", None)), ("Camera", getattr(ex, "model", None))):
+        if v:
+            out.append(f"{k}: {v}")
+    return out
+
+
 class Inspector(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +75,7 @@ class Inspector(QWidget):
             lines.append(f"Decode: {info.ms:.1f} ms")
         else:
             lines.append("Preview: loading...")
+        lines.extend(exif_lines(info if not reason else None))
         lines.append("Marked" if marked else "Not marked")
         self.lines, self.amber = lines, amber
         self._render()
