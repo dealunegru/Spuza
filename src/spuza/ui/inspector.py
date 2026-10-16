@@ -76,6 +76,9 @@ class Inspector(QWidget):
         else:
             lines.append("Preview: loading...")
         lines.extend(exif_lines(info if not reason else None))
+        focus = getattr(info, "focus", None) if not reason else None
+        if focus is not None:
+            lines.append(focus.describe())
         lines.append("Marked" if marked else "Not marked")
         self.lines, self.amber = lines, amber
         self._render()

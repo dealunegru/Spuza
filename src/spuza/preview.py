@@ -241,6 +241,17 @@ def _rawpy_full(path: Path, half_size: bool) -> Image.Image:
         raise PreviewError(f"cannot demosaic {path.name}: {e}") from e
 
 
+def _focus(path: Path, source: str, data):
+    """Focus data for a RAF while focus_point is on, else None; reuses the embedded JPEG already in memory."""
+    from spuza import features
+
+    if not features.enabled("focus_point"):
+        return None
+    from spuza import focus
+
+    return focus.from_jpeg(data) if source == "raf-embedded" and data else focus.read(path)
+
+
 def load(path, max_side: int | None = 2560):
     """Return (RGB image, PreviewInfo). Raises PreviewError for unknown or corrupt files."""
     path = Path(path)
@@ -253,8 +264,9 @@ def load(path, max_side: int | None = 2560):
 
     def done(im, source, native, nbytes, data=None):
         ex = _exif.read(data, path)  # fails soft; bytes already in memory first, file header second
+        fi = _focus(path, source, data) if ext == ".raf" else None
         ms = (time.perf_counter() - t0) * 1000
-        return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms, ex)
+        return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms, ex, fi)
 
     if ext in RAW_EXTS:
         got = _slice(path)
