@@ -34,10 +34,22 @@ from spuza.copy import human_size
 MIN_PROGRESS_INTERVAL = 1 / 30  # seconds between progress emits (about 30 per second)
 BAR_STEPS = 1000
 AMBER = "#d98a00"
+NL = chr(10)
 
 
 def _kib(n: int) -> int:
     return (n + 1023) >> 10
+
+
+def _n(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _paths_tip(paths: list[Path], limit: int = 200) -> str:
+    lines = [str(p) for p in paths[:limit]]
+    if len(paths) > limit:
+        lines.append(f"... and {len(paths) - limit} more")
+    return NL.join(lines)
 
 
 def _show_name() -> str:
@@ -77,12 +89,14 @@ class CopySheet(QDialog):
     progress = Signal(int, int)
     finished = Signal(object)  # shadows QDialog.finished(int) on purpose (contract); see done()
 
-    def __init__(self, pictures, default_dest=None, parent=None):
+    def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=()):
         super().__init__(parent)
         self.setWindowTitle("Copy marked pictures")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumSize(560, 520)
         self.pictures = list(pictures)
+        self.others: list[Path] = [Path(o) for o in (others or ())]
+        self.unreadable: list[Path] = [Path(u) for u in (unreadable or ())]
         self.dest: Path | None = Path(default_dest) if default_dest else None
         self.choose_folder: Callable = lambda parent, title, start: QFileDialog.getExistingDirectory(
             parent, title, start
@@ -104,7 +118,9 @@ class CopySheet(QDialog):
         self._closing = False  # closed mid-copy: finish closing when the worker's result arrives
 
         self.total_files = sum(len(p.files) for p in self.pictures)
-        self.total_bytes = sum(p.size_bytes for p in self.pictures)
+        self.total_bytes = sum(p.size_bytes for p in self.pictures)  # includes companions
+        self.total_companions = sum(len(getattr(p, "companions", ())) for p in self.pictures)
+        self.total_twins = sum(len(getattr(p, "twins", ())) for p in self.pictures)
 
         self.title_label = QLabel(f"Copy {len(self.pictures)} marked picture{'s' if len(self.pictures) != 1 else ''}")
         f = self.title_label.font()
@@ -116,8 +132,14 @@ class CopySheet(QDialog):
         for p in self.pictures:
             self.list.addItem(f"{p.stem} · {p.kind} · {human_size(p.size_bytes)}")
         self.total_label = QLabel(
-            f"{len(self.pictures)} pictures · {self.total_files} files · {human_size(self.total_bytes)}"
+            f"{len(self.pictures)} pictures · {self.total_files} files"
+            + (f" ({_n(self.total_companions, 'companion', 'companions')})" if self.total_companions else "")
+            + f" · {human_size(self.total_bytes)}"
         )
+        self.notes_label = QLabel()
+        self.notes_label.setWordWrap(True)
+        self.notes_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._fill_notes()
         self.dest_label = QLabel()
         self.dest_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.dest_label.setWordWrap(True)
@@ -161,6 +183,7 @@ class CopySheet(QDialog):
         lay.addLayout(where)
         lay.addWidget(self.list, 1)
         lay.addWidget(self.total_label)
+        lay.addWidget(self.notes_label)
         lay.addWidget(self.free_label)
         lay.addWidget(self.plan_label)
         lay.addWidget(self.bar)
@@ -168,6 +191,29 @@ class CopySheet(QDialog):
         lay.addWidget(self.log_label)
         lay.addLayout(buttons)
         self._update_dest()
+
+    def _twin_note(self) -> str:
+        if not self.total_twins:
+            return ""
+        return f"{_n(self.total_twins, 'twin file', 'twin files')} on the second card not copied (same as the first)"
+
+    def _fill_notes(self) -> None:
+        """Say what stays behind: other files (not pictures) and unreadable ones; the paths are in the tooltip."""
+        parts, tips = [], []
+        if self.others:
+            n = len(self.others)
+            parts.append(
+                f"{n} other file on the card is not a picture and is not copied"
+                if n == 1
+                else f"{n} other files on the card are not pictures and are not copied"
+            )
+            tips.append("Not copied (not pictures):" + NL + _paths_tip(self.others))
+        if self.unreadable:
+            n = len(self.unreadable)
+            parts.append(f"{n} file could not be read" if n == 1 else f"{n} files could not be read")
+            tips.append("Could not be read:" + NL + _paths_tip(self.unreadable))
+        self.notes_label.setText(NL.join(parts))
+        self.notes_label.setToolTip((NL + NL).join(tips))
 
     # ---- destination ---------------------------------------------------------------------------
     def pick_folder(self) -> None:
@@ -236,7 +282,10 @@ class CopySheet(QDialog):
     def _show_plan(self, plan=None) -> None:
         self.plan = plan or copy_mod.plan_copy([p.files for p in self.pictures], self.dest)
         skip = sum(1 for it in self.plan.items if it.action == "skip")
-        self.plan_label.setText(f"Will copy {len(self.plan.items) - skip} files, skip {skip} already there")
+        text = f"Will copy {len(self.plan.items) - skip} files, skip {skip} already there"
+        if self.total_twins:
+            text += f" · {self._twin_note()}"
+        self.plan_label.setText(text)
 
     # ---- copying -------------------------------------------------------------------------------
     def start_copy(self) -> None:
@@ -278,14 +327,23 @@ class CopySheet(QDialog):
         partial = sum(
             1 for p in self.pictures if any(f in copied for f in p.files) and not all(f in done_ok for f in p.files)
         )
+        comps = {c for p in self.pictures for c in getattr(p, "companions", ())}
+        n_comp = sum(1 for f in res.copied if f in comps)
+        comp_text = f", {_n(n_comp, 'companion', 'companions')}" if n_comp else ""
         text = (
-            f"Copied {pics} picture{'s' if pics != 1 else ''} ({len(res.copied)} files)"
+            f"Copied {pics} picture{'s' if pics != 1 else ''} ({len(res.copied)} files{comp_text})"
             f" · skipped {len(res.skipped)} · failed {len(res.failed)}"
         )
         if partial:
             text += f" · {partial} picture{'s' if partial != 1 else ''} not fully copied"
         if res.cancelled:
             text += " · cancelled"
+        if self.total_twins:
+            text += f" · {self._twin_note()}"
+        if self.others:
+            text += f" · {_n(len(self.others), 'other file', 'other files')} not copied (not a picture)"
+        if self.unreadable:
+            text += f" · {_n(len(self.unreadable), 'file', 'files')} could not be read"
         self.result_label.setText(text)
         self.log_label.setText(f"Log: {res.log_path}" if res.log_path else "The log could not be written")
         self.bar.setValue(BAR_STEPS if not res.cancelled else self.bar.value())
