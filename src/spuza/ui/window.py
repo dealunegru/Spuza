@@ -7,6 +7,7 @@ so they are only imported when used (and tests can inject fakes).
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -33,6 +34,7 @@ _NOT_IN_REVIEW = object()
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
                        Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
 # (name, label, key cap shown on the button, checkable)
+PREFS_CAP = "⌘," if sys.platform == "darwin" else "Ctrl+,"
 BUTTONS = [
     ("back", "Back", "←/K", False),
     ("next", "Next", "→/J", False),
@@ -127,8 +129,10 @@ class MainWindow(QMainWindow):
         self.clock = clock  # kept for callers that pass it; the status strip no longer uses it
         self.review_factory = None
         self.copy_sheet_factory = None
+        self.prefs_sheet_factory = None
         self.review = None
         self._sheet = None
+        self._prefs_sheet = None
         self.last_message = ""
         self.is_bleed = False
         self._forwarding = False
@@ -152,6 +156,11 @@ class MainWindow(QMainWindow):
             if name in ("mark", "review"):
                 self.toolbar.addSeparator()
             if name == "copy":
+                # Preferences sits left of the copy spacer; it is not in `buttons` (those are the key-driven
+                # picture controls, and review mode keeps all of them in step)
+                self.prefs_button = KeyButton("prefs", "Preferences…", PREFS_CAP, False)
+                self.toolbar.addSeparator()
+                self.toolbar.addWidget(self.prefs_button)
                 spacer = QWidget()
                 spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
                 self.toolbar.addWidget(spacer)
@@ -167,6 +176,7 @@ class MainWindow(QMainWindow):
         b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
         b["review"].clicked.connect(lambda: self.toggle_review())
         b["copy"].clicked.connect(lambda: self.open_copy())
+        self.prefs_button.clicked.connect(lambda: self.open_prefs())
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.sidebar)
@@ -202,6 +212,11 @@ class MainWindow(QMainWindow):
         advance = QShortcut(QKeySequence("A"), self, context=Qt.ShortcutContext.WindowShortcut,
                             activated=lambda: self.set_advance_on_mark(not self.advance_on_mark))
         advance.setAutoRepeat(False)  # a held A must not flip the preference back and forth
+        # Ctrl+, (Cmd+, on macOS: Qt maps Ctrl to Cmd). Not StandardKey.Preferences: it is empty on Windows.
+        # keyPressEvent hands Ctrl-modified keys to super, so this shortcut is the only path.
+        prefs_sc = QShortcut(QKeySequence("Ctrl+,"), self, context=Qt.ShortcutContext.WindowShortcut,
+                             activated=lambda: self.open_prefs())
+        prefs_sc.setAutoRepeat(False)
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
@@ -448,6 +463,33 @@ class MainWindow(QMainWindow):
             (getattr(self._sheet, "open", None) or self._sheet.show)()
         except Exception as exc:  # noqa: BLE001
             self.say(f"Copy is not available: {exc}")
+
+    def _default_prefs_sheet_factory(self, ahead, behind, max_side, parent=None):
+        from spuza.ui.prefs_sheet import PrefsSheet  # lazy, like the copy sheet
+
+        return PrefsSheet(ahead, behind, max_side, parent=parent)
+
+    def open_prefs(self) -> None:
+        """Open Preferences (works in review mode too: it is a window-level sheet). The sheet starts from the
+        RUNNING prefetcher's window, so a --ahead/--behind override is what the user sees."""
+        if self._prefs_sheet is not None and self._prefs_sheet.isVisible():
+            return
+        pf = self.prefetcher
+        factory = self.prefs_sheet_factory or self._default_prefs_sheet_factory
+        try:
+            sheet = factory(pf.ahead, pf.behind, pf.max_side, parent=self)
+            self._prefs_sheet = sheet
+            sheet.accepted.connect(lambda: self._apply_prefs(sheet))
+            (getattr(sheet, "open", None) or sheet.show)()
+        except Exception as exc:  # noqa: BLE001
+            self.say(f"Preferences are not available: {exc}")
+
+    def _apply_prefs(self, sheet) -> None:
+        a, b = sheet.values()
+        settings.write_window(self.prefs, a, b)
+        self.prefs.sync()
+        self.prefetcher.set_window(a, b)
+        self.say(f"Prefetch: {a} ahead, {b} behind (about {settings.window_mb(a, b, self.prefetcher.max_side)} MB)")
 
     # -- keys, theme, close -----------------------------------------------------------------------
     def keyPressEvent(self, e) -> None:

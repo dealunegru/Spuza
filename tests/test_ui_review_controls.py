@@ -29,6 +29,7 @@ REVIEW_TABLE = {
     "fullscreen": "disabled", "review": "global", "copy": "global",
     "sidebar:All": "global", "sidebar:Marked": "global",
     "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
+    "prefs": "global", "shortcut:Ctrl+,": "global",
     "review:Unmark": "grid", "review:Zoom": "grid",
 }
 
