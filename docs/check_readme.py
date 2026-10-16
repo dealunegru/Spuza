@@ -43,7 +43,7 @@ _QT_NAMES = {"right": "right", "left": "left", "up": "up", "down": "down", "esca
 # README spellings -> canonical.
 _README_NAMES = {"→": "right", "←": "left", "↑": "up", "↓": "down", "esc": "esc", "escape": "esc",
                  "enter": "enter", "return": "enter", "space": "space",
-                 "cmd-,": "ctrl+,", "ctrl-,": "ctrl+,", "ctrl+,": "ctrl+,", "cmd+,": "ctrl+,"}
+                 "⌘,": "ctrl+,", "cmd-,": "ctrl+,", "ctrl-,": "ctrl+,", "ctrl+,": "ctrl+,", "cmd+,": "ctrl+,"}
 
 
 def _qt_key(attr: str) -> str:
@@ -224,7 +224,8 @@ def check(readme_text: str, root: Path) -> list[str]:
         drift(f"key {k!r} is handled in the window but is in no README key table")
     if allowed:
         for k in sorted(documented - allowed):
-            drift(f"key {k!r} is in a README key table but no window, review or compare handler uses it")
+            drift(f"key {k!r} is in a README key table but no window, review or compare handler uses it"
+                  + (" (the Preferences key is spelled `Cmd-,`, `Ctrl-,` or `⌘,`)" if "," in k else ""))
 
     # 2. flags
     try:
@@ -251,7 +252,7 @@ def check(readme_text: str, root: Path) -> list[str]:
     for p in problems:
         drift(p)
     for f in sorted(cflags):
-        if f not in readme_text:
+        if not re.search(re.escape(f) + r"(?![\w-])", readme_text):
             drift(f"command-line flag {f} is not mentioned")
 
     # 4. version

@@ -169,3 +169,22 @@ def test_real_readme_passes():
     """The CI step: the repo's README matches the repo's code."""
     got = cr.check((ROOT / "README.md").read_text(encoding="utf-8"), ROOT)
     assert got == [], "\n".join(got)
+
+
+def test_newer_version_below_the_first_is_drift(root):
+    ver = cr.tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    t = good_readme(root).replace("- **0.0.1** the oldest.", "- **9.9.9** from the future.")
+    got = cr.check(t, root)
+    assert got == [f"README: What's new names 9.9.9, newer than pyproject's {ver}"], got
+
+
+def test_cli_flag_is_not_matched_inside_a_longer_flag(root):
+    t = good_readme(root).replace("--version", "--version-info")
+    _one(root, t, "command-line flag --version is not mentioned")
+
+
+def test_prefs_key_spellings(root):
+    t = good_readme(root).replace("`Cmd-,`", "`⌘,`")
+    assert cr.check(t, root) == []
+    t = good_readme(root).replace("`Cmd-,`", "`Alt-,`")
+    _one(root, t, "`Cmd-,`, `Ctrl-,` or `⌘,`")
