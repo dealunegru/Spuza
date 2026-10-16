@@ -121,6 +121,7 @@ class Viewer(QGraphicsView):
     full_done = Signal(int, float)
     full_skipped = Signal(int)
     full_failed = Signal(int, str)
+    pixmap_changed = Signal(int)  # the item's pixmap was replaced (preview, full-res swap, or cleared)
     _full_result = Signal(int, str, object, float, str)
 
     def __init__(self, parent=None):
@@ -138,6 +139,9 @@ class Viewer(QGraphicsView):
         self._full_cache: OrderedDict[str, QImage] = OrderedDict()
         self._full: dict[int, str] = {}  # index -> pending | done | skipped | error
         self._paint_pending: int | None = None
+        # Where Z lands: a callable returning the (fx, fy) fraction of the image to centre on, or None for
+        # the centre. Set by the window (focus_point); None keeps the shipped behaviour.
+        self.zoom_target = None
         self._scene = QGraphicsScene(self)
         self._item = QGraphicsPixmapItem()
         self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
@@ -177,6 +181,10 @@ class Viewer(QGraphicsView):
         pm = self._item.pixmap()
         return None if pm.isNull() else (pm.width(), pm.height())
 
+    def image_item(self) -> QGraphicsPixmapItem:
+        """The picture's item; overlays parent to it so they share its transform."""
+        return self._item
+
     def full_state(self, index: int) -> str | None:
         return self._full.get(index)
 
@@ -189,6 +197,7 @@ class Viewer(QGraphicsView):
     def _clear(self, index: int, pic) -> None:
         self.index, self.pic, self.info, self._preview = index, pic, None, None
         self._item.setPixmap(QPixmap())
+        self.pixmap_changed.emit(index)
         self._paint_pending = None
         self._sync_hud()
 
@@ -227,6 +236,7 @@ class Viewer(QGraphicsView):
             frac = (c.x() / max(1, old.width()), c.y() / max(1, old.height()))
         self._item.setPixmap(QPixmap.fromImage(qimg))
         self._scene.setSceneRect(self._item.boundingRect())
+        self.pixmap_changed.emit(self.index)
         self._apply_zoom()
         if frac is not None and self.zoomed:
             self.centerOn(QPointF(frac[0] * qimg.width(), frac[1] * qimg.height()))
@@ -240,7 +250,17 @@ class Viewer(QGraphicsView):
             if dpr > 1.0:  # 100% means one image pixel per device pixel, not per logical pixel
                 self.scale(1.0 / dpr, 1.0 / dpr)
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-            self.centerOn(self._item)
+            frac = None
+            if self.zoom_target is not None:
+                try:
+                    frac = self.zoom_target()
+                except Exception:  # noqa: BLE001 - a bad target must never break Z
+                    frac = None
+            if frac is None:
+                self.centerOn(self._item)
+            else:
+                pm = self._item.pixmap()
+                self.centerOn(QPointF(frac[0] * pm.width(), frac[1] * pm.height()))
         else:
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)

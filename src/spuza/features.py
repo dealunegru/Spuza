@@ -27,6 +27,18 @@ FLAGS: dict[str, Flag] = {
              "Decode threads (1-8) in Preferences, saved as prefetch/threads; applied at the next launch."
              " Classic always decodes on 3 threads.",
              classic=False),
+        Flag("compare_view",
+             "N compares up to four near-twins side by side, zoom and pan locked together.",
+             classic=False),
+        Flag("focus_peaking",
+             "P paints the sharp edges, computed on a worker at half size; saved as peaking/on.",
+             classic=False),
+        Flag("focus_point",
+             "Z lands on the Fuji AF point and O shows it, for allowlisted camera models only.",
+             classic=False),
+        Flag("resume_session",
+             "Marks and place survive quitting, kept in Spuza's app-data folder, never on the card.",
+             classic=False),
     )
 }
 

@@ -52,6 +52,7 @@ class PreviewInfo:
     nbytes: int  # preview payload bytes read (file size for open formats)
     ms: float  # wall time of load()
     exif: _exif.Exif | None = None  # basic EXIF read on the worker; None when the file carries none
+    focus: object | None = None  # spuza.focus.FocusInfo, read on the worker only while focus_point is on
 
 
 # ---- container slicing ------------------------------------------------------------------------
@@ -240,6 +241,20 @@ def _rawpy_full(path: Path, half_size: bool) -> Image.Image:
         raise PreviewError(f"cannot demosaic {path.name}: {e}") from e
 
 
+def _focus(path: Path, source: str, data):
+    """Focus data for a RAF while focus_point is on, else None; reuses the embedded JPEG already in memory.
+
+    Only the camera's own embedded JPEG is in the frame the AF point was probed in (the lead's focus probe):
+    the rawpy-thumb / rawpy-full fallbacks are not, so they carry no focus."""
+    from spuza import features
+
+    if not features.enabled("focus_point") or source != "raf-embedded" or not data:
+        return None
+    from spuza import focus
+
+    return focus.from_jpeg(data)
+
+
 def load(path, max_side: int | None = 2560):
     """Return (RGB image, PreviewInfo). Raises PreviewError for unknown or corrupt files."""
     path = Path(path)
@@ -252,8 +267,9 @@ def load(path, max_side: int | None = 2560):
 
     def done(im, source, native, nbytes, data=None):
         ex = _exif.read(data, path)  # fails soft; bytes already in memory first, file header second
+        fi = _focus(path, source, data) if ext == ".raf" else None
         ms = (time.perf_counter() - t0) * 1000
-        return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms, ex)
+        return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms, ex, fi)
 
     if ext in RAW_EXTS:
         got = _slice(path)

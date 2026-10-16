@@ -136,6 +136,19 @@ Files that already exist with identical content are skipped, not overwritten.
 
 Spuza opens in classic mode, which is everything it has shipped. Advanced mode adds features still being tried out: tick "Advanced mode" in Preferences (saved; the mode and its marker switch at once, decode threads at the next launch), or run `spuza --advanced` (or `spuza --classic`) for one run only; the saved preference is not touched. Advanced mode shows `(advanced)` in the window title and an `ADVANCED` tag in the status strip. See [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
 
+### Advanced-mode features
+
+These four exist only in advanced mode; in classic their keys do nothing and their buttons are hidden.
+
+| Key | Does |
+|---|---|
+| `N` | **Compare.** Shows this picture and the next side by side; `N` again adds the following one, up to four. In review, select two to four marked pictures (`Ctrl`/`Cmd`-click) and press `N`. `←`/`→` move between them, `Space` marks the one with the frame, `Z` zooms the focused one and its neighbour to 100% together, and dragging pans them in step. `Esc` returns to the picture that had the frame. |
+| `P` | **Focus peaking.** Paints the sharp edges red on the big picture (and on each compare cell). Remembered between runs; the strength is "Peaking threshold" in Preferences. |
+| `O` | **AF point.** Draws a thin ring where the camera focused, and `Z` then opens the 100% view on that spot instead of the centre. Fujifilm RAFs from the X-T4, X-T5, X100V and X-T50 only; other files simply have no ring. |
+| `U` | **Start fresh.** Clears this card's marks and forgets its saved session; `U` again within 10 seconds undoes it. |
+
+**Resume.** Spuza remembers each card's marks and your place and puts them back the next time you open the same card; a banner at the bottom says what it restored. The session is a small file in Spuza's app-data folder, never on the card, and nothing is ever written to your pictures. Turn it off with "Remember marks between runs" in Preferences; sessions older than 30 days are deleted at start.
+
 ## How it stays fast
 
 - **No demosaicing on the way through.** A raw file carries a camera-made JPEG preview. Spuza slices it straight out of the file (RAF header offsets, DNG SubIFDs) in a few milliseconds and shows that. The expensive full decode runs only when you press `Z`, and only if the preview is smaller than the sensor.

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
+from PySide6.QtCore import QObject, QPointF, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from spuza import features
 from spuza.copy import human_size
 from spuza.reveal import reveal_menu
 
@@ -163,7 +164,8 @@ class ReviewGrid(QWidget):
         self.view.setResizeMode(QListView.ResizeMode.Adjust)
         self.view.setMovement(QListView.Movement.Static)
         self.view.setUniformItemSizes(True)
-        self.view.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        self._multi: bool | None = None
+        self._apply_selection_mode()
         self.view.setGridSize(CELL)
         self.view.setModel(self.model)
         self.view.setItemDelegate(_Delegate(self))
@@ -207,7 +209,17 @@ class ReviewGrid(QWidget):
         c = self.catalog
         return [i for i in range(len(c.pictures)) if c.is_marked(i)]
 
+    def _apply_selection_mode(self) -> None:
+        """Advanced + compare_view: Ctrl/Cmd-click selects several (for compare). Classic stays single."""
+        multi = features.enabled("compare_view")
+        if multi != self._multi:
+            self._multi = multi
+            self.view.setSelectionMode(
+                QListView.SelectionMode.ExtendedSelection if multi else QListView.SelectionMode.SingleSelection
+            )
+
     def refresh(self) -> None:
+        self._apply_selection_mode()
         keep = self.selected_index()
         keep_row = self.view.currentIndex().row()
         self.model.clear()
@@ -247,6 +259,18 @@ class ReviewGrid(QWidget):
     def selected_index(self) -> int | None:
         cur = self.view.currentIndex()
         return cur.data(IDX_ROLE) if cur.isValid() else None
+
+    def selected_indices(self) -> list[int]:
+        """Catalog indices of every selected picture in grid order (the current one alone in classic)."""
+        if not features.enabled("compare_view") or not self._multi:
+            i = self.selected_index()
+            return [] if i is None else [i]
+        rows = sorted(ix.row() for ix in self.view.selectionModel().selectedIndexes())
+        got = [self.model.item(r).data(IDX_ROLE) for r in rows]
+        cur = self.selected_index()
+        if not got and cur is not None:
+            got = [cur]
+        return got
 
     # ---- thumbnails ----------------------------------------------------------------------------
     def _pixmap(self, i: int) -> QPixmap | None:
@@ -305,10 +329,14 @@ class ReviewGrid(QWidget):
 
     # ---- actions -------------------------------------------------------------------------------
     def unmark_selected(self) -> None:
-        i = self._zoom_index if self.stack.currentIndex() == PAGE_ZOOM else self.selected_index()
-        if i is None:
+        if self.stack.currentIndex() == PAGE_ZOOM:
+            picks = [] if self._zoom_index is None else [self._zoom_index]
+        else:
+            picks = self.selected_indices()
+        if not picks:
             return
-        self.catalog.set_mark(i, False)
+        for i in picks:
+            self.catalog.set_mark(i, False)
         self._zoom_index = None
         self.refresh()
         self.marks_changed.emit()
@@ -350,6 +378,22 @@ class ReviewGrid(QWidget):
         self.zoom_view.resetTransform()
         if self._zoom_fit and self._zoom_item is not None:
             self.zoom_view.fitInView(self._zoom_item, Qt.AspectRatioMode.KeepAspectRatio)
+        elif self._zoom_item is not None:
+            frac = self._focus_frac(self._zoom_index)  # advanced + focus_point: 100% lands on the AF point
+            if frac is not None:
+                pm = self._zoom_item.pixmap()
+                self.zoom_view.centerOn(QPointF(frac[0] * pm.width(), frac[1] * pm.height()))
+
+    def _focus_frac(self, i):
+        """The picture's AF point as a (fx, fy) fraction, or None (flag off, no info, no usable point)."""
+        if i is None or self.prefetcher is None or not features.enabled("focus_point"):
+            return None
+        try:
+            info = self.prefetcher.info(i)
+            fi = getattr(info, "focus", None)
+            return fi.frac() if fi is not None else None
+        except Exception:  # noqa: BLE001 - a bad point must never break Z
+            return None
 
     def toggle_zoom(self) -> None:
         if self.stack.currentIndex() != PAGE_ZOOM:

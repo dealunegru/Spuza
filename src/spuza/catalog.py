@@ -275,6 +275,10 @@ class Prefetcher(QObject):
     def info(self, i: int):
         return self._info.get(i)
 
+    def busy(self) -> bool:
+        """True while any decode is queued or running (the window waits for False before importing numpy)."""
+        return not self._closed and bool(self._inflight)  # shutdown drops queued jobs without a signal
+
     def failed_reason(self, i: int) -> str | None:
         return self._failed.get(i)
 

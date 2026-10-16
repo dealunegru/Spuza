@@ -3,15 +3,20 @@
 Design: 02-bench, with 01-bleed as its full-screen mode. Every key has a visible toolbar button.
 The review grid and the copy sheet are built lazily through `review_factory` / `copy_sheet_factory`
 so they are only imported when used (and tests can inject fakes).
+
+Advanced mode wires four more features, each behind its flag and each a no-op (key falls through, widget
+hidden, nothing written) in classic: N compare (compare_view), P peaking (focus_peaking), O AF point and Z
+landing on it (focus_point), and resume (resume_session; U starts fresh). Their objects are built on first use.
 """
 
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
@@ -24,6 +29,31 @@ from spuza.ui.inspector import Inspector
 from spuza.ui.viewer import Viewer
 
 DOT = "·"
+
+
+class _MaskSignals(QObject):
+    done = Signal(int, int, object)  # generation, picture index, QImage|None
+
+
+class _MaskJob(QRunnable):
+    """One compare cell's peaking mask, computed off the GUI thread (QImage only, never a pixmap)."""
+
+    def __init__(self, sig: _MaskSignals, gen: int, index: int, qimg, threshold: int):
+        super().__init__()
+        self.sig, self.gen, self.index, self.qimg, self.threshold = sig, gen, index, qimg, threshold
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        from spuza import peaking
+
+        try:
+            out = peaking.mask_image(self.qimg, self.threshold)
+        except Exception:  # noqa: BLE001 - a failed mask leaves the plain cell
+            out = None
+        try:
+            self.sig.done.emit(self.gen, self.index, out)
+        except RuntimeError:  # the window was destroyed meanwhile
+            pass
 
 
 def default_copy_dest() -> Path:
@@ -46,6 +76,16 @@ BUTTONS = [
     ("review", "Review", "R", True),
     ("copy", "Copy…", "C", False),
 ]
+# advanced-only controls (each shown only while its flag is on): (name, label, key cap, flag)
+NEXT_BUTTONS = [
+    ("compare", "Compare", "N", "compare_view"),
+    ("peaking", "Peaking", "P", "focus_peaking"),
+    ("afpoint", "AF point", "O", "focus_point"),
+]
+COMPARE_KEYS = frozenset({Qt.Key_Left, Qt.Key_Right, Qt.Key_J, Qt.Key_K, Qt.Key_Space, Qt.Key_M, Qt.Key_Z,
+                          Qt.Key_N, Qt.Key_Escape})
+PEAKING_WARM_MS = 3000  # a saved-on peaking at start is built when the prefetch goes idle, or after this at the latest
+MASK_WAIT_MS = 3000  # the longest closeEvent waits for compare's mask workers
 
 
 class KeyButton(QToolButton):
@@ -120,10 +160,12 @@ class Sidebar(QWidget):
 
 
 class MainWindow(QMainWindow):
+    peaking_settle_ms = None  # None: the overlay's SETTLE_MS; tests set 0 so no assertion depends on a delay
     step_timed = Signal(int, float)  # picture index, ms from key handled to its pixmap set
 
-    def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None):
+    def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None, resume=True):
         super().__init__(parent)
+        self._resume_allowed = bool(resume)  # False for --bench: a scripted run neither reads nor writes sessions
         self.catalog, self.prefetcher, self.root = catalog, prefetcher, Path(root)
         self.prefs = prefs if prefs is not None else settings.open_settings()
         self.advance_on_mark = settings.read_bool(self.prefs, settings.ADVANCE_ON_MARK, False)
@@ -132,6 +174,22 @@ class MainWindow(QMainWindow):
         self.copy_sheet_factory = None
         self.prefs_sheet_factory = None
         self.review = None
+        self.compare = None  # advanced: CompareView, built on first N
+        self.peaking = None  # advanced: PeakingOverlay, built when the flag is on
+        self.marker = None  # advanced: FocusMarker
+        self.resume = None  # advanced: ResumeController
+        self._compare_page = None
+        self._compare_strip = None
+        self._compare_origin = "single"
+        self._review_slot = None  # holds stack page 1 for the review until it is built, if compare comes first
+        self._cmp_pool = None
+        self._cmp_sig = None
+        self._cmp_gen = 0
+        self._cmp_masked: set[int] = set()
+        self._banner = None
+        self._peaking_wait = False
+        self._pruned = False
+        self._prune_thread = None
         self._sheet = None
         self._prefs_sheet = None
         self._prefs_seed = False
@@ -154,6 +212,20 @@ class MainWindow(QMainWindow):
         self.toolbar.setFloatable(False)
         self.addToolBar(self.toolbar)
         self.buttons: dict[str, KeyButton] = {}
+        # The advanced-only buttons live on a second row: on one row the three would push Preferences and Copy
+        # into the overflow chevron at 1280 px (measured). The row is hidden, never removed, in classic.
+        self.addToolBarBreak()
+        self.toolbar2 = QToolBar("Advanced", self)
+        self.toolbar2.setMovable(False)
+        self.toolbar2.setFloatable(False)
+        self.addToolBar(self.toolbar2)
+        self.next_buttons: dict[str, KeyButton] = {}
+        self._next_actions: dict[str, object] = {}
+        for nname, nlabel, ncap, _flag in NEXT_BUTTONS:
+            nb = KeyButton(nname, nlabel, ncap, True)
+            self.next_buttons[nname] = nb
+            self._next_actions[nname] = self.toolbar2.addWidget(nb)
+        self.toolbar2.setVisible(False)
         for name, label, cap, checkable in BUTTONS:
             if name in ("mark", "review"):
                 self.toolbar.addSeparator()
@@ -179,6 +251,10 @@ class MainWindow(QMainWindow):
         b["review"].clicked.connect(lambda: self.toggle_review())
         b["copy"].clicked.connect(lambda: self.open_copy())
         self.prefs_button.clicked.connect(lambda: self.open_prefs())
+        nb = self.next_buttons
+        nb["compare"].clicked.connect(lambda: self._compare_button())
+        nb["peaking"].clicked.connect(lambda: self.toggle_peaking())
+        nb["afpoint"].clicked.connect(lambda: self.toggle_marker())
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.sidebar)
@@ -226,7 +302,14 @@ class MainWindow(QMainWindow):
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
+        self.viewer.zoom_target = self._zoom_target  # None unless advanced + focus_point: Z centres as shipped
+        if features.enabled("resume_session"):
+            # restore BEFORE the first prefetch so the first paint is the restored place, and no mark can be made
+            # (and saved over the old session) before it ran
+            ctl = self._ensure_resume()
+            self._banner = ctl.restore() if ctl is not None else None
         prefetcher.update(catalog.index)
+        self._enter_next_features(defer=True)  # after update(): importing numpy for peaking must not delay the first decodes
         self._render_current()
 
     # -- navigation -------------------------------------------------------------------------------
@@ -235,6 +318,8 @@ class MainWindow(QMainWindow):
             self._moved()
 
     def go_to(self, i: int) -> None:
+        if self._compare_shown():
+            return  # the filmstrip is behind compare; a stray pick must not move the viewer under it
         if self.stack.currentIndex() == 1:
             self._select_in_review(i)  # review stays up; the viewer's picture does not move
             return
@@ -266,6 +351,8 @@ class MainWindow(QMainWindow):
         self.prefs.setValue(settings.ADVANCE_ON_MARK, on)
         self.prefs.sync()
         self.buttons["advance"].setChecked(on)
+        if self.compare is not None:
+            self.compare.set_advance_on_mark(on)
         if announce:
             self.say("Move on mark: on (marking shows the next picture)" if on else "Move on mark: off")
 
@@ -283,8 +370,23 @@ class MainWindow(QMainWindow):
                 self.viewer.show_error(i, pic, reason)
             else:
                 self.viewer.show_placeholder(i, pic)
+            self._overlays_for(i, img)
+            if img is not None or reason:
+                self._say_banner()
         self.filmstrip.set_current(i)
         self.refresh_marks()
+
+    def _overlays_for(self, i: int, img) -> None:
+        """Peaking mask and AF ring for the picture just shown (both no-ops while off or in classic)."""
+        if self.peaking is not None:
+            self.peaking.show(i, img)
+        if self.marker is not None:
+            self.marker.set_point(self._focus_frac(i) if img is not None else None)
+
+    def _say_banner(self) -> None:
+        if self._banner:
+            banner, self._banner = self._banner, None
+            self.say(banner)
 
     def refresh_marks(self) -> None:
         """Everything that depends on the current picture or the marked set."""
@@ -292,7 +394,11 @@ class MainWindow(QMainWindow):
         pic = cat.current
         marked = bool(pic) and cat.is_marked(i)
         shown = self._review_shown_index()
-        if shown is _NOT_IN_REVIEW:
+        if self._compare_shown():  # lit for the focused cell
+            f = self.compare.focused_index()
+            self.buttons["mark"].setEnabled(f >= 0)
+            self.buttons["mark"].setChecked(f >= 0 and cat.is_marked(f))
+        elif shown is _NOT_IN_REVIEW:
             self.buttons["mark"].setEnabled(True)
             self.buttons["mark"].setChecked(marked)
         else:  # lit for what the user sees: the grid selection (or its zoom page)
@@ -344,7 +450,10 @@ class MainWindow(QMainWindow):
         self.is_bleed = on
         for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
             w.setVisible(not on)
+        self.toolbar2.setVisible(not on and self._next_row_wanted())
         self.viewer.strip.setVisible(on)
+        if self._compare_strip is not None:
+            self._compare_strip.setVisible(on)
         if on:
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
@@ -357,6 +466,8 @@ class MainWindow(QMainWindow):
             self.setFocus()
 
     def toggle_review(self) -> None:
+        if self._compare_shown():
+            return  # leave compare first (Esc); the Review button is disabled meanwhile
         if self.stack.currentIndex() == 1:
             self.close_review()
         else:
@@ -368,6 +479,8 @@ class MainWindow(QMainWindow):
         return ReviewGrid(catalog, prefetcher, parent)
 
     def open_review(self) -> None:
+        if self._compare_shown():
+            return
         if self.review is None:
             factory = self.review_factory or self._default_review_factory
             try:
@@ -375,7 +488,11 @@ class MainWindow(QMainWindow):
             except Exception as exc:  # noqa: BLE001 - e.g. the module is missing; stay on the viewer
                 self.say(f"Review is not available: {exc}")
                 return
-            self.stack.addWidget(self.review)
+            if self._review_slot is not None:  # compare was built first and kept the slot
+                self.stack.removeWidget(self._review_slot)
+                self._review_slot.deleteLater()
+                self._review_slot = None
+            self.stack.insertWidget(1, self.review)
             self.review.open_index.connect(self._review_open_index)
             self.review.marks_changed.connect(self._review_marks_changed)
             self.review.closed.connect(self.close_review)
@@ -419,8 +536,14 @@ class MainWindow(QMainWindow):
         self._focus_review()
 
     def _control(self, key, viewer_action) -> None:
-        """A toolbar control: in review it does what the same key does on the grid, else drives the viewer."""
-        if self.stack.currentIndex() == 1:
+        """A toolbar control: in review it does what the same key does on the grid, in compare what it does there,
+        else drives the viewer."""
+        if self._compare_shown():
+            self._forward_to_compare(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
+            if self._compare_shown():
+                self.buttons["zoom"].setChecked(self.compare.is_zoomed())
+            self.refresh_marks()
+        elif self.stack.currentIndex() == 1:
             self.forward_to_review(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
             self.buttons["zoom"].setChecked(self.viewer.zoomed)  # the viewer did not move
             self.refresh_marks()
@@ -438,6 +561,8 @@ class MainWindow(QMainWindow):
             self._forwarding = False
 
     def close_review(self) -> None:
+        if self._compare_shown():
+            return
         self.stack.setCurrentIndex(0)
         self.buttons["review"].setChecked(False)
         self.buttons["fullscreen"].setEnabled(True)
@@ -474,7 +599,9 @@ class MainWindow(QMainWindow):
         from spuza.ui.prefs_sheet import PrefsSheet  # lazy, like the copy sheet
 
         return PrefsSheet(ahead, behind, max_side, parent=parent, advanced=features.is_advanced(),
-                          threads=settings.read_threads(self.prefs))
+                          threads=settings.read_threads(self.prefs),
+                          peaking_threshold=settings.read_peaking_threshold(self.prefs),
+                          resume=settings.read_resume_on(self.prefs))
 
     def _show_mode(self) -> None:
         adv = features.is_advanced()
@@ -482,9 +609,23 @@ class MainWindow(QMainWindow):
         self.advanced_tag.setVisible(adv)
 
     def set_advanced(self, on: bool) -> None:
-        """Switch this run's mode live (title and ADVANCED marker). Saving is the caller's business."""
+        """Switch this run's mode live (title and ADVANCED marker). Saving is the caller's business.
+
+        To classic: the new buttons hide, peaking and the ring turn off, compare closes. To advanced: the saved
+        peaking / ring states come back and the buttons show; resume starts (restoring only if nothing was done yet)."""
+        on = bool(on)
+        if not on:
+            self._leave_next_features()
         features.set_mode(features.ADVANCED if on else features.CLASSIC)
         self._show_mode()
+        if on:
+            self._enter_next_features()
+            ctl = self._ensure_resume()
+            if ctl is not None and self.catalog.marked_count == 0 and self.catalog.index == 0:
+                self._banner = ctl.restore()
+        else:
+            self._sync_next_buttons()
+        self._render_current()
 
     def open_prefs(self) -> None:
         """Open Preferences (works in review mode too: it is a window-level sheet). The sheet starts from the
@@ -512,11 +653,357 @@ class MainWindow(QMainWindow):
             settings.write_advanced(self.prefs, adv)
         if adv and callable(getattr(sheet, "threads", None)):
             settings.write_threads(self.prefs, sheet.threads())
+        peak, remember = None, None  # the advanced rows: written only when changed from their seed
+        if adv and callable(getattr(sheet, "peaking_threshold", None)):
+            t = sheet.peaking_threshold()
+            if t != getattr(sheet, "seeded_peaking", t):
+                settings.write_peaking_threshold(self.prefs, t)
+                peak = t
+        if adv and callable(getattr(sheet, "resume", None)):
+            r = bool(sheet.resume())
+            if r != getattr(sheet, "seeded_resume", r):
+                settings.write_resume_on(self.prefs, r)
+                remember = r
         self.prefs.sync()
         if changed:
             self.set_advanced(adv)
+        if peak is not None:
+            if self.peaking is not None:
+                self.peaking.set_threshold(peak)
+            self._reset_compare_masks(clear=True)
+            self._compare_overlays()
+        if remember is not None and self.resume is not None:
+            self.resume.set_enabled(remember)
         self.prefetcher.set_window(a, b)
         self.say(f"Prefetch: {a} ahead, {b} behind (about {settings.window_mb(a, b, self.prefetcher.max_side)} MB)")
+
+    # -- advanced features: each is a no-op unless its flag is on -----------------------------------
+    def _focus_frac(self, i):
+        """Picture `i`'s AF point as a (fx, fy) fraction, or None (flag off, no info, no usable point)."""
+        if i is None or i < 0 or not features.enabled("focus_point"):
+            return None
+        try:
+            fi = getattr(self.prefetcher.info(i), "focus", None)
+            return fi.frac() if fi is not None else None
+        except Exception:  # noqa: BLE001 - a bad point must never break Z or a step
+            return None
+
+    def _zoom_target(self):
+        return self._focus_frac(self.viewer.index)
+
+    def _ensure_peaking(self):
+        if self.peaking is None:
+            from spuza.ui.peaking_overlay import PeakingOverlay  # lazy: numpy stays out of classic start-up
+
+            self.peaking = PeakingOverlay(self.viewer, threshold=settings.read_peaking_threshold(self.prefs),
+                                          settle_ms=self.peaking_settle_ms)
+        return self.peaking
+
+    def _ensure_marker(self):
+        if self.marker is None:
+            from spuza.ui.focus_marker import FocusMarker
+
+            self.marker = FocusMarker(self.viewer)
+        return self.marker
+
+    def _enter_next_features(self, defer: bool = False) -> None:
+        """Start-up, or a live switch to advanced: restore the saved peaking / ring states, show the buttons.
+
+        At start-up (`defer`) a saved-on peaking is built later: importing numpy while the first pictures decode
+        delays them (measured: one bench step waited 50-80 ms), so it waits for the prefetch to go idle."""
+        if features.enabled("focus_peaking"):
+            on = settings.read_peaking_on(self.prefs)
+            if on and defer and self.peaking is None:
+                self._peaking_wait = True
+                self.prefetcher.ready.connect(self._maybe_build_peaking)
+                QTimer.singleShot(PEAKING_WARM_MS, self._build_waiting_peaking)
+            elif on or self.peaking is not None:  # built only when wanted: numpy stays unimported while P is off
+                self._ensure_peaking().set_on(on)
+        if features.enabled("focus_point"):
+            on = settings.read_focus_marker(self.prefs)
+            if on or self.marker is not None:
+                self._ensure_marker().set_on(on)
+        self._sync_next_buttons()
+
+    def _maybe_build_peaking(self, *_args) -> None:
+        busy = getattr(self.prefetcher, "busy", None)  # a fake without busy() counts as idle
+        if self._peaking_wait and not (busy() if callable(busy) else False):
+            self._build_waiting_peaking()
+
+    def _build_waiting_peaking(self) -> None:
+        if not self._peaking_wait:
+            return
+        self._peaking_wait = False
+        if features.enabled("focus_peaking") and settings.read_peaking_on(self.prefs) and self.peaking is None:
+            self._ensure_peaking().set_on(True)
+            if len(self.catalog):
+                self.peaking.show(self.catalog.index, self.prefetcher.cached(self.catalog.index))
+            self._sync_next_buttons()
+
+    def _leave_next_features(self) -> None:
+        """A live switch to classic (run BEFORE the mode flips: the ring ignores set_on in classic)."""
+        if self._compare_shown():
+            self.compare.close_compare()
+        if self.resume is not None:
+            self.resume.flush()
+        if self.marker is not None:
+            self.marker.set_on(False)
+        if self.peaking is not None:
+            self.peaking.set_on(False)
+
+    def _next_row_wanted(self) -> bool:
+        return any(features.enabled(flag) for _n, _l, _c, flag in NEXT_BUTTONS)
+
+    def _sync_next_buttons(self) -> None:
+        for name, _label, _cap, flag in NEXT_BUTTONS:
+            self._next_actions[name].setVisible(features.enabled(flag))
+        self.toolbar2.setVisible(self._next_row_wanted() and not self.is_bleed)
+        nb = self.next_buttons
+        nb["compare"].setChecked(self._compare_shown())
+        nb["peaking"].setChecked(self.peaking is not None and self.peaking.is_on())
+        nb["afpoint"].setChecked(self.marker is not None and self.marker.is_on())
+
+    # -- peaking (P) and the AF ring (O)
+    def toggle_peaking(self) -> None:
+        if not features.enabled("focus_peaking"):
+            self._sync_next_buttons()
+            return
+        self.set_peaking(not self._ensure_peaking().is_on())
+
+    def set_peaking(self, on: bool) -> None:
+        ov = self._ensure_peaking()
+        ov.set_on(on)
+        on = ov.is_on()
+        settings.write_peaking_on(self.prefs, on)
+        self.prefs.sync()
+        if on and len(self.catalog):
+            ov.show(self.catalog.index, self.prefetcher.cached(self.catalog.index))
+        self._reset_compare_masks(clear=True)
+        self._compare_overlays()
+        self._sync_next_buttons()
+        self.say("Focus peaking: on (red edges are sharp)" if on else "Focus peaking: off")
+
+    def toggle_marker(self) -> None:
+        if not features.enabled("focus_point"):
+            self._sync_next_buttons()
+            return
+        self.set_marker(not self._ensure_marker().is_on())
+
+    def set_marker(self, on: bool) -> None:
+        mk = self._ensure_marker()
+        mk.set_on(on)
+        on = mk.is_on()
+        settings.write_focus_marker(self.prefs, on)
+        self.prefs.sync()
+        frac = self._focus_frac(self.viewer.index)
+        mk.set_point(frac)
+        self._sync_next_buttons()
+        if not on:
+            self.say("AF point: hidden")
+        else:
+            self.say("AF point: shown" if frac is not None else "AF point: on (none known for this picture)")
+
+    # -- resume (U starts fresh)
+    def _ensure_resume(self):
+        if self.resume is None and self._resume_allowed and features.enabled("resume_session"):
+            from spuza.session import SessionStore
+            from spuza.ui.resume import ResumeController
+
+            store = SessionStore()  # builds a path only; the folder is made on the first save
+            self.resume = ResumeController(self.catalog, self.root, store, parent=self)
+            remember = settings.read_resume_on(self.prefs)
+            self.resume.set_enabled(remember)
+            if remember and not self._pruned:
+                self._pruned = True  # once per run, off the GUI thread
+                self._prune_thread = threading.Thread(target=self._prune, args=(store,), name="spuza-prune",
+                                                      daemon=True)
+                self._prune_thread.start()
+        return self.resume
+
+    @staticmethod
+    def _prune(store) -> None:
+        try:
+            store.prune()  # sessions older than 30 days
+        except Exception:  # noqa: BLE001 - housekeeping must never reach the user
+            pass
+
+    def start_fresh(self) -> None:
+        ctl = self._ensure_resume()
+        if ctl is None:
+            return
+        text = ctl.start_fresh()
+        if text:
+            self.say(text)
+        self.filmstrip.viewport().update()
+        self.refresh_marks()
+
+    # -- compare (N)
+    def _compare_shown(self) -> bool:
+        return self._compare_page is not None and self.stack.currentWidget() is self._compare_page
+
+    def _ensure_compare(self):
+        if self.compare is None:
+            from spuza.ui.compare import CompareView  # lazy: only advanced mode ever builds it
+
+            cv = CompareView(self.catalog, self.prefetcher)
+            strip = QLabel()
+            strip.setStyleSheet("background: rgba(0,0,0,150); color: #f2f2f4; padding: 6px 14px;")
+            strip.setVisible(self.is_bleed)
+            page = QWidget()
+            lay = QVBoxLayout(page)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
+            lay.addWidget(cv, 1)
+            lay.addWidget(strip)
+            if self.review is None and self._review_slot is None:
+                self._review_slot = QWidget()  # review keeps page 1 even when it is built after compare
+                self.stack.addWidget(self._review_slot)
+            self.stack.addWidget(page)
+            cv.closed.connect(self._compare_closed)
+            cv.marks_changed.connect(self._compare_marks)
+            cv.focus_changed.connect(self._compare_focus)
+            cv.installEventFilter(self)
+            self._cmp_sig = _MaskSignals()
+            self._cmp_sig.done.connect(self._on_cmp_mask)
+            self._cmp_pool = QThreadPool()
+            self._cmp_pool.setMaxThreadCount(1)
+            self.compare, self._compare_page, self._compare_strip = cv, page, strip
+        return self.compare
+
+    def _review_picks(self) -> list[int]:
+        fn = getattr(self.review, "selected_indices", None)
+        try:
+            return list(fn()) if callable(fn) else []
+        except Exception:  # noqa: BLE001 - a fake review
+            return []
+
+    def open_compare(self) -> None:
+        if not features.enabled("compare_view") or not len(self.catalog) or self._compare_shown():
+            return
+        if self.stack.currentIndex() == 1:  # review: the grid's selection, up to four
+            picks = self._review_picks()[:4]
+            if len(picks) < 2:
+                self.say("Select two or more pictures in the grid (Ctrl-click) to compare them.")
+                return
+            indices, focus, run, origin = picks, 0, False, "review"
+        else:  # the viewer: this picture and the next (the last picture: the previous and this)
+            n, i = len(self.catalog), self.catalog.index
+            if n < 2:
+                self.say("Compare needs at least two pictures.")
+                return
+            indices, focus = ([i, i + 1], 0) if i + 1 < n else ([i - 1, i], 1)
+            run, origin = True, "single"
+        cv = self._ensure_compare()
+        self._compare_origin = origin
+        before = self.stack.currentIndex()
+        cv.set_advance_on_mark(self.advance_on_mark)
+        self._reset_compare_masks()
+        self.stack.setCurrentWidget(self._compare_page)
+        cv.open(indices, focus, run)
+        if not cv.indices():  # refused (should not happen once the flag is on): stay where we were
+            self.stack.setCurrentIndex(before)
+            return
+        self.buttons["review"].setEnabled(False)
+        self.buttons["fullscreen"].setEnabled(True)
+        self.filmstrip.set_highlight(cv.indices())
+        self._sync_compare()
+        self.refresh_marks()
+        self.setFocus()
+
+    def _compare_button(self) -> None:
+        if self._compare_shown():
+            self._forward_to_compare(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key_N, Qt.KeyboardModifier.NoModifier))
+        else:
+            self.open_compare()
+        self._sync_next_buttons()
+
+    def _forward_to_compare(self, e) -> None:
+        """Hand a key event to the compare view (focus may be on the window)."""
+        self._forwarding = True
+        try:
+            QApplication.sendEvent(self.compare, QKeyEvent(
+                e.type(), e.key(), e.modifiers(), e.text(), e.isAutoRepeat(), e.count()))
+        finally:
+            self._forwarding = False
+        self._sync_compare()
+
+    def _sync_compare(self) -> None:
+        """Filmstrip highlight, bleed-strip text, zoom button and peaking overlays follow compare's cells."""
+        cv = self.compare
+        if cv is None or not self._compare_shown():
+            return
+        self.filmstrip.set_highlight(cv.indices())
+        self._compare_strip.setText(cv.status_text())
+        self.buttons["zoom"].setChecked(cv.is_zoomed())
+        self._compare_overlays()
+        self._sync_next_buttons()
+
+    def _compare_marks(self) -> None:
+        self.filmstrip.viewport().update()
+        self.refresh_marks()
+        self._sync_compare()
+
+    def _compare_focus(self, _i: int) -> None:
+        self.refresh_marks()
+        self._sync_compare()
+
+    def _compare_closed(self, i: int) -> None:
+        origin = self._compare_origin
+        self._reset_compare_masks()
+        self.filmstrip.set_highlight(())
+        self.buttons["review"].setEnabled(True)
+        self.buttons["zoom"].setChecked(self.viewer.zoomed)
+        if origin == "review" and self.review is not None:
+            if self.is_bleed:
+                self.set_bleed(False)  # review is inert in full-bleed
+            self.stack.setCurrentIndex(1)
+            self.buttons["fullscreen"].setEnabled(False)
+            self.review.refresh()
+            self.refresh_marks()
+            self._focus_review()
+        else:
+            self.stack.setCurrentIndex(0)
+            self.catalog.go(i)
+            self._moved()
+            self.setFocus()
+        self._sync_next_buttons()
+
+    def _reset_compare_masks(self, clear: bool = False) -> None:
+        """Forget which cells have an overlay (results in flight become stale); `clear` also removes them."""
+        self._cmp_gen += 1
+        if clear and self.compare is not None:
+            for i in self._cmp_masked:
+                self.compare.set_overlay(i, None)
+        self._cmp_masked.clear()
+
+    def _compare_overlays(self) -> None:
+        """With peaking on, each fitted compare cell gets its own mask (cached one, else a worker computes it)."""
+        cv = self.compare
+        if cv is None or not self._compare_shown() or self.peaking is None or not self.peaking.is_on():
+            return
+        threshold = settings.read_peaking_threshold(self.prefs)
+        for i in cv.indices():
+            if i in self._cmp_masked:
+                continue
+            mask = self.peaking.mask_for(i)
+            if mask is not None:
+                cv.set_overlay(i, mask)
+                self._cmp_masked.add(i)
+                continue
+            img = self.prefetcher.cached(i)
+            if img is None or img.isNull():
+                continue  # not decoded yet (compare decodes it itself): no overlay for this cell
+            self._cmp_masked.add(i)
+            self._cmp_pool.start(_MaskJob(self._cmp_sig, self._cmp_gen, i, img, threshold))
+
+    def _on_cmp_mask(self, gen: int, i: int, img) -> None:
+        if gen == self._cmp_gen and img is not None and self._compare_shown():
+            self.compare.set_overlay(i, img)
+
+    def eventFilter(self, obj, ev) -> bool:  # noqa: N802
+        if obj is self.compare and ev.type() == QEvent.Type.KeyPress and ev.key() == Qt.Key_N:
+            QTimer.singleShot(0, self._sync_compare)  # N may have added a cell: the highlight follows
+        return super().eventFilter(obj, ev)
 
     # -- keys, theme, close -----------------------------------------------------------------------
     def keyPressEvent(self, e) -> None:
@@ -524,6 +1011,15 @@ class MainWindow(QMainWindow):
                             | Qt.KeyboardModifier.MetaModifier):
             return super().keyPressEvent(e)
         k = e.key()
+        if self._compare_shown():  # compare owns the keys (plus F, C, P, O, which are global)
+            if self._forwarding:
+                return  # compare ignored it: never fall through to the hidden viewer
+            if k in COMPARE_KEYS:
+                self._forward_to_compare(e)
+                e.accept()
+                return
+            if k not in (Qt.Key_F, Qt.Key_C, Qt.Key_P, Qt.Key_O):
+                return super().keyPressEvent(e)
         if self.stack.currentIndex() == 1:
             if k in GRID_KEYS and not self._forwarding:
                 self.forward_to_review(e)  # the grid owns these; the hidden viewer never sees them
@@ -546,6 +1042,18 @@ class MainWindow(QMainWindow):
             self.toggle_review()
         elif k == Qt.Key_C:
             self.open_copy()
+        elif k == Qt.Key_N and features.enabled("compare_view"):
+            if not e.isAutoRepeat():
+                self.open_compare()
+        elif k == Qt.Key_P and features.enabled("focus_peaking"):
+            if not e.isAutoRepeat():
+                self.toggle_peaking()
+        elif k == Qt.Key_O and features.enabled("focus_point"):
+            if not e.isAutoRepeat():
+                self.toggle_marker()
+        elif k == Qt.Key_U and features.enabled("resume_session") and self.stack.currentIndex() == 0:
+            if not e.isAutoRepeat():
+                self.start_fresh()
         elif k == Qt.Key_Escape:
             if self.stack.currentIndex() == 1:
                 self.close_review()
@@ -557,13 +1065,15 @@ class MainWindow(QMainWindow):
 
     def retheme(self) -> None:
         c = theme.current()
-        self.toolbar.setStyleSheet(
+        bar_css = (
             f"QToolBar {{ spacing: 6px; padding: 4px 8px; border: 0; border-bottom: 1px solid {c.border}; }}"
             f"QToolButton {{ padding: 6px 12px; border: 1px solid {c.border}; border-radius: 6px;"
             f" background: {c.panel}; }}"
             f"QToolButton:hover {{ border-color: {c.accent}; }}"
             f"QToolButton:checked {{ background: {c.accent}; color: #ffffff; border-color: {c.accent}; }}"
             f"#btn_copy {{ background: {c.accent}; color: #ffffff; font-weight: 600; border-color: {c.accent}; }}")
+        self.toolbar.setStyleSheet(bar_css)
+        self.toolbar2.setStyleSheet(bar_css)
         self.sidebar.retheme()
         self.viewer.retheme()
         self.filmstrip.retheme()
@@ -578,6 +1088,17 @@ class MainWindow(QMainWindow):
         theme.follow(app, self.retheme)
 
     def closeEvent(self, e) -> None:
+        if self.resume is not None:
+            self.resume.flush()  # first: a bounded (~1 s) write of the marks and place
+        if self._prune_thread is not None:
+            self._prune_thread.join(2.0)
+        if self.compare is not None:
+            self.compare.shutdown()
+            self._cmp_gen += 1
+            self._cmp_pool.clear()
+            self._cmp_pool.waitForDone(MASK_WAIT_MS)
+        if self.peaking is not None:
+            self.peaking.shutdown()
         self.prefetcher.shutdown()
         self.viewer.shutdown()
         super().closeEvent(e)

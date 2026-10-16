@@ -226,7 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     # the default is left implicit so classic constructs the Prefetcher exactly as before
     extra = {} if threads == DEFAULT_THREADS else {"threads": threads}
     prefetcher = Prefetcher(catalog, ahead=ahead, behind=behind, **extra)
-    window = MainWindow(catalog, prefetcher, root)
+    # a scripted --bench starts at picture 1 and must not read or overwrite a real session
+    window = MainWindow(catalog, prefetcher, root, resume=not args.bench)
     if args.bench:
         theme.apply(app, theme.is_dark(app))
     else:

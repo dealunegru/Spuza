@@ -84,3 +84,44 @@ def read_threads(s: QSettings) -> int:
 
 def write_threads(s: QSettings, n: int) -> None:
     s.setValue(PREFETCH_THREADS, int(n))
+
+
+# Next-features round (spuza-features-r1). All four are advanced-only flags (spuza.features).
+PEAKING_ON = "peaking/on"  # P: the overlay is shown; off by default
+PEAKING_THRESHOLD = "peaking/threshold"  # edge strength 1-255 on the luminance gradient
+DEFAULT_PEAKING_THRESHOLD = 60
+PEAKING_THRESHOLD_RANGE = (1, 255)
+FOCUS_MARKER = "focus/marker"  # O: the ring at the camera's AF point; off by default
+RESUME_ON = "resume/enabled"  # "Remember marks between runs"; on by default (advanced mode only)
+
+
+def read_peaking_on(s: QSettings) -> bool:
+    return read_bool(s, PEAKING_ON, False)
+
+
+def write_peaking_on(s: QSettings, on: bool) -> None:
+    s.setValue(PEAKING_ON, bool(on))
+
+
+def read_peaking_threshold(s: QSettings) -> int:
+    return read_int(s, PEAKING_THRESHOLD, DEFAULT_PEAKING_THRESHOLD, *PEAKING_THRESHOLD_RANGE)
+
+
+def write_peaking_threshold(s: QSettings, n: int) -> None:
+    s.setValue(PEAKING_THRESHOLD, int(n))
+
+
+def read_focus_marker(s: QSettings) -> bool:
+    return read_bool(s, FOCUS_MARKER, False)
+
+
+def write_focus_marker(s: QSettings, on: bool) -> None:
+    s.setValue(FOCUS_MARKER, bool(on))
+
+
+def read_resume_on(s: QSettings) -> bool:
+    return read_bool(s, RESUME_ON, True)
+
+
+def write_resume_on(s: QSettings, on: bool) -> None:
+    s.setValue(RESUME_ON, bool(on))

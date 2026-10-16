@@ -17,6 +17,7 @@ from PySide6.QtGui import QAction, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractButton
 
+from spuza import features
 from spuza.catalog import Catalog, Picture, Prefetcher
 from spuza.preview import PreviewInfo
 from spuza.ui.window import MainWindow
@@ -31,6 +32,8 @@ REVIEW_TABLE = {
     "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
     "prefs": "global", "shortcut:Ctrl+,": "global",
     "review:Unmark": "grid", "review:Zoom": "grid",
+    # advanced-only (hidden, never absent, in classic): N acts on the grid selection; P and O are global switches
+    "compare": "grid", "peaking": "global", "afpoint": "global",
 }
 
 
@@ -45,8 +48,7 @@ def pump(cond, timeout=5.0):
     assert cond()
 
 
-@pytest.fixture
-def w():
+def _window():
     pics = [Picture(f"P{i}", ROOT / f"P{i}.JPG", None, (ROOT / f"P{i}.JPG",), "JPG", 1_000_000, 1.0)
             for i in range(6)]
     cat = Catalog(pics)
@@ -59,6 +61,20 @@ def w():
     for i in (1, 3, 5):
         cat.set_mark(i, True)
     win.refresh_marks()
+    return win
+
+
+@pytest.fixture
+def w():
+    win = _window()
+    yield win
+    win.close()
+
+
+@pytest.fixture
+def wa():
+    features.set_mode(features.ADVANCED)
+    win = _window()
     yield win
     win.close()
 
@@ -98,6 +114,29 @@ def test_table_covers_every_control(w):
     found |= {f"shortcut:{a.shortcut().toString()}" for a in w.findChildren(QAction)
               if not a.shortcut().isEmpty()}
     assert found == set(REVIEW_TABLE), f"unlisted: {found - set(REVIEW_TABLE)}, stale: {set(REVIEW_TABLE) - found}"
+
+
+def test_table_covers_every_control_advanced(wa):
+    test_table_covers_every_control(wa)
+    assert all(wa._next_actions[n].isVisible() for n in wa.next_buttons)  # (the widget may fold into the overflow)
+
+
+def test_classic_has_the_new_controls_hidden_not_visible(w):
+    assert not any(w._next_actions[n].isVisible() for n in w.next_buttons) and not w.toolbar2.isVisible()
+    assert not any(b.isVisible() for b in w.next_buttons.values())
+
+
+def test_peaking_and_afpoint_are_global_in_review_and_compare_acts_on_the_grid(wa):
+    in_review(wa)
+    wa.next_buttons["peaking"].click()  # a preference: toggles from anywhere, review stays, viewer does not move
+    assert wa.peaking.is_on() and wa.stack.currentIndex() == 1 and wa.catalog.index == 0
+    wa.next_buttons["afpoint"].click()
+    assert wa.marker.is_on() and wa.stack.currentIndex() == 1
+    wa.next_buttons["compare"].click()  # one selected picture: a hint, nothing opens
+    assert wa.stack.currentIndex() == 1 and not wa._compare_shown() and "Select two" in wa.last_message
+    wa.review.view.selectAll()
+    wa.next_buttons["compare"].click()  # the grid's selection (1, 3, 5) is what opens
+    assert wa._compare_shown() and wa.compare.indices() == [1, 3, 5] and wa.catalog.index == 0
 
 
 def test_disabled_rows_are_disabled_in_review_and_reenabled(w):
