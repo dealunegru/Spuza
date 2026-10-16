@@ -242,3 +242,41 @@ def test_inflight_is_bounded(qapp, monkeypatch):
     assert wait_for(lambda: len(g._thumbs) == 12)
     assert max(seen) <= 2
     g.close()
+
+
+def test_right_click_reveals_item_under_cursor_and_keeps_selection(qapp, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    from spuza import reveal as rvl
+
+    got = []
+    monkeypatch.setattr(rvl, "reveal", lambda p: got.append(p))
+    g = make(qapp)
+    g.view.setCurrentIndex(g.model.index(0, 0))  # catalog index 1
+    pos = g.view.visualRect(g.model.index(2, 0)).center()  # catalog index 5
+    menu = g.context_menu_for(pos)
+    (action,) = menu.actions()
+    assert action.text() == rvl.reveal_label()
+    action.trigger()
+    assert got == [Path("/nope/R0000005.RAF")]
+    assert g.selected_index() == 1  # building the menu does not move the selection
+    vp = g.view.viewport()
+    assert g.context_menu_for(QPoint(vp.width() - 2, vp.height() - 2)) is None  # empty space
+    g.close()
+
+
+def test_right_click_in_zoom_page_reveals_zoomed_picture(qapp, monkeypatch):
+    from PySide6.QtCore import QPoint
+
+    from spuza import reveal as rvl
+
+    got = []
+    monkeypatch.setattr(rvl, "reveal", lambda p: got.append(p))
+    g = make(qapp)
+    g.view.setCurrentIndex(g.model.index(1, 0))  # catalog index 3
+    g.show_zoom()
+    (action,) = g.context_menu_for(QPoint(5, 5), zoom=True).actions()
+    action.trigger()
+    assert got == [Path("/nope/R0000003.RAF")]
+    g.wait_idle()
+    g.close()
