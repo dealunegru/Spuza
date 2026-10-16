@@ -235,6 +235,9 @@ class Viewer(QGraphicsView):
             return
         if self.zoomed:
             self.resetTransform()
+            dpr = self.devicePixelRatioF()
+            if dpr > 1.0:  # 100% means one image pixel per device pixel, not per logical pixel
+                self.scale(1.0 / dpr, 1.0 / dpr)
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.centerOn(self._item)
         else:
@@ -274,6 +277,8 @@ class Viewer(QGraphicsView):
     def _on_full(self, index: int, path: str, qimg, ms: float, status: str) -> None:
         if status == "stale":
             self._full.pop(index, None)
+            if index == self.index and self.zoomed:  # the user came back before this was processed
+                self._request_full()
             self._sync_hud()
             return
         self._full[index] = "done" if status == "done" else ("skipped" if status == "skipped" else "error")
