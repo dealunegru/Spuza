@@ -34,7 +34,8 @@ class PrefsSheet(QDialog):
         self.behind_spin.setValue(behind)
         self.memory_label = QLabel()
         self.advanced_check = QCheckBox("Advanced mode: test features before they reach classic")
-        self.advanced_check.setChecked(bool(advanced))
+        self.seeded_advanced = bool(advanced)  # what the box started as: the window saves a mode change only
+        self.advanced_check.setChecked(self.seeded_advanced)
         self.threads_spin = QSpinBox()
         self.threads_spin.setRange(*settings.THREADS_RANGE)
         self.threads_spin.setValue(threads)

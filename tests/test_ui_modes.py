@@ -75,11 +75,11 @@ def test_set_advanced_is_live_and_sets_the_mode(make_win):
     assert w.windowTitle() == f"Spuza — {Path(ROOT)}"
 
 
-def test_default_factory_sheet_starts_from_the_saved_values(make_win):
+def test_default_factory_sheet_starts_from_this_runs_mode_and_saved_threads(make_win):
     s = stored()
-    settings.write_advanced(s, True)
     settings.write_threads(s, 5)
     s.sync()
+    features.set_mode(features.ADVANCED)  # a one-run --advanced: nothing saved as advanced
     w = make_win()
     w.open_prefs()
     sheet = w._prefs_sheet
@@ -182,3 +182,29 @@ def test_reset_to_defaults_leaves_the_mode_alone():
     sheet.reset_to_defaults()
     assert sheet.advanced() and sheet.threads() == 7
     sheet.close()
+
+
+def test_one_run_advanced_ok_untouched_keeps_the_run_advanced_and_saves_no_mode(make_win):
+    features.set_mode(features.ADVANCED)
+    w = make_win()
+    w.open_prefs()
+    sheet = w._prefs_sheet
+    sheet.show()
+    assert sheet.advanced() and sheet.threads_spin.isVisible()
+    sheet.ahead_spin.setValue(9)
+    sheet.accept()
+    assert not stored().contains(settings.MODE_ADVANCED)
+    assert features.is_advanced() and "(advanced)" in w.windowTitle() and w.advanced_tag.isVisible()
+
+
+def test_one_run_classic_over_saved_advanced_ok_untouched_keeps_saved_and_run(make_win):
+    s = stored()
+    settings.write_advanced(s, True)
+    s.sync()
+    w = make_win()  # mode stays classic, as `--classic` would leave it
+    w.open_prefs()
+    sheet = w._prefs_sheet
+    assert not sheet.advanced()
+    sheet.accept()
+    assert settings.read_advanced(stored()) is True
+    assert not features.is_advanced() and not w.advanced_tag.isVisible()

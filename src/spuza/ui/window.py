@@ -134,6 +134,7 @@ class MainWindow(QMainWindow):
         self.review = None
         self._sheet = None
         self._prefs_sheet = None
+        self._prefs_seed = False
         self.last_message = ""
         self.is_bleed = False
         self._forwarding = False
@@ -472,7 +473,7 @@ class MainWindow(QMainWindow):
     def _default_prefs_sheet_factory(self, ahead, behind, max_side, parent=None):
         from spuza.ui.prefs_sheet import PrefsSheet  # lazy, like the copy sheet
 
-        return PrefsSheet(ahead, behind, max_side, parent=parent, advanced=settings.read_advanced(self.prefs),
+        return PrefsSheet(ahead, behind, max_side, parent=parent, advanced=features.is_advanced(),
                           threads=settings.read_threads(self.prefs))
 
     def _show_mode(self) -> None:
@@ -491,6 +492,7 @@ class MainWindow(QMainWindow):
         if self._prefs_sheet is not None and self._prefs_sheet.isVisible():
             return
         pf = self.prefetcher
+        self._prefs_seed = features.is_advanced()  # this run's mode, for sheets that do not record their own
         factory = self.prefs_sheet_factory or self._default_prefs_sheet_factory
         try:
             sheet = factory(pf.ahead, pf.behind, pf.max_side, parent=self)
@@ -505,12 +507,13 @@ class MainWindow(QMainWindow):
         settings.write_window(self.prefs, a, b)
         adv = getattr(sheet, "advanced", None)
         adv = bool(adv()) if callable(adv) else None  # a fake sheet may not know about modes
-        if adv is not None:
+        changed = adv is not None and adv != bool(getattr(sheet, "seeded_advanced", self._prefs_seed))
+        if changed:  # only a flipped box is saved; an unrelated OK never saves a one-run --advanced/--classic
             settings.write_advanced(self.prefs, adv)
-            if adv and callable(getattr(sheet, "threads", None)):
-                settings.write_threads(self.prefs, sheet.threads())
+        if adv and callable(getattr(sheet, "threads", None)):
+            settings.write_threads(self.prefs, sheet.threads())
         self.prefs.sync()
-        if adv is not None and adv != features.is_advanced():
+        if changed:
             self.set_advanced(adv)
         self.prefetcher.set_window(a, b)
         self.say(f"Prefetch: {a} ahead, {b} behind (about {settings.window_mb(a, b, self.prefetcher.max_side)} MB)")
