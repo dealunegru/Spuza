@@ -587,7 +587,8 @@ class MainWindow(QMainWindow):
     def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
-        return CopySheet(pictures, default_dest=default_dest, parent=parent)
+        return CopySheet(pictures, default_dest=default_dest, parent=parent,
+                         others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()))
 
     def open_copy(self) -> None:
         marked = self.catalog.marked()

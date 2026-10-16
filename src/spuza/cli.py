@@ -77,16 +77,6 @@ def threads_from(prefs) -> int:
     return DEFAULT_THREADS
 
 
-def choose_root(cards: list[Path]) -> Path | None:
-    """One card: its DCIM folder. Several cards: the first card's root (every folder on it)."""
-    if not cards:
-        return None
-    first = Path(cards[0])
-    if len(cards) == 1 and (first / "DCIM").is_dir():
-        return first / "DCIM"
-    return first
-
-
 def _say(text: str) -> None:
     print(text, file=sys.stderr, flush=True)
 
@@ -115,19 +105,23 @@ def resolve_cards(cards: list[Path], spec: str | None, say=_say) -> CardRun | No
 
 def open_card_run(run: CardRun, scan=None):
     """(Catalog, status note): the chosen card's catalog, dual-slot twins paired from the other card(s)."""
-    from spuza.catalog import Catalog
-    from spuza.catalog import scan as catalog_scan
+    from spuza.catalog import Catalog, scan_card
 
-    scan = scan or catalog_scan
-    pictures = scan(run.root)
+    scan = scan or scan_card
+    first = scan(run.root)
+    # a scan returns a ScanResult; a bare list of pictures (older fakes) has no others/unreadable
+    pictures = list(getattr(first, "pictures", first))
+    other_files = tuple(getattr(first, "others", ()))
+    unreadable = tuple(getattr(first, "unreadable", ()))
     only_there = 0
     others = [c for i, c in enumerate(run.cards) if i != run.chosen]
     for c in others:
-        pictures, left = pair_twins(pictures, scan(card_root(c)))
+        second = scan(card_root(c))  # only its pictures matter: the second card's others are not ours
+        pictures, left = pair_twins(pictures, list(getattr(second, "pictures", second)))
         only_there += len(left)
     twins = sum(1 for p in pictures if p.twins)
     note = describe(list(run.cards), run.chosen, twins, only_there)
-    return Catalog(pictures), note
+    return Catalog(pictures, other_files, unreadable), note
 
 
 def _process_age_ms() -> tuple[float, str]:
@@ -257,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
             _say(f"spuza: {e}")
             return 1
     app = _app()
-    from spuza.catalog import Catalog, Prefetcher, scan
+    from spuza.catalog import Catalog, Prefetcher, scan_card
     from spuza.ui import theme
     from spuza.ui.window import MainWindow
 
@@ -271,7 +265,8 @@ def main(argv: list[str] | None = None) -> int:
             if root is None:
                 _say("spuza: no card found and no folder chosen")
                 return 1
-        catalog = Catalog(scan(root))
+        res = scan_card(root)
+        catalog = Catalog(res.pictures, res.others, res.unreadable)
     from spuza.ui.settings import open_settings
 
     prefs = open_settings()
