@@ -1,7 +1,9 @@
 """Preferences sheet: the prefetch window (pictures ready ahead / kept behind) and what it costs in memory.
 
 The sheet only edits; the window saves and applies on accept. ``values()`` is the pair to use,
-``memory_text()`` the plain text of the live memory line.
+``memory_text()`` the plain text of the live memory line. Advanced mode adds three rows (decode threads,
+peaking threshold, remember marks); they are hidden, and the classic sheet is exactly as shipped, until the
+Advanced box is ticked.
 """
 
 from __future__ import annotations
@@ -22,7 +24,8 @@ from spuza.ui import settings
 
 class PrefsSheet(QDialog):
     def __init__(self, ahead: int, behind: int, max_side: int = 2560, parent=None, *,
-                 advanced: bool = False, threads: int = settings.DEFAULT_THREADS):
+                 advanced: bool = False, threads: int = settings.DEFAULT_THREADS,
+                 peaking_threshold: int = settings.DEFAULT_PEAKING_THRESHOLD, resume: bool = True):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.max_side = max_side
@@ -40,6 +43,14 @@ class PrefsSheet(QDialog):
         self.threads_spin.setRange(*settings.THREADS_RANGE)
         self.threads_spin.setValue(threads)
         self.threads_label = QLabel("Decode threads")
+        self.peaking_label = QLabel("Peaking threshold")
+        self.peaking_spin = QSpinBox()
+        self.peaking_spin.setRange(*settings.PEAKING_THRESHOLD_RANGE)
+        self.peaking_spin.setValue(peaking_threshold)
+        self.seeded_peaking = self.peaking_spin.value()  # what the rows started as: the window saves a change only
+        self.resume_check = QCheckBox("Remember marks between runs")
+        self.seeded_resume = bool(resume)
+        self.resume_check.setChecked(self.seeded_resume)
         self.note_label = QLabel("The ADVANCED marker changes now; decode threads apply at the next launch.")
         self.note_label.setWordWrap(True)
         self.reset_button = QPushButton("Reset to defaults")
@@ -54,6 +65,8 @@ class PrefsSheet(QDialog):
         form.addRow(self.ahead_label, self.ahead_spin)
         form.addRow(self.behind_label, self.behind_spin)
         form.addRow(self.threads_label, self.threads_spin)
+        form.addRow(self.peaking_label, self.peaking_spin)
+        form.addRow(self.resume_check)
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         lay.addWidget(self.memory_label)
@@ -72,6 +85,9 @@ class PrefsSheet(QDialog):
         # setVisible(False) on a never-shown child stays hidden until shown; True shows with the sheet
         self.threads_label.setVisible(on)
         self.threads_spin.setVisible(on)
+        self.peaking_label.setVisible(on)
+        self.peaking_spin.setVisible(on)
+        self.resume_check.setVisible(on)
         self.note_label.setVisible(on)
 
     def advanced(self) -> bool:
@@ -79,6 +95,12 @@ class PrefsSheet(QDialog):
 
     def threads(self) -> int:
         return self.threads_spin.value()
+
+    def peaking_threshold(self) -> int:
+        return self.peaking_spin.value()
+
+    def resume(self) -> bool:
+        return self.resume_check.isChecked()
 
     def values(self) -> tuple[int, int]:
         return self.ahead_spin.value(), self.behind_spin.value()

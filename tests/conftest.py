@@ -36,6 +36,12 @@ def isolated_prefs(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolated_sessions(tmp_path, monkeypatch):
+    """Resume sessions go to a per-test folder: no test can touch the real app-data folder."""
+    monkeypatch.setenv("SPUZA_SESSIONS_DIR", str(tmp_path / "spuza-sessions"))
+
+
+@pytest.fixture(autouse=True)
 def classic_mode():
     """Mode is module state: every test starts and ends in classic."""
     from spuza import features

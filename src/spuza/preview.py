@@ -242,14 +242,17 @@ def _rawpy_full(path: Path, half_size: bool) -> Image.Image:
 
 
 def _focus(path: Path, source: str, data):
-    """Focus data for a RAF while focus_point is on, else None; reuses the embedded JPEG already in memory."""
+    """Focus data for a RAF while focus_point is on, else None; reuses the embedded JPEG already in memory.
+
+    Only the camera's own embedded JPEG is in the frame the AF point was probed in (the lead's focus probe):
+    the rawpy-thumb / rawpy-full fallbacks are not, so they carry no focus."""
     from spuza import features
 
-    if not features.enabled("focus_point"):
+    if not features.enabled("focus_point") or source != "raf-embedded" or not data:
         return None
     from spuza import focus
 
-    return focus.from_jpeg(data) if source == "raf-embedded" and data else focus.read(path)
+    return focus.from_jpeg(data)
 
 
 def load(path, max_side: int | None = 2560):

@@ -176,6 +176,22 @@ def test_load_advanced_sets_focus(tmp_path):
     assert info.source == "raf-embedded" and info.focus.point == (7, 8)
 
 
+def test_load_advanced_rawpy_fallbacks_carry_no_focus(tmp_path, monkeypatch):
+    """Only the camera's embedded JPEG is in the probed frame: the rawpy-thumb / rawpy-full fallbacks get none."""
+    jpg = _jpeg_with_exif(_tiff(pixel=(7, 8)))
+    # a RAF whose embedded JPEG has intact EXIF (so focus.read(path) WOULD find the point) but cannot be decoded:
+    # load() falls back to rawpy's thumbnail, whose frame is not the probed one
+    p = _raf(tmp_path / "bad.RAF", jpg[:-30])
+    features.set_mode(features.ADVANCED)
+    monkeypatch.setattr(preview, "_rawpy_thumb", lambda path: jpg)
+    _im, info = preview.load(p)
+    assert info.source == "rawpy-thumb" and info.focus is None
+    monkeypatch.setattr(preview, "_rawpy_thumb", lambda path: None)
+    monkeypatch.setattr(preview, "_rawpy_full", lambda path, half: Image.new("RGB", (8, 8)))
+    _im, info = preview.load(p)
+    assert info.source == "rawpy-full" and info.focus is None
+
+
 def test_load_advanced_non_raf_has_no_focus(tmp_path):
     features.set_mode(features.ADVANCED)
     p = tmp_path / "a.jpg"

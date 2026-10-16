@@ -69,7 +69,7 @@ def spin_labels(sheet):
 
 def test_sheet_labels_ranges_and_initial_values():
     sheet = PrefsSheet(5, 3, 2560)
-    spins = [s for s in sheet.findChildren(QSpinBox) if s is not sheet.threads_spin]  # threads: advanced-only
+    spins = [s for s in sheet.findChildren(QSpinBox) if s not in (sheet.threads_spin, sheet.peaking_spin)]  # advanced-only rows
     assert len(spins) == 2
     assert spin_labels(sheet) == ["Pictures kept behind", "Pictures ready ahead"]
     assert (sheet.ahead_spin.minimum(), sheet.ahead_spin.maximum()) == (1, 64)
@@ -170,3 +170,56 @@ def _fake_review(catalog, parent):
             pass
 
     return R(parent)
+
+
+# ---- advanced-only rows: peaking threshold and "remember marks" ------------------------------------
+
+def test_new_rows_are_hidden_in_classic_and_follow_the_checkbox():
+    sheet = PrefsSheet(5, 3, 2560)
+    sheet.show()
+    assert not sheet.peaking_spin.isVisible() and not sheet.peaking_label.isVisible()
+    assert not sheet.resume_check.isVisible()
+    sheet.advanced_check.setChecked(True)
+    assert sheet.peaking_spin.isVisible() and sheet.peaking_label.text() == "Peaking threshold"
+    assert sheet.resume_check.isVisible() and sheet.resume_check.text() == "Remember marks between runs"
+    assert (sheet.peaking_spin.minimum(), sheet.peaking_spin.maximum()) == (1, 255)
+    assert sheet.peaking_threshold() == 60 and sheet.resume() is True  # the defaults
+    sheet.advanced_check.setChecked(False)
+    assert not sheet.peaking_spin.isVisible() and not sheet.resume_check.isVisible()
+    sheet.close()
+
+
+def test_classic_ok_writes_neither_new_key(win):
+    win.open_prefs()
+    win._prefs_sheet.accept()
+    s = settings.open_settings()
+    assert not s.contains(settings.PEAKING_THRESHOLD) and not s.contains(settings.RESUME_ON)
+
+
+def test_advanced_ok_untouched_writes_neither_new_key_and_changes_write_and_apply(win):
+    from spuza import features
+
+    features.set_mode(features.ADVANCED)
+    win.set_advanced(True)
+    win.open_prefs()
+    sheet = win._prefs_sheet
+    assert sheet.peaking_threshold() == 60 and sheet.resume() is True
+    sheet.ahead_spin.setValue(9)
+    sheet.accept()
+    s = settings.open_settings()
+    assert not s.contains(settings.PEAKING_THRESHOLD) and not s.contains(settings.RESUME_ON)
+
+    win.open_prefs()
+    sheet = win._prefs_sheet
+    sheet.peaking_spin.setValue(90)
+    sheet.resume_check.setChecked(False)
+    sheet.accept()
+    s = settings.open_settings()
+    assert settings.read_peaking_threshold(s) == 90 and s.contains(settings.PEAKING_THRESHOLD)
+    assert settings.read_resume_on(s) is False and s.contains(settings.RESUME_ON)
+    assert win.resume._on is False  # applied live
+    win.toggle_peaking()
+    assert win.peaking._threshold == 90
+    win.open_prefs()
+    assert win._prefs_sheet.peaking_threshold() == 90 and win._prefs_sheet.resume() is False  # seeded from the store
+    win._prefs_sheet.reject()

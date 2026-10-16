@@ -283,6 +283,68 @@ def test_start_fresh_clears_forgets_and_undoes(tmp_path, advanced):
     assert store.load(key, root, cat.pictures).marks == frozenset({1, 2, 3})  # re-saved
 
 
+def test_start_fresh_does_not_block_behind_a_stuck_store_lock(tmp_path, advanced, monkeypatch):
+    root = make_card(tmp_path)
+    monkeypatch.setattr("spuza.ui.resume.IO_WAIT_SECONDS", 0.05)
+    store = SpyStore(tmp_path / "s")
+    cat = open_card(root)
+    c = ctl(cat, root, store)
+    for i in (1, 2):
+        cat.set_mark(i, True)
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold():  # a stuck store operation owning the lock
+        with c._io:
+            held.set()
+            release.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    try:
+        assert held.wait(5)
+        text = c.start_fresh()  # returns after the bound, never hangs
+        assert marks_of(cat) == set() and "busy" in text and "2 marks" in text
+        assert "forget" not in store.calls  # the forget was skipped
+    finally:
+        release.set()
+        t.join(5)
+    assert not t.is_alive()
+    c.tick()  # the cleared state is saved once the lock is free
+    assert c.wait_idle(5)
+    key = card_key(root, cat.pictures)
+    assert store.load(key, root, cat.pictures) is None  # nothing marked and place 0: nothing worth restoring
+
+
+def test_undo_does_not_block_behind_a_stuck_store_lock(tmp_path, advanced, monkeypatch):
+    root = make_card(tmp_path)
+    monkeypatch.setattr("spuza.ui.resume.IO_WAIT_SECONDS", 0.05)
+    cat = open_card(root)
+    clock = Clock()
+    c = ctl(cat, root, SpyStore(tmp_path / "s"), clock=clock)
+    cat.set_mark(2, True)
+    c.start_fresh()
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with c._io:
+            held.set()
+            release.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    try:
+        assert held.wait(5)
+        assert c.start_fresh() == "Marks back (1)" and marks_of(cat) == {2}
+    finally:
+        release.set()
+        t.join(5)
+    assert c._last is None  # not yet saved: the next tick queues it
+    c.tick()
+    assert c.wait_idle(5)
+    assert c._store.load(card_key(root, cat.pictures), root, cat.pictures).marks == frozenset({2})
+
+
 def test_start_fresh_second_press_after_ten_seconds_is_not_an_undo(tmp_path, advanced):
     root = make_card(tmp_path)
     clock = Clock()

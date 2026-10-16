@@ -24,6 +24,7 @@ from spuza.session import SessionStore, card_key
 
 UNDO_SECONDS = 10.0
 JOIN_SECONDS = 1.0  # the longest flush() / start_fresh() wait for a write in flight
+IO_WAIT_SECONDS = 1.0  # the longest start_fresh() waits for the store lock (a stuck write must not freeze the GUI)
 
 
 class ResumeController(QObject):
@@ -69,6 +70,16 @@ class ResumeController(QObject):
     def _write(self, snap) -> None:
         with self._io:
             self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1])
+
+    def _write_bounded(self, snap) -> bool:
+        """_write, but give up (False) when the store lock is not free within IO_WAIT_SECONDS."""
+        if not self._io.acquire(timeout=IO_WAIT_SECONDS):
+            return False
+        try:
+            self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1])
+        finally:
+            self._io.release()
+        return True
 
     def _run(self) -> None:
         while True:
@@ -151,7 +162,8 @@ class ResumeController(QObject):
                 self._last = snap = self._snapshot()
                 if self._on:
                     self.wait_idle()
-                    self._write(snap)
+                    if not self._write_bounded(snap):
+                        self._last = None  # the next tick queues it
                 return f"Marks back ({len(marks)})"
         marks = self._snapshot()[0]
         for i in marks:
@@ -159,14 +171,20 @@ class ResumeController(QObject):
         with self._lock:
             self._pending = None
         self.wait_idle()
-        with self._io:
-            self._get_store().forget(self._get_key())
-        self._last = self._snapshot()
+        if self._io.acquire(timeout=IO_WAIT_SECONDS):
+            try:
+                self._get_store().forget(self._get_key())
+            finally:
+                self._io.release()
+            self._last = self._snapshot()
+            busy = ""
+        else:  # a write is stuck: do not freeze the GUI behind it; the next tick saves the cleared state instead
+            busy = " (the saved session is busy; it is replaced when it frees)"
         self._undo = (marks, now) if marks else None
         if not marks:
-            return "Started fresh · nothing was marked"
+            return "Started fresh · nothing was marked" + busy
         word = "mark" if len(marks) == 1 else "marks"
-        return f"Started fresh: {len(marks)} {word} cleared · U again within 10 s to undo"
+        return f"Started fresh: {len(marks)} {word} cleared{busy} · U again within 10 s to undo"
 
     def flush(self) -> None:
         """Write now if anything changed since the last save (closeEvent). Blocks at most ~1 s."""

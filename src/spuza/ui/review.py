@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
+from PySide6.QtCore import QObject, QPointF, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -378,6 +378,22 @@ class ReviewGrid(QWidget):
         self.zoom_view.resetTransform()
         if self._zoom_fit and self._zoom_item is not None:
             self.zoom_view.fitInView(self._zoom_item, Qt.AspectRatioMode.KeepAspectRatio)
+        elif self._zoom_item is not None:
+            frac = self._focus_frac(self._zoom_index)  # advanced + focus_point: 100% lands on the AF point
+            if frac is not None:
+                pm = self._zoom_item.pixmap()
+                self.zoom_view.centerOn(QPointF(frac[0] * pm.width(), frac[1] * pm.height()))
+
+    def _focus_frac(self, i):
+        """The picture's AF point as a (fx, fy) fraction, or None (flag off, no info, no usable point)."""
+        if i is None or self.prefetcher is None or not features.enabled("focus_point"):
+            return None
+        try:
+            info = self.prefetcher.info(i)
+            fi = getattr(info, "focus", None)
+            return fi.frac() if fi is not None else None
+        except Exception:  # noqa: BLE001 - a bad point must never break Z
+            return None
 
     def toggle_zoom(self) -> None:
         if self.stack.currentIndex() != PAGE_ZOOM:

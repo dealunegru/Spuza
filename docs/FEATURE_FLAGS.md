@@ -42,3 +42,7 @@ to classic around every test).
 | Flag | In classic | What it does |
 |---|---|---|
 | `decode_threads` | no | Decode threads (1-8) in Preferences, saved as `prefetch/threads`, applied at the next launch. Classic always decodes on 3 threads. |
+| `compare_view` | no | `N` compares up to four near-twins side by side (this picture and the next; in review, the grid's selection), zoom and pan locked together. Adds the Compare button. |
+| `focus_peaking` | no | `P` paints the sharp edges in red, computed off the GUI thread at half size; the on/off state is saved as `peaking/on`, the strength as `peaking/threshold` (Preferences, 1-255, default 60). Adds the Peaking button. |
+| `focus_point` | no | `Z` lands on the camera's AF point and `O` shows it as a ring (saved as `focus/marker`). Fujifilm RAFs from the X-T4, X-T5, X100V and X-T50 only (the allowlist in `src/spuza/focus.py`); any other file or model has no point. Adds the AF point button. |
+| `resume_session` | no | Marks and place survive quitting, kept in Spuza's app-data folder (never on the card); `U` starts fresh (again within 10 s to undo). Preferences: "Remember marks between runs" (`resume/enabled`, default on). Sessions older than 30 days are deleted at start. |
