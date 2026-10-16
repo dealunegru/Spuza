@@ -240,14 +240,15 @@ class Prefetcher(QObject):
 
     def __init__(self, catalog: Catalog, ahead: int = settings.DEFAULT_AHEAD,
                  behind: int = settings.DEFAULT_BEHIND, max_side: int = 2560,
-                 loader: Callable | None = None, pool: QThreadPool | None = None):
+                 loader: Callable | None = None, pool: QThreadPool | None = None,
+                 threads: int = settings.DEFAULT_THREADS):
         super().__init__()
         self.catalog, self.ahead, self.behind, self.max_side = catalog, ahead, behind, max_side
         self._loader_fn = loader
         self._own_pool = pool is None
         self.pool = pool or QThreadPool()
         if self._own_pool:
-            self.pool.setMaxThreadCount(3)
+            self.pool.setMaxThreadCount(threads)
         self._cache: dict[int, QImage] = {}
         self._info: dict[int, object] = {}
         self._inflight: set[int] = set()

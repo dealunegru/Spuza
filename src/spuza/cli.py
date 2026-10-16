@@ -7,8 +7,8 @@ import sys
 import time
 from pathlib import Path
 
-from spuza import __version__
-from spuza.ui.settings import AHEAD_RANGE, BEHIND_RANGE, read_window
+from spuza import __version__, features
+from spuza.ui.settings import AHEAD_RANGE, BEHIND_RANGE, DEFAULT_THREADS, read_threads, read_window
 
 _T0 = time.perf_counter()  # fallback "process start" when the OS will not tell us
 BENCH_WAIT_S = 30.0  # longest any single wait in --bench may take
@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--behind", type=_int_in(*BEHIND_RANGE), metavar="N",
                    help=f"pictures to keep behind, {BEHIND_RANGE[0]}..{BEHIND_RANGE[1]}"
                         " (this run only; the saved preference is untouched)")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--advanced", dest="mode", action="store_const", const="advanced",
+                   help="run in advanced mode (this run only; the saved preference is untouched)")
+    g.add_argument("--classic", dest="mode", action="store_const", const="classic",
+                   help="run in classic mode (this run only; the saved preference is untouched)")
     p.add_argument("--version", action="version", version=f"spuza {__version__}")
     return p
 
@@ -56,6 +61,13 @@ def window_from(args, prefs) -> tuple[int, int]:
     ahead, behind = read_window(prefs)
     return (ahead if args.ahead is None else args.ahead,
             behind if args.behind is None else args.behind)
+
+
+def threads_from(prefs) -> int:
+    """Decode threads: the saved count in advanced mode (decode_threads flag), else the classic 3."""
+    if features.enabled("decode_threads"):
+        return read_threads(prefs)
+    return DEFAULT_THREADS
 
 
 def choose_root(cards: list[Path]) -> Path | None:
@@ -207,8 +219,13 @@ def main(argv: list[str] | None = None) -> int:
     catalog = Catalog(scan(root))
     from spuza.ui.settings import open_settings
 
-    ahead, behind = window_from(args, open_settings())
-    prefetcher = Prefetcher(catalog, ahead=ahead, behind=behind)
+    prefs = open_settings()
+    features.set_mode(features.resolve_mode(args.mode, prefs))  # before any window exists
+    ahead, behind = window_from(args, prefs)
+    threads = threads_from(prefs)
+    # the default is left implicit so classic constructs the Prefetcher exactly as before
+    extra = {} if threads == DEFAULT_THREADS else {"threads": threads}
+    prefetcher = Prefetcher(catalog, ahead=ahead, behind=behind, **extra)
     window = MainWindow(catalog, prefetcher, root)
     if args.bench:
         theme.apply(app, theme.is_dark(app))

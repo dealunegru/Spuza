@@ -36,6 +36,16 @@ def isolated_prefs(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def classic_mode():
+    """Mode is module state: every test starts and ends in classic."""
+    from spuza import features
+
+    features.set_mode(features.CLASSIC)
+    yield
+    features.set_mode(features.CLASSIC)
+
+
+@pytest.fixture(autouse=True)
 def gc_on_gui_thread():
     """Free each test's leaked widgets here on the main thread, before the next test starts pool workers."""
     yield
