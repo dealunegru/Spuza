@@ -22,6 +22,13 @@ from spuza.ui.inspector import Inspector
 from spuza.ui.viewer import Viewer
 
 DOT = "·"
+
+
+def default_copy_dest() -> Path:
+    """Where Copy… starts: a folder on the drive, never the card being culled (tests patch Path.home)."""
+    return Path.home() / "Pictures" / "Spuza"
+
+
 _NOT_IN_REVIEW = object()
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
                        Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
@@ -448,7 +455,7 @@ class MainWindow(QMainWindow):
             return
         factory = self.copy_sheet_factory or self._default_copy_sheet_factory
         try:
-            self._sheet = factory(marked, default_dest=self.root / "Spuza", parent=self)
+            self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self)
             (getattr(self._sheet, "open", None) or self._sheet.show)()
         except Exception as exc:  # noqa: BLE001
             self.say(f"Copy is not available: {exc}")
