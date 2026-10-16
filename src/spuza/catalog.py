@@ -21,6 +21,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QImage
 
+from spuza.ui import settings  # imports only QSettings; the defaults live in one place
+
 # Same values as spuza.preview; duplicated so importing this module never imports the decoders.
 RAW_EXTS = frozenset({".raf", ".dng"})
 JPEG_EXTS = frozenset({".jpg", ".jpeg"})
@@ -236,7 +238,8 @@ class Prefetcher(QObject):
     failed = Signal(int, str)
     _done = Signal(int, object, object, str, bool)
 
-    def __init__(self, catalog: Catalog, ahead: int = 8, behind: int = 3, max_side: int = 2560,
+    def __init__(self, catalog: Catalog, ahead: int = settings.DEFAULT_AHEAD,
+                 behind: int = settings.DEFAULT_BEHIND, max_side: int = 2560,
                  loader: Callable | None = None, pool: QThreadPool | None = None):
         super().__init__()
         self.catalog, self.ahead, self.behind, self.max_side = catalog, ahead, behind, max_side
@@ -296,6 +299,17 @@ class Prefetcher(QObject):
         for k in order:
             if lo <= k <= hi:
                 self._start(k)
+
+    def set_window(self, ahead: int, behind: int) -> None:
+        """Resize the window live and re-centre on the cursor. GUI thread only (a dialog's OK calls it).
+
+        Negative sizes are clamped to 0; the caller (the prefs sheet, the CLI) enforces the user-facing
+        ranges. Entries outside the new window are dropped, new in-window jobs start. No-op after shutdown.
+        """
+        if self._closed:
+            return
+        self.ahead, self.behind = max(0, int(ahead)), max(0, int(behind))
+        self.update(self.catalog.index)
 
     def _start(self, k: int) -> None:
         if k in self._cache or k in self._inflight or k in self._failed or self._closed:
