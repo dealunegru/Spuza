@@ -176,6 +176,8 @@ def test_full_bleed_toggle_and_esc(win):
     assert win.is_bleed
     for part in (win.toolbar, win.sidebar, win.inspector, win.filmstrip, win.statusBar()):
         assert part.isHidden()
+    assert win.viewer.strip.isHidden()  # hidden at rest; pointer movement reveals it
+    win.viewer.reveal_strip()
     assert not win.viewer.strip.isHidden()
     assert "1 of 6" in win.viewer.strip.text()
     key(win, Qt.Key_Escape)
@@ -382,15 +384,15 @@ def test_a_toggles_move_on_mark_and_says_so(win):
     assert win.advance_on_mark and win.buttons["advance"].isChecked()
 
 
-def test_marking_moves_on_but_unmarking_does_not(win):
+def test_marking_and_unmarking_both_move_on(win):
     key(win, Qt.Key_A)
     key(win, Qt.Key_Space)  # marks 0, shows 1
     assert win.catalog.is_marked(0) and win.catalog.index == 1
     key(win, Qt.Key_M)  # marks 1, shows 2
     assert win.catalog.is_marked(1) and win.catalog.index == 2
     key(win, Qt.Key_Left)  # back to 1 ...
-    key(win, Qt.Key_Space)  # ... unmark it: stays, so the decision is visible
-    assert not win.catalog.is_marked(1) and win.catalog.index == 1
+    key(win, Qt.Key_Space)  # ... unmark it: moves on to 2 as well
+    assert not win.catalog.is_marked(1) and win.catalog.index == 2
     assert win.lbl_marked.text().startswith("1 marked")
 
 

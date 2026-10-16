@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 
-from PySide6.QtCore import QPointF, QTimer, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QPointF, QTimer, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout,
                                QLabel, QWidget)
@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene, QGra
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
 
-FULL_CACHE = 3  # full-resolution decodes kept (a 24 MP image is ~70 MB as a pixmap)
+REVEAL_MS = 1000  # full-bleed: how long the strip stays after the last pointer move
+FULL_CACHE = 3 # full-resolution decodes kept (a 24 MP image is ~70 MB as a pixmap)
 
 
 def _default_needs_full_decode(path, info) -> bool:
@@ -165,8 +166,40 @@ class Viewer(QGraphicsView):
         self.hud.adjustSize()
         self.hud.hide()
         self.strip = BleedStrip(vp)
+        # Full-bleed: the strip shows while the pointer moves over the picture and hides REVEAL_MS after the last move.
+        self.bleed = False
+        self.reveal_ms = REVEAL_MS
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.timeout.connect(self._hide_strip)
+        self.setMouseTracking(True)  # plain moves (no button) must reach us
+        vp.setMouseTracking(True)
+        vp.installEventFilter(self)  # QGraphicsView hands moves to the viewport first; panning is untouched
         self._full_result.connect(self._on_full)
         self.retheme()
+
+    # -- full-bleed strip: hidden at rest, revealed by pointer movement ------------------------------
+    def set_bleed(self, on: bool) -> None:
+        """Enter or leave full-bleed. Either way the strip is hidden and the reveal timer stopped."""
+        self.bleed = bool(on)
+        self._reveal_timer.stop()
+        self.strip.setVisible(False)
+
+    def reveal_strip(self) -> None:
+        """Show the strip and (re)start the hide timer; does nothing outside full-bleed."""
+        if not self.bleed:
+            return
+        self.strip.setVisible(True)
+        self._place()
+        self._reveal_timer.start(self.reveal_ms)
+
+    def _hide_strip(self) -> None:
+        self.strip.setVisible(False)
+
+    def eventFilter(self, obj, ev) -> bool:  # noqa: N802
+        if obj is self.viewport() and ev.type() == QEvent.Type.MouseMove:
+            self.reveal_strip()
+        return False  # never swallow: ScrollHandDrag panning still gets the event
 
     # -- state ------------------------------------------------------------------------------------
     @property

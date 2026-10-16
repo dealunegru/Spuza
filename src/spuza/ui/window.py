@@ -344,11 +344,11 @@ class MainWindow(QMainWindow):
         if not len(self.catalog):
             return
         i = self.catalog.index
-        now_marked = self.catalog.toggle_mark(i)
+        self.catalog.toggle_mark(i)
         self.filmstrip.item_changed(i)
         self.refresh_marks()
-        if now_marked and self.advance_on_mark and self.stack.currentIndex() == 0:
-            self.step(1)  # "move on mark": a keeper is decided, show the next one (last picture: stays)
+        if self.advance_on_mark and self.stack.currentIndex() == 0:
+            self.step(1)  # "move on mark": mark or unmark, the pick is decided; show the next (last: stays)
 
     def set_advance_on_mark(self, on: bool, announce: bool = True) -> None:
         """Toggle and persist "move on mark"; the toolbar button mirrors it."""
@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         self.last_message = text
         if self.is_bleed:  # the status bar is hidden in full-bleed; use the strip
             self.viewer.strip.show_note(text, 5000)
+            self.viewer.reveal_strip()
         else:
             self.statusBar().showMessage(text, 5000)
 
@@ -457,7 +458,7 @@ class MainWindow(QMainWindow):
         for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
             w.setVisible(not on)
         self.toolbar2.setVisible(not on and self._next_row_wanted())
-        self.viewer.strip.setVisible(on)
+        self.viewer.set_bleed(on)  # hidden; pointer movement reveals it
         if self._compare_strip is not None:
             self._compare_strip.setVisible(on)
         if on:
