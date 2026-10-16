@@ -18,6 +18,7 @@ import glob
 import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QImage
 
+from spuza.capture import capture_key, sort_key
 from spuza.ui import settings  # imports only QSettings; the defaults live in one place
 
 # Same values as spuza.preview; duplicated so importing this module never imports the decoders.
@@ -70,17 +72,50 @@ def _hidden(name: str) -> bool:
     return name.startswith(".") or name.lower() in _SKIP_DIRS
 
 
-def scan(root: Path) -> list[Picture]:
-    """All pictures under `root`, in approximate capture order (mtime of primary, then name)."""
-    return scan_card(root).pictures
+KEY_WORKERS = 8  # header reads in flight at once; each is a few small reads (~0.3-0.5 ms on a local disk)
 
 
-def scan_card(root: Path) -> ScanResult:
-    """Walk `root`: the pictures (by mtime of primary, then name), the other files, the unreadable entries.
+def scan(root: Path, order: str = "capture") -> list[Picture]:
+    """All pictures under `root`, in capture order (see `scan_card`)."""
+    return scan_card(root, order).pictures
+
+
+def _read_key(path: Path):
+    try:
+        return capture_key(path)
+    except Exception:  # capture_key promises not to raise; a failed read is an unkeyed picture
+        return None
+
+
+def _order(pictures: list[Picture], order: str) -> None:
+    """Sort in place. "capture": keyed pictures first, in the camera's order (DateTimeOriginal,
+    sub-seconds, shot counter, then file name, then folder); pictures with no readable key (HEIF, CR3,
+    corrupt, no EXIF date) follow, by mtime, name, folder. Keyed-first keeps a mixed card in one block per
+    kind instead of weaving file-copy times into camera times. "mtime": the old order."""
+    def by_mtime(p):
+        return (p.mtime, p.primary.name.lower(), str(p.primary.parent))
+    if order == "mtime" or len(pictures) < 2:
+        pictures.sort(key=by_mtime)
+        return
+    with ThreadPoolExecutor(max_workers=KEY_WORKERS) as pool:
+        keys = list(pool.map(_read_key, [p.primary for p in pictures]))
+    final = {}
+    for p, k in zip(pictures, keys):
+        t = sort_key(k, p.primary.name.lower())
+        parent = str(p.primary.parent)
+        # unkeyed: (1, "", "", mtime, name, folder); keyed: (0, taken, subsec, counter, name, folder)
+        final[id(p)] = (*t[:3], p.mtime, t[4], parent) if t[0] else (*t, parent)
+    pictures.sort(key=lambda p: final[id(p)])
+
+
+def scan_card(root: Path, order: str = "capture") -> ScanResult:
+    """Walk `root`: the pictures (in capture order, or `order="mtime"`), the other files, the unreadable entries.
 
     Skipped without report, as before: dot-files and dot-directories, `System Volume Information`,
     `$RecycleBin`, and symlinks. Everything else is a picture, a companion, an "other", or unreadable.
     """
+    if order not in ("capture", "mtime"):
+        raise ValueError(f"order must be 'capture' or 'mtime', not {order!r}")
     pictures: list[Picture] = []
     others: list[Path] = []
     unreadable: list[Path] = []
@@ -112,7 +147,7 @@ def scan_card(root: Path) -> ScanResult:
             pics, rest = _pair(d, members)
             pictures.extend(pics)
             others.extend(rest)
-    pictures.sort(key=lambda p: (p.mtime, p.primary.name.lower(), str(p.primary.parent)))
+    _order(pictures, order)
     return ScanResult(pictures, tuple(sorted(others, key=str)), tuple(sorted(unreadable, key=str)))
 
 
