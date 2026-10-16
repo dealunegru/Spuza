@@ -12,15 +12,33 @@ from spuza.copy import human_size
 from spuza.ui import theme
 
 
+def _companion_note(pic) -> str:
+    comps = tuple(getattr(pic, "companions", ()) or ())
+    if not comps:
+        return ""
+    exts = ", ".join(c.suffix[1:].upper() or c.name for c in comps)
+    n = len(comps)
+    if n == 1:
+        return f"1 companion file ({exts}) copies with it"
+    return f"{n} companion files ({exts}) copy with it"
+
+
 def explain(pic) -> tuple[str, bool]:
-    """(headline, amber) for a picture."""
+    """(headline, amber) for a picture: what files make it up, from its kind and companions."""
     ext = pic.primary.suffix.lower()
+    note = _companion_note(pic)
     if ext in RAW_EXTS:
+        kind = pic.kind.replace("+", " + ")
+        if "+" in pic.kind:
+            head = f"{kind}: one picture, both files copy together"
+            if pic.kind.count("+") > 1:
+                head = f"{kind}: one picture, all files copy together"
+            return (f"{head} + {note}" if note else head), False
         raw = ext[1:].upper()
-        if pic.sidecar is not None:
-            return f"{raw} + JPG: one picture, both files copy together", False
-        return f"{raw} only: no JPG beside it", True
-    return f"{pic.kind}: one file", False
+        head = f"{raw} only: no JPG beside it"
+        return (f"{head} - {note}" if note else head), True
+    head = f"{pic.kind}: one file"
+    return (f"{head} + {note}" if note else head), False
 
 
 def exif_lines(info) -> list[str]:
@@ -59,12 +77,13 @@ class Inspector(QWidget):
             return
         head, amber = explain(pic)
         lines = [pic.stem, head]
+        comps = set(getattr(pic, "companions", ()) or ())
         for f in pic.files:
             try:
                 size = f"  {human_size(f.stat().st_size)}"
             except OSError:
                 size = f"  {human_size(pic.size_bytes)}" if len(pic.files) == 1 else ""
-            lines.append(f"{f.name}{size}")
+            lines.append(f"{f.name}{size}{'  (companion)' if f in comps else ''}")
         if len(pic.files) > 1:
             lines.append(f"Together  {human_size(pic.size_bytes)}")
         if reason:
