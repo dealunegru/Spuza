@@ -34,6 +34,7 @@ It opens the card, shows the first picture at once, and gets out of the way.
 
 - **Step** through the card with one key. The next pictures are already decoded, so a step takes about 10 ms.
 - **Mark** a keeper, keep going. Go back and mark later; nothing is lost.
+- **Marks live in Spuza, not in your files.** Nothing is ever written to a picture, its EXIF or the card; the only thing Spuza writes is the copy you ask for, into the folder you pick.
 - **Move on mark**, if you like: with `A` on, marking a picture shows the next one, so a pass over the card is one key per frame.
 - **Review** every marked picture on one contact sheet. Unmark what did not survive a second look.
 - **Zoom** to 100% for the sharpness check. On a raw file this triggers a full decode in the background.
