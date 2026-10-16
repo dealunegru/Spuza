@@ -135,7 +135,7 @@ Files that already exist with identical content are skipped, not overwritten.
 ## How it stays fast
 
 - **No demosaicing on the way through.** A raw file carries a camera-made JPEG preview. Spuza slices it straight out of the file (RAF header offsets, DNG SubIFDs) in a few milliseconds and shows that. The expensive full decode runs only when you press `Z`, and only if the preview is smaller than the sensor.
-- **Prefetch.** The pictures ahead of and behind the current one are decoded in a thread pool, so a step is a texture swap. The default window is 12 ahead and 8 behind (about 21 pictures); at 2560 px each picture is about 13 MB, so that is about 275 MB. Change it in Preferences, or with `--ahead N --behind N` for one run.
+- **Prefetch.** The pictures ahead of and behind the current one are decoded in a thread pool, so a step is a texture swap. The default window is 12 ahead and 8 behind (about 21 pictures); at 2560 px each picture is about 13 MB, so that is about 275 MB of previews; the process as a whole sits around 1.7x that on macOS and Linux (their allocators keep freed decode buffers), less on Windows. Change it in Preferences, or with `--ahead N --behind N` for one run.
 - **Measured.** `spuza --demo <folder> --bench` prints the first-paint time, every step, and every full decode. On a six-file test set (five Ricoh GR DNGs of 29 MB, one Fujifilm X-Pro2 RAF) the step mean is about 10 ms and the first picture is on screen in under a second.
 
 ## Development

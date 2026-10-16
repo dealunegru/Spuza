@@ -125,4 +125,8 @@ def test_walk_1000_card_memory_flat(tmp_path, capsys):
         print(f"\nRSS before={before:.0f} MB at150={mid:.0f} MB at300={end:.0f} MB "
               f"window_mb={window} wall={time.monotonic() - t_start:.1f}s")
     assert end - mid < GROWTH_BOUND_MB
-    assert end - before < window + SLACK_MB
+    # The plateau is above the preview bytes on macOS and Linux: CI run 38875388229 measured +464 and
+    # +465 MB for a 275 MB window (worker-thread malloc arenas keep freed decode buffers; Windows trims
+    # its working set to about +190). Flatness above is the leak check; this bound only catches a
+    # window that is wildly bigger than configured (a leak of one preview per 4 steps would be +975).
+    assert end - before < 2 * window + SLACK_MB

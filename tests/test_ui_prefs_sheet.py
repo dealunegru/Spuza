@@ -79,9 +79,9 @@ def test_sheet_labels_ranges_and_initial_values():
 
 def test_memory_line_updates_live():
     sheet = PrefsSheet(12, 8, 2560)
-    assert sheet.memory_text() == f"about {settings.window_mb(12, 8, 2560)} MB of memory"
+    assert sheet.memory_text() == f"about {settings.window_mb(12, 8, 2560)} MB of previews"
     sheet.ahead_spin.setValue(30)
-    assert sheet.memory_text() == f"about {settings.window_mb(30, 8, 2560)} MB of memory"
+    assert sheet.memory_text() == f"about {settings.window_mb(30, 8, 2560)} MB of previews"
     sheet.behind_spin.setValue(0)
     assert sheet.memory_text() == f"about {settings.window_mb(30, 0, 2560)} MB of memory"
     small = PrefsSheet(12, 8, 1280)

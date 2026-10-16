@@ -65,4 +65,4 @@ class PrefsSheet(QDialog):
 
     def _update_memory(self) -> None:
         a, b = self.values()
-        self.memory_label.setText(f"about {settings.window_mb(a, b, self.max_side)} MB of memory")
+        self.memory_label.setText(f"about {settings.window_mb(a, b, self.max_side)} MB of previews")
