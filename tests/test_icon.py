@@ -53,6 +53,23 @@ def test_rebuild_matches_committed_sizes(tmp_path):
         assert new.size == old.size == (256, 256)
 
 
+def test_sources_by_platform_with_fallback(tmp_path):
+    mod = _load_build_icon()
+    assert mod.source_for("icns", 16) == mod.SVG  # the Mac tile carries its own shadow: never the win variant
+    assert mod.source_for("ico", 16) == mod.SMALL_SVG
+    assert mod.source_for("ico", 24) == mod.WIN_SVG
+    assert mod.source_for("png", 256) == mod.WIN_SVG
+    lone = tmp_path / "spuza.svg"
+    lone.write_bytes(mod.SVG.read_bytes())
+    for target, size in (("ico", 16), ("ico", 256), ("png", 256), ("icns", 1024)):
+        assert mod.source_for(target, size, lone, tmp_path / "none-win.svg", tmp_path / "none-16.svg") == lone
+
+
+def test_committed_variants_exist():
+    for name in ("spuza.svg", "spuza-win.svg", "spuza-16.svg"):
+        assert (ICON_DIR / name).stat().st_size > 500
+
+
 def test_packaged_png_is_reachable_through_the_package():
     png = resources.files("spuza") / "assets" / "spuza.png"
     assert png.is_file()
