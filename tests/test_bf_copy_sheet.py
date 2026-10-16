@@ -7,7 +7,15 @@ from PySide6.QtWidgets import QApplication
 
 from spuza import copy as copy_mod
 from spuza.ui.copy_sheet import CopySheet
+import pytest
+
 from test_ui_copy_sheet import make_card, wait_for  # noqa: F401  (also makes the QApplication)
+
+
+@pytest.fixture(autouse=True)
+def _logs_dir(tmp_path, monkeypatch):
+    """Copy logs go to a per-test folder, never the real app-data one (and never the destination)."""
+    monkeypatch.setenv("SPUZA_LOGS_DIR", str(tmp_path / "spuza-logs"))
 
 
 def test_b10_everything_already_there_is_not_short_of_space(tmp_path):
@@ -28,7 +36,7 @@ def test_b10_everything_already_there_is_not_short_of_space(tmp_path):
 
 
 def test_b11_second_folder_after_finished_copy_has_a_copy_button(tmp_path):
-    sheet = CopySheet(make_card(tmp_path), tmp_path / "out")
+    sheet = CopySheet(make_card(tmp_path), tmp_path / "out", organise=False)
     done = []
     sheet.finished.connect(done.append)
     sheet.copy_button.click()

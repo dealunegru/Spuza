@@ -4,6 +4,12 @@ Closing mid-copy: the sheet ASKS first ("Stop copying and close?"). Yes cancels 
 written file is removed by ``run_copy``, finished files stay) and closes; No keeps copying.
 ``confirm_close`` and ``choose_folder`` are attributes so tests can inject them.
 
+After a successful copy (no failed file, not cancelled) the sheet can eject the card (``eject_after``, off the
+UI thread, bounded by eject's own timeout) and ask to quit (``quit_after``): one status line, a ``Stay`` button, and a
+countdown of ``countdown_seconds`` that ends by emitting ``quit_requested`` (the window closes itself). A failed
+eject does not stop the quit. ``eject_fn`` is an attribute so tests can inject it. Any error or cancel: nothing
+is ejected and nothing quits.
+
 ``progress(done, total)`` is in KiB (rounded up) so it fits a Qt int signal for any card size.
 """
 
@@ -14,7 +20,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
@@ -29,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from spuza import copy as copy_mod
+from spuza import eject as eject_mod
 from spuza.copy import human_size
 
 MIN_PROGRESS_INTERVAL = 1 / 30  # seconds between progress emits (about 30 per second)
@@ -61,6 +68,7 @@ def _show_name() -> str:
 class _Signals(QObject):
     progress = Signal(int, int)
     done = Signal(object)
+    ejected = Signal(bool, str)
 
 
 class _CopyJob(QRunnable):
@@ -84,13 +92,43 @@ class _CopyJob(QRunnable):
         self.sig.done.emit(res)
 
 
+class _EjectJob(QRunnable):
+    def __init__(self, fn, target: Path, sig: _Signals):
+        super().__init__()
+        self.fn, self.target, self.sig = fn, target, sig
+        self.setAutoDelete(False)
+
+    def run(self) -> None:
+        try:
+            ok, why = self.fn(self.target)
+        except Exception as exc:  # noqa: BLE001 - eject must never kill the thread
+            ok, why = False, f"{type(exc).__name__}: {exc}"
+        self.sig.ejected.emit(bool(ok), str(why))
+
+
 class CopySheet(QDialog):
     started = Signal()
     progress = Signal(int, int)
     finished = Signal(object)  # shadows QDialog.finished(int) on purpose (contract); see done()
 
-    def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=()):
+    quit_requested = Signal()  # the countdown ran out: the window closes itself
+
+    def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
+                 organise: bool = True, eject_after: bool = False, quit_after: bool = False,
+                 eject_target: Path | None = None):
         super().__init__(parent)
+        self.organise = bool(organise)
+        self.eject_after = bool(eject_after)
+        self.quit_after = bool(quit_after)
+        self.eject_target: Path | None = Path(eject_target) if eject_target else None
+        self.eject_fn: Callable = eject_mod.eject
+        self.countdown_seconds = 3
+        self.countdown_interval_ms = 1000
+        self._remaining = 0
+        self._dismissed = False  # closed by hand: a late eject result must not start a quit
+        self._status_base = ""
+        self._countdown = QTimer(self)
+        self._countdown.timeout.connect(self._tick)
         self.setWindowTitle("Copy marked pictures")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setMinimumSize(560, 520)
@@ -114,6 +152,8 @@ class CopySheet(QDialog):
         self._sig = _Signals()
         self._sig.progress.connect(self._on_progress)
         self._sig.done.connect(self._on_done)
+        self._sig.ejected.connect(self._on_ejected)
+        self._eject_job = None
         self._job = None
         self._closing = False  # closed mid-copy: finish closing when the worker's result arrives
 
@@ -156,6 +196,13 @@ class CopySheet(QDialog):
         self.log_label = QLabel()
         self.log_label.setWordWrap(True)
         self.log_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        self.status_label.hide()
+        self.stay_button = QPushButton("Stay")
+        self.stay_button.setAutoDefault(False)
+        self.stay_button.clicked.connect(self.stay)
+        self.stay_button.hide()
         self.copy_button = QPushButton("Copy")
         self.copy_button.setDefault(True)
         self.copy_button.clicked.connect(self.start_copy)
@@ -174,6 +221,7 @@ class CopySheet(QDialog):
         where.addWidget(self.choose_button)
         buttons = QHBoxLayout()
         buttons.addWidget(self.show_button)
+        buttons.addWidget(self.stay_button)
         buttons.addStretch(1)
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.close_button)
@@ -189,6 +237,7 @@ class CopySheet(QDialog):
         lay.addWidget(self.bar)
         lay.addWidget(self.result_label)
         lay.addWidget(self.log_label)
+        lay.addWidget(self.status_label)
         lay.addLayout(buttons)
         self._update_dest()
 
@@ -228,6 +277,9 @@ class CopySheet(QDialog):
     def _reset_for_new_destination(self) -> None:
         """After a finished copy, a new folder gets a fresh sheet: the same marks can go to a second drive."""
         self.result = None
+        self._stop_countdown()
+        self.status_label.hide()
+        self.stay_button.hide()
         self.result_label.clear()
         self.log_label.clear()
         self.bar.hide()
@@ -261,7 +313,7 @@ class CopySheet(QDialog):
             return
         self.dest_label.setText(str(self.dest))
         if self.pictures:  # plan once: the bytes still to write (not the identical ones) decide "short"
-            self.plan = copy_mod.plan_copy([p.files for p in self.pictures], self.dest)
+            self.plan = copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise)
         free = self._free()
         short = self.space_short()
         if free is None:
@@ -280,7 +332,7 @@ class CopySheet(QDialog):
             self._show_plan(self.plan)
 
     def _show_plan(self, plan=None) -> None:
-        self.plan = plan or copy_mod.plan_copy([p.files for p in self.pictures], self.dest)
+        self.plan = plan or copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise)
         skip = sum(1 for it in self.plan.items if it.action == "skip")
         text = f"Will copy {len(self.plan.items) - skip} files, skip {skip} already there"
         if self.total_twins:
@@ -296,6 +348,7 @@ class CopySheet(QDialog):
             self._update_dest()
             return
         self.running = True
+        self._dismissed = False
         self._cancel.clear()
         self.copy_button.setEnabled(False)
         self.choose_button.setEnabled(False)
@@ -340,6 +393,9 @@ class CopySheet(QDialog):
             text += " · cancelled"
         if self.total_twins:
             text += f" · {self._twin_note()}"
+        where = self._where_text(res)
+        if where:
+            text += f" · {where}"
         if self.others:
             text += f" · {_n(len(self.others), 'other file', 'other files')} not copied (not a picture)"
         if self.unreadable:
@@ -357,6 +413,80 @@ class CopySheet(QDialog):
         if self._closing:
             self._closing = False
             self.close()  # running is False now, so this closes without asking again
+            return
+        if not res.failed and not res.cancelled:
+            self._after_copy()
+
+    def _where_text(self, res) -> str:
+        """With organise on: how many copied files went to raw and to soc."""
+        plan = self.plan
+        if plan is None or not getattr(plan, "organise", False):
+            return ""
+        folder = {it.src: it.dst.parent.name for it in plan.items}
+        counts = {copy_mod.RAW_DIR: 0, copy_mod.SOC_DIR: 0}
+        for f in res.copied:
+            if folder.get(f) in counts:
+                counts[folder[f]] += 1
+        return f"raw {counts[copy_mod.RAW_DIR]}, soc {counts[copy_mod.SOC_DIR]}"
+
+    # ---- after a good copy: eject, then quit -----------------------------------------------------
+    def _after_copy(self) -> None:
+        if self.eject_after and self.eject_target is None:
+            self._status("Not opened from a card: nothing ejected.")
+            self._maybe_quit()
+        elif self.eject_after:
+            self._status("Ejecting the card…")
+            self._eject_job = _EjectJob(self.eject_fn, self.eject_target, self._sig)
+            self._pool.start(self._eject_job)
+        else:
+            self._maybe_quit()
+
+    def _on_ejected(self, ok: bool, why: str) -> None:
+        self._eject_job = None
+        self._status("Card ejected." if ok else f"Could not eject the card: {why}.")
+        self._maybe_quit()
+
+    def _status(self, text: str) -> None:
+        self._status_base = text
+        self.status_label.setText(text)
+        self.status_label.show()
+
+    def _maybe_quit(self) -> None:
+        if not self.quit_after or self._dismissed:
+            return
+        self._remaining = max(0, int(self.countdown_seconds))
+        self._show_countdown()
+        if self._remaining == 0:
+            self._finish_countdown()
+            return
+        self.stay_button.show()
+        self._countdown.start(self.countdown_interval_ms)
+
+    def _show_countdown(self) -> None:
+        sep = " " if self._status_base else ""
+        self.status_label.setText(f"{self._status_base}{sep}Quitting in {self._remaining} s")
+        self.status_label.show()
+
+    def _tick(self) -> None:
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self._finish_countdown()
+        else:
+            self._show_countdown()
+
+    def _finish_countdown(self) -> None:
+        self._countdown.stop()
+        self.stay_button.hide()
+        self.quit_requested.emit()
+
+    def _stop_countdown(self) -> None:
+        self._countdown.stop()
+
+    def stay(self) -> None:
+        """Cancel the pending quit; the sheet stays with its result."""
+        self._stop_countdown()
+        self.stay_button.hide()
+        self.status_label.setText(self._status_base or "Staying open")
 
     def show_folder(self) -> None:
         if self.dest is not None:
@@ -384,6 +514,8 @@ class CopySheet(QDialog):
             self.hide()
             ev.ignore()
             return
+        self._dismissed = True
+        self._stop_countdown()  # closing the sheet by hand also cancels a pending quit
         super().closeEvent(ev)
 
     def reject(self) -> None:

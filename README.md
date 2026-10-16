@@ -75,11 +75,14 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 | `C` | copy the marked pictures to a folder |
 | `Cmd-,` (`Ctrl-,` on Windows) | Preferences |
 
+With Move on mark (A) on, unmarking also moves on to the next picture.
+Full-bleed shows only the picture; move the mouse to see the strip for a second.
+
 Every key also has a toolbar button with its shortcut printed on it.
 The inspector on the right shows the file names and sizes, the preview's size and decode time, aperture, shutter, ISO, focal length and camera.
 Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 
-**Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only four things: the copies you ask for, a log of each copy beside them, its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
+**Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only four things: the copies you ask for (and the `raw`, `soc` and `ed` folders they go in), a log of each copy in its own app-data folder (never in your destination), its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
 
 <p align="center">
   <img src="docs/img/bleed.png" alt="Full screen: the picture alone, with a one-line status strip" width="900">
@@ -115,13 +118,16 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 - A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together. The same goes for a `HIF` beside a raw, and for any other file with the picture's name (an `XMP`, a `THM`, a Live Photo's `MOV`).
 - If a file is already in the folder with identical content, it is skipped.
 - If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
-- Each copy writes a log, `spuza-copy-<date>-<time>.log`, into the destination folder: every file copied, skipped or renamed, and the totals.
+- With **Copy into raw / soc / ed folders** on (the default), the destination gets a `raw` folder for raw files and a `soc` folder for JPEGs and other picture formats (HIF, HEIF, PNG...). A raw+JPEG pair is split between them, and a picture's XMP or MOV goes with its raw (or with its JPEG when there is no raw). An empty `ed` folder is made too, for your Lightroom exports. The result line says how many files went to `raw` and to `soc`.
+- After a successful copy, **Eject the card after copying** and **Quit Spuza after copying** (both on by default) eject the card you opened and then close Spuza, after a 3 second countdown with a **Stay** button. A failed eject is reported and does not stop the quit. If anything failed or you cancelled, nothing is ejected and Spuza stays open.
+- Each copy writes a log, `spuza-copy-<date>-<time>.log`, with every file copied, skipped or renamed, and the totals. The log is kept in Spuza's own app-data folder (`logs`), never in the destination, which receives only your pictures and the three folders.
 
 ## Preferences
 
 `Cmd-,` (`Ctrl-,` on Windows) or the toolbar button opens Preferences:
 
 - **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
+- **Copy into raw / soc / ed folders**, **Eject the card after copying** and **Quit Spuza after copying** (all default on): see Copying.
 - **Advanced mode**: see below.
 - Advanced mode only:
   - **Decode threads** (1-8, default 3, applied at the next launch).
