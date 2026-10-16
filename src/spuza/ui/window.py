@@ -16,6 +16,7 @@ from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
+from spuza import features
 from spuza.copy import human_size
 from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
@@ -199,6 +200,10 @@ class MainWindow(QMainWindow):
         self.lbl_pos, self.lbl_marked = QLabel(), QLabel()
         sb.addWidget(self.lbl_pos)
         sb.addWidget(self.lbl_marked)
+        self.advanced_tag = QLabel("ADVANCED")
+        self.advanced_tag.setStyleSheet("font-weight: bold; padding: 0 8px;")
+        sb.addPermanentWidget(self.advanced_tag)
+        self._show_mode()
 
         prefetcher.ready.connect(self._on_ready)
         prefetcher.failed.connect(self._on_failed)
@@ -467,7 +472,18 @@ class MainWindow(QMainWindow):
     def _default_prefs_sheet_factory(self, ahead, behind, max_side, parent=None):
         from spuza.ui.prefs_sheet import PrefsSheet  # lazy, like the copy sheet
 
-        return PrefsSheet(ahead, behind, max_side, parent=parent)
+        return PrefsSheet(ahead, behind, max_side, parent=parent, advanced=settings.read_advanced(self.prefs),
+                          threads=settings.read_threads(self.prefs))
+
+    def _show_mode(self) -> None:
+        adv = features.is_advanced()
+        self.setWindowTitle(f"Spuza (advanced) — {self.root}" if adv else f"Spuza — {self.root}")
+        self.advanced_tag.setVisible(adv)
+
+    def set_advanced(self, on: bool) -> None:
+        """Switch this run's mode live (title and ADVANCED marker). Saving is the caller's business."""
+        features.set_mode(features.ADVANCED if on else features.CLASSIC)
+        self._show_mode()
 
     def open_prefs(self) -> None:
         """Open Preferences (works in review mode too: it is a window-level sheet). The sheet starts from the
@@ -487,7 +503,15 @@ class MainWindow(QMainWindow):
     def _apply_prefs(self, sheet) -> None:
         a, b = sheet.values()
         settings.write_window(self.prefs, a, b)
+        adv = getattr(sheet, "advanced", None)
+        adv = bool(adv()) if callable(adv) else None  # a fake sheet may not know about modes
+        if adv is not None:
+            settings.write_advanced(self.prefs, adv)
+            if adv and callable(getattr(sheet, "threads", None)):
+                settings.write_threads(self.prefs, sheet.threads())
         self.prefs.sync()
+        if adv is not None and adv != features.is_advanced():
+            self.set_advanced(adv)
         self.prefetcher.set_window(a, b)
         self.say(f"Prefetch: {a} ahead, {b} behind (about {settings.window_mb(a, b, self.prefetcher.max_side)} MB)")
 

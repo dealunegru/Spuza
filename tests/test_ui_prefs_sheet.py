@@ -69,7 +69,7 @@ def spin_labels(sheet):
 
 def test_sheet_labels_ranges_and_initial_values():
     sheet = PrefsSheet(5, 3, 2560)
-    spins = sheet.findChildren(QSpinBox)
+    spins = [s for s in sheet.findChildren(QSpinBox) if s is not sheet.threads_spin]  # threads: advanced-only
     assert len(spins) == 2
     assert spin_labels(sheet) == ["Pictures kept behind", "Pictures ready ahead"]
     assert (sheet.ahead_spin.minimum(), sheet.ahead_spin.maximum()) == (1, 64)
