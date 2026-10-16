@@ -194,6 +194,21 @@ def _orient(im: Image.Image, fallback: int = 0) -> Image.Image:
     return im.transpose(op) if op is not None else im
 
 
+def _to_8bit(im: Image.Image) -> Image.Image:
+    """Scale high-bit-depth grayscale (I;16, I;16B, I, F) to 8-bit; other modes pass through."""
+    if im.mode not in ("I;16", "I;16L", "I;16B", "I", "F"):
+        return im
+    import numpy as np
+
+    a = np.asarray(im).astype("float64")
+    lo, hi = float(a.min()), float(a.max())
+    if im.mode.startswith("I;16") or (im.mode == "I" and lo >= 0 and hi <= 65535):
+        lo, hi = 0.0, 65535.0  # true 16-bit range
+    if hi <= lo:
+        return Image.new("L", im.size, 0)
+    return Image.fromarray(np.clip((a - lo) * (255.0 / (hi - lo)) + 0.5, 0, 255).astype("uint8"), "L")
+
+
 def _decode(src, max_side: int | None, fallback_orient: int = 0):
     """Open, draft-scale, load, orient and convert; return (RGB image, native (w, h))."""
     if isinstance(src, bytes):
@@ -205,7 +220,7 @@ def _decode(src, max_side: int | None, fallback_orient: int = 0):
                 long_ = max(native)
                 im.draft("RGB", (-(-native[0] * max_side // long_), -(-native[1] * max_side // long_)))
             im.load()
-            out = _orient(im, fallback_orient).convert("RGB")
+            out = _to_8bit(_orient(im, fallback_orient)).convert("RGB")
             return out, native
     except Exception as e:
         raise PreviewError(f"cannot decode image: {e}") from e
@@ -251,8 +266,18 @@ def load(path, max_side: int | None = 2560):
                 return done(im, "rawpy-thumb", native, len(data))
             except PreviewError:
                 pass
-        im = _rawpy_full(path, True)
-        return done(im, "rawpy-full", im.size, fsize)
+        try:
+            im = _rawpy_full(path, True)
+            return done(im, "rawpy-full", im.size, fsize)
+        except PreviewError:
+            # Not a real raw (e.g. a JPEG named .DNG): let Pillow try before giving up.
+            try:
+                im, native = _decode(path, max_side)
+            except PreviewError:
+                pass
+            else:
+                return done(im, "pillow", native, fsize)
+            raise
     if ext in HEIF_EXTS:
         try:
             from pillow_heif import register_heif_opener

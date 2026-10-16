@@ -101,6 +101,7 @@ class CopySheet(QDialog):
         self._sig.progress.connect(self._on_progress)
         self._sig.done.connect(self._on_done)
         self._job = None
+        self._closing = False  # closed mid-copy: finish closing when the worker's result arrives
 
         self.total_files = sum(len(p.files) for p in self.pictures)
         self.total_bytes = sum(p.size_bytes for p in self.pictures)
@@ -174,7 +175,21 @@ class CopySheet(QDialog):
         chosen = self.choose_folder(self, "Choose a folder for the copies", start)
         if chosen:
             self.dest = Path(chosen)
+            if self.result is not None and not self.running:
+                self._reset_for_new_destination()
             self._update_dest()
+
+    def _reset_for_new_destination(self) -> None:
+        """After a finished copy, a new folder gets a fresh sheet: the same marks can go to a second drive."""
+        self.result = None
+        self.result_label.clear()
+        self.log_label.clear()
+        self.bar.hide()
+        self.bar.setValue(0)
+        self.close_button.hide()
+        self.show_button.hide()
+        self.cancel_button.show()
+        self.copy_button.show()
 
     def _free(self) -> int | None:
         if self.dest is None:
@@ -186,7 +201,9 @@ class CopySheet(QDialog):
 
     def space_short(self, needed: int | None = None) -> bool:
         free = self._free()
-        return free is not None and (self.total_bytes if needed is None else needed) > free
+        if needed is None:
+            needed = self.plan.total_bytes if self.plan is not None else self.total_bytes
+        return free is not None and needed > free
 
     def _update_dest(self) -> None:
         self.plan = None
@@ -197,24 +214,27 @@ class CopySheet(QDialog):
             self.copy_button.setEnabled(False)
             return
         self.dest_label.setText(str(self.dest))
+        if self.pictures:  # plan once: the bytes still to write (not the identical ones) decide "short"
+            self.plan = copy_mod.plan_copy([p.files for p in self.pictures], self.dest)
         free = self._free()
+        short = self.space_short()
         if free is None:
             self.free_label.setText("Free space unknown")
             self.free_label.setStyleSheet("")
-        elif self.space_short():
+        elif short:
             self.free_label.setText(
-                f"Not enough space: need {human_size(self.total_bytes)}, {human_size(free)} free here"
+                f"Not enough space: need {human_size(self.plan.total_bytes)}, {human_size(free)} free here"
             )
             self.free_label.setStyleSheet(f"color: {AMBER}; font-weight: bold;")
         else:
             self.free_label.setText(f"{human_size(free)} free at the destination")
             self.free_label.setStyleSheet("")
-        self.copy_button.setEnabled(bool(self.pictures) and not self.running and not self.space_short())
-        if self.pictures and not self.space_short():
-            self._show_plan()
+        self.copy_button.setEnabled(bool(self.pictures) and not self.running and not short)
+        if self.pictures and not short:
+            self._show_plan(self.plan)
 
-    def _show_plan(self) -> None:
-        self.plan = copy_mod.plan_copy([p.files for p in self.pictures], self.dest)
+    def _show_plan(self, plan=None) -> None:
+        self.plan = plan or copy_mod.plan_copy([p.files for p in self.pictures], self.dest)
         skip = sum(1 for it in self.plan.items if it.action == "skip")
         self.plan_label.setText(f"Will copy {len(self.plan.items) - skip} files, skip {skip} already there")
 
@@ -253,11 +273,17 @@ class CopySheet(QDialog):
         self.result = res
         self._job = None
         copied = set(res.copied)
-        pics = sum(1 for p in self.pictures if any(f in copied for f in p.files))
+        done_ok = copied | set(res.skipped)
+        pics = sum(1 for p in self.pictures if all(f in done_ok for f in p.files))
+        partial = sum(
+            1 for p in self.pictures if any(f in copied for f in p.files) and not all(f in done_ok for f in p.files)
+        )
         text = (
             f"Copied {pics} picture{'s' if pics != 1 else ''} ({len(res.copied)} files)"
             f" · skipped {len(res.skipped)} · failed {len(res.failed)}"
         )
+        if partial:
+            text += f" · {partial} picture{'s' if partial != 1 else ''} not fully copied"
         if res.cancelled:
             text += " · cancelled"
         self.result_label.setText(text)
@@ -270,6 +296,9 @@ class CopySheet(QDialog):
         self.show_button.show()
         self.choose_button.setEnabled(True)
         self.finished.emit(res)
+        if self._closing:
+            self._closing = False
+            self.close()  # running is False now, so this closes without asking again
 
     def show_folder(self) -> None:
         if self.dest is not None:
@@ -288,12 +317,15 @@ class CopySheet(QDialog):
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         if self.running:
-            if not self.confirm_close():
+            if self._closing or not self.confirm_close():
                 ev.ignore()
                 return
+            # never wait on the GUI thread: cancel, hide, and finish closing when ``done`` arrives
+            self._closing = True
             self._cancel.set()
-            self._pool.waitForDone(10000)
-            self.running = False  # QDialog.closeEvent calls reject(); it must not ask again
+            self.hide()
+            ev.ignore()
+            return
         super().closeEvent(ev)
 
     def reject(self) -> None:

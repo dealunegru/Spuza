@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 HERE = Path(SPECPATH)  # noqa: F821  (injected by PyInstaller)
 VERSION = tomllib.loads((HERE.parent / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
@@ -14,6 +14,9 @@ for pkg in ("rawpy", "pillow_heif"):
     datas += d
     binaries += b
     hiddenimports += h
+
+# spuza's own dist-info, so importlib.metadata.version("spuza") works inside the bundle.
+datas += copy_metadata("spuza")
 
 # Spuza only uses QtCore/QtGui/QtWidgets; keep the rest of PySide6 out.
 UNUSED_QT = [
