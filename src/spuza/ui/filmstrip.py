@@ -54,8 +54,8 @@ class _Delegate(QStyledItemDelegate):
             p.fillRect(box, QColor(c.border))
         else:
             p.fillRect(box, QColor(c.stage))
-            p.drawPixmap(box.x() + (THUMB_W - thumb.width()) // 2, box.y() + (THUMB_H - thumb.height()) // 2,
-                         thumb)
+            lw, lh = thumb.deviceIndependentSize().toSize().toTuple()  # logical size: the pixmap has a DPR
+            p.drawPixmap(box.x() + (THUMB_W - lw) // 2, box.y() + (THUMB_H - lh) // 2, thumb)
         if i == s.current:
             p.setPen(QPen(QColor(c.accent), 3))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -121,10 +121,13 @@ class Filmstrip(QListView):
         img = self.prefetcher.cached(i) if self.prefetcher is not None else None
         if img is None or img.isNull():
             return None
-        big = img.scaled(THUMB_W * 3, THUMB_H * 3, Qt.AspectRatioMode.KeepAspectRatio,
+        dpr = max(1.0, self.devicePixelRatioF())
+        tw, th = round(THUMB_W * dpr), round(THUMB_H * dpr)
+        big = img.scaled(tw * 3, th * 3, Qt.AspectRatioMode.KeepAspectRatio,
                          Qt.TransformationMode.FastTransformation)
-        pm = QPixmap.fromImage(big.scaled(THUMB_W, THUMB_H, Qt.AspectRatioMode.KeepAspectRatio,
+        pm = QPixmap.fromImage(big.scaled(tw, th, Qt.AspectRatioMode.KeepAspectRatio,
                                           Qt.TransformationMode.SmoothTransformation))
+        pm.setDevicePixelRatio(dpr)
         self._memo[i] = pm
         while len(self._memo) > MEMO_MAX:
             del self._memo[next(iter(self._memo))]
