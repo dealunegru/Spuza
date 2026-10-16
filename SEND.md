@@ -2,7 +2,7 @@
 
 Three ways, in order of preference. All need Apple Silicon and a current macOS.
 
-## 1. One install line (needs the GitHub repository to be public)
+## 1. One install line
 
 In Terminal:
 
@@ -28,7 +28,7 @@ System Settings > Privacy & Security, scroll to the message about Spuza, click *
 then launch again. Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Spuza.app`.
 The app has no command line; it scans the mounted cards when it opens.
 
-## 3. The wheel (works while the repository is private)
+## 3. The wheel (the Mac does not need to reach GitHub)
 
 Build it here (Windows or Mac, any Python with uv):
 
@@ -36,12 +36,12 @@ Build it here (Windows or Mac, any Python with uv):
 uv build
 ```
 
-That writes `dist/spuza-0.2.0-py3-none-any.whl` (about 40 KB, pure Python; the heavy parts,
+That writes `dist/spuza-<version>-py3-none-any.whl` (about 40 KB, pure Python; the heavy parts,
 PySide6 and rawpy, are fetched from PyPI at install time). Get the file onto the Mac
 (AirDrop, mail, USB), install `uv` as in 1, then:
 
 ```
-uv tool install --python 3.13 ~/Downloads/spuza-0.2.0-py3-none-any.whl
+uv tool install --python 3.13 ~/Downloads/spuza-<version>-py3-none-any.whl
 ```
 
 Update: send a new wheel and run the same line with `--force`.
