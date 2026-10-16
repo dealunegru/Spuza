@@ -55,7 +55,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 ## Culling a card
 
 Spuza is built for the first pass over a shoot: hundreds of frames and a handful of keepers.
-When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows) and opens it. To open a folder instead, give its path: `spuza ~/Pictures/trip`.
+When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows) and opens it. To open a folder instead, give its path: `spuza ~/Pictures/trip`. With two cards in (a camera with two slots, say), Spuza lists both, opens the first, and the status bar names the other and how many of its pictures are copies of this card's; `spuza --card 2` opens the second. Pictures are listed in the order the camera took them: by capture time, then by the camera's shot counter on Ricoh, Fujifilm and Nikon bodies, then by name; files without capture data follow, by file date.
 
 <p align="center">
   <img src="docs/img/workbench.png" alt="The workbench: the picture, the filmstrip, the inspector and the marked count" width="900">
@@ -111,7 +111,7 @@ The sheet shows the plan before anything is copied: how many files, how many byt
   <img src="docs/img/copy.png" alt="The copy sheet: destination, the plan, and the Copy button" width="900">
 </p>
 
-- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together.
+- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together. The same goes for a `HIF` beside a raw, and for any other file with the picture's name (an `XMP`, a `THM`, a Live Photo's `MOV`).
 - If a file is already in the folder with identical content, it is skipped.
 - If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
 - Each copy writes a log, `spuza-copy-<date>-<time>.log`, into the destination folder: every file copied, skipped or renamed, and the totals.
@@ -173,11 +173,13 @@ A feature that proves itself moves to classic. How flags are added and promoted 
 
 | Family | Files | Shown as |
 |---|---|---|
-| Raw | Fujifilm `RAF`, `DNG` (cameras and phones) | the full-size JPEG preview embedded in the raw file |
+| Raw | Fujifilm `RAF`, `DNG` (cameras and phones), Sony `ARW`, Nikon `NEF`, `NRW`, Pentax `PEF`, Hasselblad `3FR`, Canon `CR2` | the full-size JPEG preview embedded in the raw file |
+| Raw, via LibRaw's thumbnail | Olympus/OM `ORF`, Panasonic `RW2`, Canon `CR3` | the preview LibRaw extracts (on some Panasonic bodies a 1920 px one) |
 | JPEG | `JPG`, `JPEG` | as is |
-| Other | `PNG`, `GIF`, `BMP`, `TIF`, `TIFF`, `HEIC`, `HEIF` | as is |
+| HEIF | `HIF` (Fujifilm, Canon), `HEIC`, `HEIF` | as is; a `HIF` beside a raw of the same name is one picture with it, like a JPEG |
+| Other | `PNG`, `GIF`, `BMP`, `TIF`, `TIFF` | as is |
 
-Spuza does not list other files.
+Any other file with the same name as a picture (an `XMP`, a `THM`, the `MOV` of a Live Photo) is copied with that picture. Files that are not pictures and belong to none are not copied; the copy sheet counts them and lists them in its tooltip, and it counts files it could not read. Hidden files, system folders and symlinks are skipped without a note.
 
 ## Speed
 
@@ -218,6 +220,7 @@ xattr -dr com.apple.quarantine /Applications/Spuza.app
 | `spuza <folder>` | open a folder |
 | `--advanced`, `--classic` | the mode for this run only |
 | `--ahead N`, `--behind N` | the prefetch window for this run only |
+| `--card N`, `--card <path>` | with two or more cards mounted, open this one (Spuza lists them and opens the first by default) |
 | `--demo <folder> --bench` | open a folder, step through it scripted, print timings, exit |
 | `--version` | print the version |
 | `uv tool upgrade spuza` | update |
@@ -240,7 +243,7 @@ To run the gate from the repository root:
 uv run --project . ruff check --select F src tests && uv run --project . python -m pytest -q
 ```
 
-- **CI** runs the gate on Linux, Windows and macOS 15, and it builds the unsigned `Spuza.app`.
+- **CI** runs the gate on Linux, Windows and macOS 15, and it builds the unsigned `Spuza.app` and a Windows build, `Spuza-windows.zip`.
 - **Releases.** Pushing a tag `vX.Y.Z` publishes a GitHub release. The steps are in [RELEASING.md](RELEASING.md).
 - **README check.** `docs/check_readme.py` runs as part of the test suite. It fails if this README misses a key, flag, command-line option, file format or the current version.
 - **Images.** `uv run python docs/shots.py` makes every image in this README. It drives the real window over `docs/samples`.

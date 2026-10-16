@@ -102,6 +102,17 @@ def _from_exif(ex) -> Exif:
     )
 
 
+UNREAD = object()  # sentinel: "EXIF not read yet" (None already means "read, none found")
+
+
+def from_image(im) -> Exif:
+    """EXIF of an already-open (and, for PNG, already-loaded) image. Never raises."""
+    try:
+        return _from_exif(im.getexif())
+    except Exception:
+        return Exif()
+
+
 def _open_read(src) -> Exif:
     with Image.open(src) as im:
         return _from_exif(im.getexif())
