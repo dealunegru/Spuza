@@ -202,6 +202,8 @@ These numbers have not been measured on a Mac yet. To set the prefetch window fo
 
 Every [release](https://github.com/fungimasters/Spuza/releases/latest) also has `Spuza-macos.zip`. It holds a self-contained `Spuza.app` that CI builds on a macOS runner. Unzip it and drag `Spuza.app` to Applications.
 
+For Windows, the same release has `Spuza-windows.zip`: unzip it and run `Spuza.exe` from the folder (SmartScreen asks once: More info, then Run anyway). `spuza-cli.exe` beside it is the same app with a console, for `--version` and `--bench`.
+
 The app is not code-signed, so macOS blocks the first launch. To allow it:
 
 1. Open **System Settings > Privacy & Security**.
