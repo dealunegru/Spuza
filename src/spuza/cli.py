@@ -147,6 +147,23 @@ def _process_age_ms() -> tuple[float, str]:
     return (time.perf_counter() - _T0) * 1000, "module import"
 
 
+def _set_window_icon(app) -> bool:
+    """Give the app (window, taskbar, dock) the packaged icon. Skips quietly when the file is missing."""
+    from importlib import resources
+
+    from PySide6.QtGui import QIcon, QPixmap
+
+    try:
+        with resources.as_file(resources.files("spuza") / "assets" / "spuza.png") as path:
+            pixmap = QPixmap(str(path))  # read now: the path from as_file may not outlive the block
+    except (OSError, ModuleNotFoundError):
+        return False
+    if pixmap.isNull():
+        return False
+    app.setWindowIcon(QIcon(pixmap))
+    return True
+
+
 def _app():
     from PySide6.QtWidgets import QApplication
 
@@ -154,6 +171,7 @@ def _app():
     if app is None:
         app = QApplication(sys.argv[:1])
     app.setApplicationName("Spuza")
+    _set_window_icon(app)
     from spuza.ui import gcguard
 
     gcguard.install(app)
