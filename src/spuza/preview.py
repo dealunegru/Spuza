@@ -19,9 +19,12 @@ from PIL import Image
 
 from spuza import exif as _exif
 
-RAW_EXTS = {".raf", ".dng"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
-HEIF_EXTS = {".heic", ".heif"}
+# .arw .nef .nrw .pef .3fr: the TIFF walk finds the full JPEG. .cr2 needs the SOF check (_tiff_slice sof_check).
+# .orf .rw2 .cr3 are not plain TIFF: they reach rawpy's extract_thumb. Trap (not fixed): on the Panasonic S5 II
+# rawpy returns the 1920 px JpgFromRaw while a 6000 px JpgFromRaw2 sits in IFD0 (raws.md finding 4).
+RAW_EXTS = {".raf", ".dng", ".arw", ".nef", ".nrw", ".pef", ".3fr", ".cr2", ".orf", ".rw2", ".cr3"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".hif"}
+HEIF_EXTS = {".heic", ".heif", ".hif"}
 
 MAX_IFDS = 64  # cap against cyclic / hostile IFD chains
 MAX_ENTRIES = 4096  # per IFD
@@ -46,7 +49,7 @@ class PreviewError(Exception):
 @dataclass(frozen=True)
 class PreviewInfo:
     path: Path
-    source: str  # raf-embedded | dng-embedded | rawpy-thumb | rawpy-full | pillow | heif
+    source: str  # raf-embedded | dng-embedded | rawpy-thumb | rawpy-full | pillow | heif | hif
     width: int  # native pixel size of the decoded preview (before draft scaling)
     height: int
     nbytes: int  # preview payload bytes read (file size for open formats)
@@ -105,8 +108,40 @@ def _read_ifd(f, bo: str, off: int, size: int):
     return ents, struct.unpack(bo + "I", blob[12 * n:12 * n + 4])[0]
 
 
-def _tiff_slice(f, size: int) -> tuple[bytes, int] | None:
-    """Widest embedded JPEG in a TIFF/DNG plus the IFD0 orientation (0 when absent)."""
+_DCT_SOF = {0xC0, 0xC1, 0xC2}  # baseline, extended, progressive; SOF3 is a lossless raw strip
+
+
+def _is_dct_jpeg(f, off: int, ln: int, size: int) -> bool:
+    """True when the JPEG at off starts a lossy (DCT) frame. Walks marker segments only, capped."""
+    if ln < 4 or off + ln > size:
+        return False
+    f.seek(off)
+    if f.read(2) != b"\xff\xd8":
+        return False
+    pos, end = off + 2, off + ln
+    for _ in range(256):
+        if pos + 4 > end:
+            return False
+        f.seek(pos)
+        b = f.read(4)
+        if len(b) < 4 or b[0] != 0xFF:
+            return False
+        if b[1] == 0xFF:  # fill byte
+            pos += 1
+            continue
+        if b[1] in (0xDA, 0xD9):
+            return False
+        if 0xC0 <= b[1] <= 0xCF and b[1] not in (0xC4, 0xC8, 0xCC):
+            return b[1] in _DCT_SOF
+        pos += 2 + struct.unpack(">H", b[2:4])[0]
+    return False
+
+
+def _tiff_slice(f, size: int, sof_check: bool = False) -> tuple[bytes, int] | None:
+    """Widest embedded JPEG in a TIFF/DNG plus the IFD0 orientation (0 when absent).
+
+    sof_check (CR2): a single JPEG strip without NewSubfileType also counts when its SOF is a DCT frame; the
+    lossless raw strip (SOF3) is refused by marker, so the 160x120 IFD1 thumbnail is never the widest."""
     hdr = f.read(8)
     bo = {b"II": "<", b"MM": ">"}.get(hdr[:2])
     if bo is None or len(hdr) < 8 or struct.unpack(bo + "H", hdr[2:4])[0] != 42:
@@ -138,6 +173,9 @@ def _tiff_slice(f, size: int) -> tuple[bytes, int] | None:
             found.append((w, ents[513][0], ents[514][0]))
         elif comp in (6, 7) and len(ents.get(273, ())) == 1 and ents.get(279) and subtype & 1:
             found.append((w, ents[273][0], ents[279][0]))
+        elif (sof_check and comp in (6, 7) and len(ents.get(273, ())) == 1 and ents.get(279)
+              and _is_dct_jpeg(f, ents[273][0], ents[279][0], size)):
+            found.append((w, ents[273][0], ents[279][0]))
     for _w, off, ln in sorted(found, key=lambda t: (t[0], t[2]), reverse=True):
         if ln < 4 or ln > MAX_PREVIEW_BYTES or off + ln > size:
             continue
@@ -156,7 +194,7 @@ def _slice(path: Path) -> tuple[bytes, str, int] | None:
             if ext == ".raf":
                 data = _raf_slice(f, size)
                 return (data, "raf-embedded", 0) if data else None
-            res = _tiff_slice(f, size)
+            res = _tiff_slice(f, size, sof_check=ext == ".cr2")
             return (res[0], "dng-embedded", res[1]) if res else None
     except (OSError, struct.error, ValueError, OverflowError):
         return None
@@ -213,17 +251,22 @@ def _to_8bit(im: Image.Image) -> Image.Image:
     return Image.fromarray(np.clip((a - lo) * (255.0 / (hi - lo)) + 0.5, 0, 255).astype("uint8"), "L")
 
 
-def _decode(src, max_side: int | None, fallback_orient: int = 0):
-    """Open, draft-scale, load, orient and convert; return (RGB image, native (w, h))."""
+def _decode(src, max_side: int | None, fallback_orient: int = 0, exif_out: list | None = None):
+    """Open, draft-scale, load, orient and convert; return (RGB image, native (w, h)).
+
+    exif_out: when given, the loaded image's EXIF is appended so the caller need not reopen (and, for PNG,
+    decode a second time just to read it)."""
     if isinstance(src, bytes):
         src = io.BytesIO(src)
     try:
         with Image.open(src) as im:
             native = im.size
-            if max_side and max(native) > max_side and im.format == "JPEG":
+            if max_side and max(native) > max_side and im.format in ("JPEG", "MPO"):  # Pillow reports gain-map / Ultra HDR JPEGs as MPO
                 long_ = max(native)
                 im.draft("RGB", (-(-native[0] * max_side // long_), -(-native[1] * max_side // long_)))
             im.load()
+            if exif_out is not None:
+                exif_out.append(_exif.from_image(im))
             out = _to_8bit(_orient(im, fallback_orient)).convert("RGB")
             return out, native
     except Exception as e:
@@ -265,8 +308,9 @@ def load(path, max_side: int | None = 2560):
     except OSError as e:
         raise PreviewError(f"cannot stat {path}: {e}") from e
 
-    def done(im, source, native, nbytes, data=None):
-        ex = _exif.read(data, path)  # fails soft; bytes already in memory first, file header second
+    def done(im, source, native, nbytes, data=None, ex=_exif.UNREAD):
+        if ex is _exif.UNREAD:
+            ex = _exif.read(data, path)  # fails soft; bytes already in memory first, file header second
         fi = _focus(path, source, data) if ext == ".raf" else None
         ms = (time.perf_counter() - t0) * 1000
         return im, PreviewInfo(path, source, native[0], native[1], nbytes, ms, ex, fi)
@@ -306,7 +350,12 @@ def load(path, max_side: int | None = 2560):
         except Exception as e:
             raise PreviewError(f"HEIF support unavailable: {e}") from e
         im, native = _decode(path, max_side)
-        return done(im, "heif", native, fsize)
+        return done(im, "hif" if ext == ".hif" else "heif", native, fsize)
+    if ext == ".png":
+        got: list = []  # PngImageFile.getexif() decodes the whole image; take it from the one decode we did
+        im, native = _decode(path, max_side, exif_out=got)
+        ex = got[0] if got else None
+        return done(im, "pillow", native, fsize, ex=None if ex is None or ex.empty() else ex)
     if ext in IMAGE_EXTS:
         im, native = _decode(path, max_side)
         return done(im, "pillow", native, fsize)
