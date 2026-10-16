@@ -8,6 +8,7 @@ to see the drive root gone. Anywhere else: "Eject is not supported here".
 
 from __future__ import annotations
 
+import ntpath
 import os
 import subprocess
 import sys
@@ -39,7 +40,7 @@ def _try(run, cmd: list[str], timeout: float) -> tuple[bool, str]:
 
 
 def _drive_root(mount: Path) -> str:
-    drive = os.path.splitdrive(str(mount))[0]
+    drive = ntpath.splitdrive(str(mount))[0]  # Windows rules on every host: the test suite runs on Linux and macOS too
     return (drive + "\\") if drive else str(mount)
 
 
