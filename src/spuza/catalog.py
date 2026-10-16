@@ -41,6 +41,8 @@ class Picture:
     kind: str
     size_bytes: int
     mtime: float
+    companions: tuple[Path, ...] = ()  # non-picture files on the same stem (XMP, THM, Live Photo MOV, ...); also in `files`
+    twins: tuple[Path, ...] = ()  # the same files on a second card (dual-slot backup); never copied, only reported
 
 
 def _kind(ext: str, has_sidecar: bool) -> str:
@@ -152,8 +154,10 @@ def find_cards(candidates: Iterable[Path] | None = None) -> list[Path]:
 class Catalog:
     """Pictures plus a cursor and a set of marks. No Qt."""
 
-    def __init__(self, pictures: Iterable[Picture]):
+    def __init__(self, pictures: Iterable[Picture], others: Iterable[Path] = (), unreadable: Iterable[Path] = ()):
         self.pictures: list[Picture] = list(pictures)
+        self.others: list[Path] = list(others)  # files on no picture's stem that are not pictures: counted, reported
+        self.unreadable: list[Path] = list(unreadable)  # entries the scan could not classify (stat failed): reported
         self.index = 0
         self._marks: set[int] = set()
 
