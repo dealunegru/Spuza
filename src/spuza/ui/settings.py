@@ -60,3 +60,27 @@ def window_mb(ahead: int, behind: int, max_side: int = 2560) -> int:
     """About how many MB the cached window holds: ahead + behind + the current picture, each an RGB888
     preview of max_side x (2/3 max_side), so about 13 MB at 2560 px (a 3:2 frame)."""
     return round((ahead + behind + 1) * 2 * max_side * max_side / 1_000_000)
+
+
+# Classic / advanced mode (spuza.features) and the advanced-only decode-thread knob.
+MODE_ADVANCED = "mode/advanced"
+PREFETCH_THREADS = "prefetch/threads"
+DEFAULT_THREADS = 3
+THREADS_RANGE = (1, 8)
+
+
+def read_advanced(s: QSettings) -> bool:
+    return read_bool(s, MODE_ADVANCED, False)
+
+
+def write_advanced(s: QSettings, on: bool) -> None:
+    s.setValue(MODE_ADVANCED, bool(on))
+
+
+def read_threads(s: QSettings) -> int:
+    """The saved decode-thread count, clamped to THREADS_RANGE; DEFAULT_THREADS when unset."""
+    return read_int(s, PREFETCH_THREADS, DEFAULT_THREADS, *THREADS_RANGE)
+
+
+def write_threads(s: QSettings, n: int) -> None:
+    s.setValue(PREFETCH_THREADS, int(n))
