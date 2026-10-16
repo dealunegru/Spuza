@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from spuza import __version__, features
+from spuza.cards import CardError, card_root, describe, list_lines, pair_twins, pick_card
 from spuza.ui.settings import AHEAD_RANGE, BEHIND_RANGE, DEFAULT_THREADS, read_threads, read_window
 
 _T0 = time.perf_counter()  # fallback "process start" when the OS will not tell us
@@ -30,6 +32,9 @@ def _int_in(lo: int, hi: int):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="spuza", description="Fast photo culling for camera cards.")
     p.add_argument("path", nargs="?", help="folder or card to open (default: the first camera card found)")
+    p.add_argument("--card", metavar="N|PATH",
+                   help="with several cards mounted, open this one: its number in the list (1-based) or its path"
+                        " (default: 1)")
     p.add_argument("--demo", metavar="PATH", help="open this folder and print timings to stderr")
     p.add_argument("--bench", action="store_true",
                    help="with --demo: run a scripted session (step all, Z on raws, step back) and exit")
@@ -53,6 +58,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     a = p.parse_args(argv)
     if a.bench and not a.demo:
         p.error("--bench needs --demo PATH")
+    if a.card is not None and (a.demo or a.path):
+        p.error("--card cannot be combined with a path or --demo")
     return a
 
 
@@ -82,6 +89,45 @@ def choose_root(cards: list[Path]) -> Path | None:
 
 def _say(text: str) -> None:
     print(text, file=sys.stderr, flush=True)
+
+
+@dataclass(frozen=True)
+class CardRun:
+    root: Path  # what to open: the chosen card's DCIM
+    cards: tuple[Path, ...]  # every card found, in order
+    chosen: int  # index into cards
+
+
+def resolve_cards(cards: list[Path], spec: str | None, say=_say) -> CardRun | None:
+    """Pick the card to open. Lists every card on stderr when there are several; raises CardError for a bad
+    `--card`. No cards: None (the caller asks for a folder)."""
+    if not cards:
+        if spec is not None:
+            raise CardError(f"--card {spec}: no camera card is mounted")
+        return None
+    chosen = pick_card(cards, spec)
+    if len(cards) > 1:
+        say(f"spuza: {len(cards)} cards found (choose with --card N or --card PATH):")
+        for line in list_lines(cards, chosen):
+            say("  " + line)
+    return CardRun(card_root(cards[chosen]), tuple(Path(c) for c in cards), chosen)
+
+
+def open_card_run(run: CardRun, scan=None):
+    """(Catalog, status note): the chosen card's catalog, dual-slot twins paired from the other card(s)."""
+    from spuza.catalog import Catalog
+    from spuza.catalog import scan as catalog_scan
+
+    scan = scan or catalog_scan
+    pictures = scan(run.root)
+    only_there = 0
+    others = [c for i, c in enumerate(run.cards) if i != run.chosen]
+    for c in others:
+        pictures, left = pair_twins(pictures, scan(card_root(c)))
+        only_there += len(left)
+    twins = sum(1 for p in pictures if p.twins)
+    note = describe(list(run.cards), run.chosen, twins, only_there)
+    return Catalog(pictures), note
 
 
 def _process_age_ms() -> tuple[float, str]:
@@ -121,13 +167,8 @@ def _app():
 
 
 def _pick_root(args) -> Path | None:
-    from spuza.catalog import find_cards
-
     if args.demo or args.path:
         return Path(args.demo or args.path)
-    root = choose_root(find_cards())
-    if root is not None:
-        return root
     from PySide6.QtWidgets import QFileDialog
 
     chosen = QFileDialog.getExistingDirectory(None, "Choose a card or a folder of pictures")
@@ -206,17 +247,31 @@ def main(argv: list[str] | None = None) -> int:
     if root is not None and not root.is_dir():
         _say(f"spuza: not a folder: {root}")
         return 1
+    run = None
+    if root is None:
+        from spuza.catalog import find_cards
+
+        try:
+            run = resolve_cards(find_cards(), args.card)
+        except CardError as e:
+            _say(f"spuza: {e}")
+            return 1
     app = _app()
     from spuza.catalog import Catalog, Prefetcher, scan
     from spuza.ui import theme
     from spuza.ui.window import MainWindow
 
-    if root is None:
-        root = _pick_root(args)
+    note = ""
+    if run is not None:
+        root = run.root
+        catalog, note = open_card_run(run)
+    else:
         if root is None:
-            _say("spuza: no card found and no folder chosen")
-            return 1
-    catalog = Catalog(scan(root))
+            root = _pick_root(args)
+            if root is None:
+                _say("spuza: no card found and no folder chosen")
+                return 1
+        catalog = Catalog(scan(root))
     from spuza.ui.settings import open_settings
 
     prefs = open_settings()
@@ -227,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     extra = {} if threads == DEFAULT_THREADS else {"threads": threads}
     prefetcher = Prefetcher(catalog, ahead=ahead, behind=behind, **extra)
     # a scripted --bench starts at picture 1 and must not read or overwrite a real session
-    window = MainWindow(catalog, prefetcher, root, resume=not args.bench)
+    window = MainWindow(catalog, prefetcher, root, resume=not args.bench, **({"card_note": note} if note else {}))
     if args.bench:
         theme.apply(app, theme.is_dark(app))
     else:

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, Q
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from spuza import features
+from spuza.cards import catalog_note
 from spuza.copy import human_size
 from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
@@ -163,7 +164,8 @@ class MainWindow(QMainWindow):
     peaking_settle_ms = None  # None: the overlay's SETTLE_MS; tests set 0 so no assertion depends on a delay
     step_timed = Signal(int, float)  # picture index, ms from key handled to its pixmap set
 
-    def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None, resume=True):
+    def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None, resume=True,
+                 card_note=""):
         super().__init__(parent)
         self._resume_allowed = bool(resume)  # False for --bench: a scripted run neither reads nor writes sessions
         self.catalog, self.prefetcher, self.root = catalog, prefetcher, Path(root)
@@ -277,6 +279,10 @@ class MainWindow(QMainWindow):
         self.lbl_pos, self.lbl_marked = QLabel(), QLabel()
         sb.addWidget(self.lbl_pos)
         sb.addWidget(self.lbl_marked)
+        # several cards mounted / files the scan set aside: one quiet label, empty (and hidden) when nothing to say
+        self.lbl_cards = QLabel(" · ".join(t for t in (card_note, catalog_note(catalog)) if t))
+        self.lbl_cards.setVisible(bool(self.lbl_cards.text()))
+        sb.addWidget(self.lbl_cards)
         self.advanced_tag = QLabel("ADVANCED")
         self.advanced_tag.setStyleSheet("font-weight: bold; padding: 0 8px;")
         sb.addPermanentWidget(self.advanced_tag)
