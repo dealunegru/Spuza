@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -47,6 +48,15 @@ def list_lines(cards: list[Path], chosen: int) -> list[str]:
             for i, c in enumerate(cards)]
 
 
+def _key(p: Picture) -> tuple[str, int] | None:
+    """Lowercased primary name and the primary file's own size (not `size_bytes`, which counts a sidecar and
+    companions that may exist on one card only). None when the primary cannot be stat'ed: never a twin."""
+    try:
+        return p.primary.name.lower(), os.stat(p.primary).st_size
+    except OSError:
+        return None
+
+
 def pair_twins(first: list[Picture], second: list[Picture]) -> tuple[list[Picture], list[Picture]]:
     """A second-card picture with a first-card picture's primary name (any case) and size is its twin.
 
@@ -54,11 +64,14 @@ def pair_twins(first: list[Picture], second: list[Picture]) -> tuple[list[Pictur
     Each second-card picture pairs at most once."""
     pool: dict[tuple[str, int], list[Picture]] = {}
     for p in second:
-        pool.setdefault((p.primary.name.lower(), p.size_bytes), []).append(p)
+        key = _key(p)
+        if key is not None:
+            pool.setdefault(key, []).append(p)
     taken: set[int] = set()
     paired: list[Picture] = []
     for p in first:
-        cands = pool.get((p.primary.name.lower(), p.size_bytes))
+        key = _key(p)
+        cands = pool.get(key) if key is not None else None
         if cands:
             t = cands.pop(0)
             taken.add(id(t))
@@ -76,7 +89,7 @@ def describe(cards: list[Path], chosen: int, twins: int = 0, only_there: int = 0
     for i, c in others:
         text += f" · {c} also mounted"
         if len(cards) == 2:
-            text += f": {twins} twins, {only_there} only there — spuza --card {i + 1}"
+            text += f": {twins} {'twin' if twins == 1 else 'twins'}, {only_there} only there — spuza --card {i + 1}"
         else:
             text += f" (spuza --card {i + 1})"
     return text

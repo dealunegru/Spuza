@@ -21,42 +21,68 @@ def make_card(root: Path, files: dict[str, int]) -> Path:
     return root
 
 
-def pic(name: str, size: int, folder: str = "/c1") -> Picture:
-    p = Path(folder, name)
-    return Picture(p.stem, p, None, (p,), "JPG", size, 1.0)
+def pic(name: str, size: int, folder: Path, *, real: int | None = None, companions: tuple[Path, ...] = ()) -> Picture:
+    """A Picture whose primary exists on disk with `real` bytes (default `size`); size_bytes is `size`."""
+    p = folder / name
+    folder.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"x" * (size if real is None else real))
+    return Picture(p.stem, p, None, (p,) + companions, "JPG", size, 1.0, companions=companions)
 
 
 # --- pair_twins ---------------------------------------------------------------------------------
 
-def test_twin_same_name_and_size_is_paired_and_never_double_counted():
-    first = [pic("A.JPG", 10), pic("B.JPG", 20)]
-    second = [pic("a.jpg", 10, "/c2"), pic("B.JPG", 99, "/c2"), pic("C.JPG", 5, "/c2")]
+def test_twin_same_name_and_size_is_paired_and_never_double_counted(tmp_path):
+    c1, c2 = tmp_path / "c1", tmp_path / "c2"
+    first = [pic("A.JPG", 10, c1), pic("B.JPG", 20, c1)]
+    second = [pic("a.jpg", 10, c2), pic("B.JPG", 99, c2), pic("C.JPG", 5, c2)]
     paired, left = pair_twins(first, second)
-    assert paired[0].twins == (Path("/c2/a.jpg"),)  # case-insensitive name
+    assert paired[0].twins == (c2 / "a.jpg",)  # case-insensitive name
     assert paired[1].twins == ()  # same name, other size: not a twin
     assert [p.primary.name for p in left] == ["B.JPG", "C.JPG"]
     assert first[0].twins == ()  # inputs are not mutated
 
 
-def test_one_second_card_picture_pairs_once():
-    first = [pic("A.JPG", 10, "/c1/100"), pic("A.JPG", 10, "/c1/101")]
-    paired, left = pair_twins(first, [pic("A.JPG", 10, "/c2")])
+def test_one_second_card_picture_pairs_once(tmp_path):
+    first = [pic("A.JPG", 10, tmp_path / "c1" / "100"), pic("A.JPG", 10, tmp_path / "c1" / "101")]
+    paired, left = pair_twins(first, [pic("A.JPG", 10, tmp_path / "c2")])
     assert sum(1 for p in paired if p.twins) == 1 and left == []
 
 
-def test_twin_carries_the_second_cards_files():
-    p = Path("/c2/A.RAF")
-    j = Path("/c2/A.JPG")
-    second = Picture("A", p, j, (p, j), "RAF+JPG", 30, 1.0)
-    first = Picture("A", Path("/c1/A.RAF"), Path("/c1/A.JPG"), (Path("/c1/A.RAF"), Path("/c1/A.JPG")),
-                    "RAF+JPG", 30, 1.0)
+def test_twin_carries_the_second_cards_files(tmp_path):
+    c1, c2 = tmp_path / "c1", tmp_path / "c2"
+    for d in (c1, c2):
+        d.mkdir()
+        (d / "A.RAF").write_bytes(b"r" * 30)
+        (d / "A.JPG").write_bytes(b"j")
+    second = Picture("A", c2 / "A.RAF", c2 / "A.JPG", (c2 / "A.RAF", c2 / "A.JPG"), "RAF+JPG", 31, 1.0)
+    first = Picture("A", c1 / "A.RAF", c1 / "A.JPG", (c1 / "A.RAF", c1 / "A.JPG"), "RAF+JPG", 31, 1.0)
     paired, _ = pair_twins([first], [second])
-    assert paired[0].twins == (p, j)
+    assert paired[0].twins == (c2 / "A.RAF", c2 / "A.JPG")
 
 
-def test_empty_sides():
-    assert pair_twins([], [pic("A.JPG", 1)])[1][0].primary.name == "A.JPG"
-    assert pair_twins([pic("A.JPG", 1)], []) == ([pic("A.JPG", 1)], [])
+def test_companion_on_one_card_only_still_pairs(tmp_path):
+    c1, c2 = tmp_path / "c1", tmp_path / "c2"
+    c1.mkdir()
+    xmp = c1 / "R1.XMP"
+    xmp.write_bytes(b"<x/>")
+    first = pic("R1.RAF", 104, c1, real=100, companions=(xmp,))  # size_bytes counts the XMP
+    second = pic("R1.RAF", 100, c2)
+    paired, left = pair_twins([first], [second])
+    assert paired[0].twins == (c2 / "R1.RAF",) and left == []
+
+
+def test_unstatable_primary_is_never_a_twin(tmp_path):
+    first = pic("A.JPG", 10, tmp_path / "c1")
+    ghost = Picture("A", tmp_path / "c2" / "A.JPG", None, (tmp_path / "c2" / "A.JPG",), "JPG", 10, 1.0)
+    paired, left = pair_twins([first], [ghost])
+    assert paired[0].twins == () and left == [ghost]
+    assert pair_twins([ghost], [first])[0][0].twins == ()
+
+
+def test_empty_sides(tmp_path):
+    p = pic("A.JPG", 1, tmp_path)
+    assert pair_twins([], [p]) == ([], [p])
+    assert pair_twins([p], []) == ([p], [])
 
 
 # --- choosing a card ----------------------------------------------------------------------------
@@ -129,7 +155,7 @@ def test_open_card_run_pairs_twins_and_counts_only_there(tmp_path):
     twinned = {p.primary.name: p.twins for p in cat.pictures}
     assert twinned["IMG_1.JPG"] == (b / "DCIM" / "100TEST" / "img_1.jpg",)
     assert twinned["IMG_2.JPG"] == () and twinned["IMG_3.JPG"] == ()
-    assert note == f"Card 1 of 2 ({a}) · {b} also mounted: 1 twins, 2 only there — spuza --card 2"
+    assert note == f"Card 1 of 2 ({a}) · {b} also mounted: 1 twin, 2 only there — spuza --card 2"
 
 
 def test_choosing_card_two_opens_it_and_pairs_against_card_one(tmp_path):
@@ -139,6 +165,12 @@ def test_choosing_card_two_opens_it_and_pairs_against_card_one(tmp_path):
     cat, note = cli.open_card_run(run)
     assert [p.primary.parent for p in cat.pictures] == [b / "DCIM" / "100TEST"]
     assert cat.pictures[0].twins and note.startswith(f"Card 2 of 2 ({b})") and note.endswith("spuza --card 1")
+
+
+def test_describe_plural_twins(tmp_path):
+    a, b = tmp_path / "A", tmp_path / "B"
+    assert "0 twins," in describe([a, b], 0, 0, 1) and "2 twins," in describe([a, b], 0, 2, 0)
+    assert "1 twin," in describe([a, b], 0, 1, 0)
 
 
 def test_describe_one_card_is_empty_and_three_cards_name_each_other(tmp_path):
@@ -176,14 +208,14 @@ def test_window_status_line_shows_card_note_and_counts(tmp_path):
     from spuza.ui.window import MainWindow
 
     QApplication.instance() or QApplication([])
-    cat = Catalog([pic("A.JPG", 1)], others=[Path("n.txt")], unreadable=[Path("u")])
-    note = "Card 1 of 2 (E:\\) · F:\\ also mounted: 1 twins, 0 only there — spuza --card 2"
+    cat = Catalog([pic("A.JPG", 1, tmp_path)], others=[Path("n.txt")], unreadable=[Path("u")])
+    note = "Card 1 of 2 (E:\\) · F:\\ also mounted: 1 twin, 0 only there — spuza --card 2"
     w = MainWindow(cat, Prefetcher(cat, loader=lambda p, m: None), tmp_path, card_note=note, resume=False)
     try:
         texts = [lb.text() for lb in w.statusBar().findChildren(QLabel)]
         assert f"{note} · 1 other files · 1 unreadable" in texts
         assert not w.lbl_cards.isHidden()
-        w2 = MainWindow(Catalog([pic("A.JPG", 1)]), Prefetcher(cat, loader=lambda p, m: None), tmp_path,
+        w2 = MainWindow(Catalog([pic("A.JPG", 1, tmp_path)]), Prefetcher(cat, loader=lambda p, m: None), tmp_path,
                         resume=False)
         assert w2.lbl_cards.isHidden() and w2.lbl_cards.text() == ""
         w2.close()
