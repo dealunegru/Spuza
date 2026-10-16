@@ -17,6 +17,8 @@ for pkg in ("rawpy", "pillow_heif"):
 
 # spuza's own dist-info, so importlib.metadata.version("spuza") works inside the bundle.
 datas += copy_metadata("spuza")
+# The runtime window icon (cli._set_window_icon reads spuza/assets/spuza.png via importlib.resources).
+datas += [(str(HERE.parent / "src" / "spuza" / "assets"), "spuza/assets")]
 
 # Spuza only uses QtCore/QtGui/QtWidgets; keep the rest of PySide6 out.
 UNUSED_QT = [
@@ -51,6 +53,7 @@ coll = COLLECT(exe, a.binaries, a.datas, name="Spuza")  # noqa: F821
 app = BUNDLE(  # noqa: F821
     coll,
     name="Spuza.app",
+    icon=str(HERE / "icon" / "spuza.icns"),
     bundle_identifier="com.fungimasters.spuza",
     info_plist={
         "CFBundleName": "Spuza",
