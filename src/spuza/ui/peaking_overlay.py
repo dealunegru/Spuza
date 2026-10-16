@@ -47,7 +47,7 @@ class PeakingOverlay(QObject):
     ready = Signal(int)  # the mask for picture `index` is on screen
     _result = Signal(int, int, object)
 
-    def __init__(self, viewer, threshold: int = 60, half: bool = True, parent=None):
+    def __init__(self, viewer, threshold: int = 60, half: bool = True, parent=None, settle_ms: int | None = None):
         super().__init__(parent)
         self._viewer = viewer
         self._threshold = max(1, min(255, int(threshold)))
@@ -63,7 +63,7 @@ class PeakingOverlay(QObject):
         self._pool.setThreadPriority(QThread.Priority.LowPriority)
         self._settle = QTimer(self)  # the settle delay: fires _start_pending once the picture has stayed
         self._settle.setSingleShot(True)
-        self._settle.setInterval(SETTLE_MS)
+        self._settle.setInterval(SETTLE_MS if settle_ms is None else max(0, int(settle_ms)))
         self._settle.timeout.connect(self._start_pending)
         self._item = QGraphicsPixmapItem(viewer.image_item())
         self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)

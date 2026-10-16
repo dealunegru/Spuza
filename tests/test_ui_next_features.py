@@ -40,7 +40,7 @@ def loader(path, max_side):
     return _BOARD.copy(), info
 
 
-def pump(cond, timeout=5.0):
+def pump(cond, timeout=20.0):  # generous: the bound is never what a passing run depends on
     end = time.monotonic() + timeout
     while not cond() and time.monotonic() < end:
         QTest.qWait(5)
@@ -63,7 +63,8 @@ class SpyPrefetcher(Prefetcher):
 
 
 @pytest.fixture
-def made():
+def made(monkeypatch):
+    monkeypatch.setattr(MainWindow, "peaking_settle_ms", 0)  # no settle delay in tests: wait on state, not time
     wins = []
 
     def make(advanced=False, **kw):
@@ -573,3 +574,49 @@ def test_j_is_next_and_k_is_back_inside_compare(made):
     assert w.compare.focused_index() == 1
     key(w, Qt.Key_K)
     assert w.compare.focused_index() == 0
+
+
+class BusyPrefetcher(SpyPrefetcher):
+    """busy() is under the test's control, so the deferred build is driven by state, not by time."""
+
+    is_busy = True
+
+    def busy(self):
+        return self.is_busy
+
+
+def test_saved_peaking_is_built_only_when_the_prefetch_is_idle(made):
+    s = settings.open_settings()
+    settings.write_peaking_on(s, True)
+    s.sync()
+    features.set_mode(features.ADVANCED)
+    cat = Catalog(pictures())
+    pf = BusyPrefetcher(cat, loader=loader)
+    w = MainWindow(cat, pf, ROOT)
+    w.show()
+    try:
+        pump(lambda: all(pf.cached(i) is not None for i in range(N)))
+        QTest.qWait(50)
+        assert w.peaking is None and w._peaking_wait  # busy: numpy is not imported yet
+        pf.is_busy = False
+        pf.ready.emit(0, pf.cached(0), None)  # the next ready notices it went idle
+        assert w.peaking is not None and w.peaking.is_on() and not w._peaking_wait
+        pump(lambda: w.peaking.mask_for(0) is not None)
+    finally:
+        w.close()
+
+
+def test_a_prefetcher_without_busy_counts_as_idle(made):
+    s = settings.open_settings()
+    settings.write_peaking_on(s, True)
+    s.sync()
+    features.set_mode(features.ADVANCED)
+    cat = Catalog(pictures())
+    pf = SpyPrefetcher(cat, loader=loader)
+    pf.busy = None  # shadows the method: a fake with no usable busy()
+    w = MainWindow(cat, pf, ROOT)
+    w.show()
+    try:
+        pump(lambda: w.peaking is not None and w.peaking.is_on())
+    finally:
+        w.close()

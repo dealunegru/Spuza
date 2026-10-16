@@ -160,6 +160,7 @@ class Sidebar(QWidget):
 
 
 class MainWindow(QMainWindow):
+    peaking_settle_ms = None  # None: the overlay's SETTLE_MS; tests set 0 so no assertion depends on a delay
     step_timed = Signal(int, float)  # picture index, ms from key handled to its pixmap set
 
     def __init__(self, catalog, prefetcher, root, clock=time.monotonic, parent=None, prefs=None, resume=True):
@@ -694,7 +695,8 @@ class MainWindow(QMainWindow):
         if self.peaking is None:
             from spuza.ui.peaking_overlay import PeakingOverlay  # lazy: numpy stays out of classic start-up
 
-            self.peaking = PeakingOverlay(self.viewer, threshold=settings.read_peaking_threshold(self.prefs))
+            self.peaking = PeakingOverlay(self.viewer, threshold=settings.read_peaking_threshold(self.prefs),
+                                          settle_ms=self.peaking_settle_ms)
         return self.peaking
 
     def _ensure_marker(self):
@@ -724,7 +726,8 @@ class MainWindow(QMainWindow):
         self._sync_next_buttons()
 
     def _maybe_build_peaking(self, *_args) -> None:
-        if self._peaking_wait and not getattr(self.prefetcher, "_inflight", None):
+        busy = getattr(self.prefetcher, "busy", None)  # a fake without busy() counts as idle
+        if self._peaking_wait and not (busy() if callable(busy) else False):
             self._build_waiting_peaking()
 
     def _build_waiting_peaking(self) -> None:

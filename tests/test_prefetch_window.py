@@ -99,3 +99,19 @@ def test_set_window_after_shutdown_is_noop(make):
     pf.set_window(3, 3)
     assert (pf.ahead, pf.behind) == (12, 8)
     assert pf._window == (0, 17)
+
+
+def test_busy_is_true_while_decodes_are_pending_and_false_when_idle(make):
+    cat, pf = make(n=20)
+    assert not pf.busy()
+    pf.update(0)
+    assert pf.busy()
+    assert pump(lambda: not pf.busy())
+    assert pf.cached(0) is not None and pf.cached(12) is not None
+
+
+def test_busy_is_false_after_shutdown(make):
+    cat, pf = make(n=20)
+    pf.update(0)
+    pf.shutdown()
+    assert pump(lambda: not pf.busy())
