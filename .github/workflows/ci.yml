@@ -44,10 +44,37 @@ jobs:
           path: dist/Spuza-macos.zip
           if-no-files-found: error
 
+  win:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: uv sync --python 3.13 --group build
+      - name: Build Spuza (PyInstaller, onedir)
+        run: uv run pyinstaller packaging/spuza-windows.spec --noconfirm
+      - name: Smoke the built exe
+        # spuza-cli.exe is the console twin of the windowed Spuza.exe, so --version prints.
+        shell: pwsh
+        run: |
+          dist/Spuza/spuza-cli.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "spuza-cli.exe --version exited $LASTEXITCODE" }
+          $p = Start-Process dist/Spuza/Spuza.exe -ArgumentList '--version' -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "Spuza.exe --version hung" }
+          if ($p.ExitCode -ne 0) { throw "Spuza.exe --version exited $($p.ExitCode)" }
+      - name: Zip the folder
+        shell: pwsh
+        run: Compress-Archive -Path dist/Spuza -DestinationPath dist/Spuza-windows.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Spuza-windows
+          path: dist/Spuza-windows.zip
+          if-no-files-found: error
+
   release:
-    # A tag v* (e.g. v0.1.0) publishes a GitHub release with the wheel and the unsigned .app.
+    # A tag v* (e.g. v0.1.0) publishes a GitHub release with the wheel, the unsigned .app and the Windows zip.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, app]
+    needs: [test, app, win]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -60,9 +87,13 @@ jobs:
         with:
           name: Spuza-macos-unsigned
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: Spuza-windows
+          path: dist
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/Spuza-macos.zip \
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/Spuza-macos.zip dist/Spuza-windows.zip \
             --title "Spuza $GITHUB_REF_NAME" --generate-notes
