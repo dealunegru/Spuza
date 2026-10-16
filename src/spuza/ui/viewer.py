@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout,
                                QLabel, QWidget)
 
+from spuza.reveal import reveal_menu
 from spuza.ui import theme
 
 FULL_CACHE = 3  # full-resolution decodes kept (a 24 MP image is ~70 MB as a pixmap)
@@ -299,6 +300,17 @@ class Viewer(QGraphicsView):
     def _sync_hud(self) -> None:
         self.hud.setVisible(self._full.get(self.index) == "pending" and self.zoomed)
         self._place()
+
+    # -- right-click: reveal the picture in the file manager ----------------------------------------
+    def context_menu_for(self, pos):
+        """The menu for a right-click at `pos`, or None when no picture is on screen."""
+        return None if self.pic is None else reveal_menu(self, self.pic)
+
+    def contextMenuEvent(self, e) -> None:  # noqa: N802
+        menu = self.context_menu_for(e.pos())
+        if menu is not None:
+            menu.exec(e.globalPos())
+            e.accept()
 
     # -- overlays and painting --------------------------------------------------------------------
     def _place(self) -> None:

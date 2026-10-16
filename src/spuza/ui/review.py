@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from spuza.copy import human_size
+from spuza.reveal import reveal_menu
 
 THUMB_SIDE = 480  # decode size for the worker
 CELL = QSize(212, 176)
@@ -168,6 +169,8 @@ class ReviewGrid(QWidget):
         self.view.setItemDelegate(_Delegate(self))
         self.view.doubleClicked.connect(lambda _i: self.show_zoom())
         self.view.installEventFilter(self)
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(lambda pos: self._popup(self.view, pos, False))
 
         self.empty = QLabel("Nothing marked yet")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -177,6 +180,8 @@ class ReviewGrid(QWidget):
         self.zoom_view.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.zoom_view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.zoom_view.installEventFilter(self)
+        self.zoom_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.zoom_view.customContextMenuRequested.connect(lambda pos: self._popup(self.zoom_view, pos, True))
         self._zoom_item: QGraphicsPixmapItem | None = None
         self.zoom_caption = QLabel()
         zoom_page = QWidget()
@@ -362,6 +367,23 @@ class ReviewGrid(QWidget):
         super().resizeEvent(e)
         if self.stack.currentIndex() == PAGE_ZOOM and self._zoom_fit:
             self._apply_zoom()
+
+    # ---- right-click: reveal the picture in the file manager -----------------------------------
+    def context_menu_for(self, pos, zoom: bool = False):
+        """The menu for a right-click at `pos` (in the grid's viewport, or the zoom page), or None."""
+        if zoom:
+            i = self._zoom_index
+        else:
+            ix = self.view.indexAt(pos)
+            i = ix.data(IDX_ROLE) if ix.isValid() else None
+        if i is None:
+            return None
+        return reveal_menu(self, self.catalog.pictures[i])
+
+    def _popup(self, widget, pos, zoom: bool) -> None:
+        menu = self.context_menu_for(pos, zoom)
+        if menu is not None:
+            menu.exec(widget.mapToGlobal(pos))
 
     # ---- keys ----------------------------------------------------------------------------------
     def eventFilter(self, obj, ev) -> bool:  # noqa: N802

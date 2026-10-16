@@ -6,12 +6,12 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QSize, Qt, Si
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListView, QStyledItemDelegate
 
+from spuza.reveal import reveal_menu
 from spuza.ui import theme
 
 CELL_W, CELL_H = 112, 84
 THUMB_W, THUMB_H = 104, 62
 MEMO_MAX = 600  # scaled thumbnails kept; oldest dropped first
-AHEAD_BAND = 12  # how many of the next pictures the decoded-ahead band looks at
 
 
 class _Model(QAbstractListModel):
@@ -60,9 +60,6 @@ class _Delegate(QStyledItemDelegate):
             p.setPen(QPen(QColor(c.accent), 3))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(box.adjusted(1, 1, -1, -1))
-        # decoded-ahead band under the thumbnail
-        if s.is_ready_ahead(i):
-            p.fillRect(QRect(box.x(), box.bottom() + 1, box.width(), 3), QColor(c.green))
         # kind badge
         amber = "only" in pic.kind
         f = QFont(p.font())
@@ -133,15 +130,31 @@ class Filmstrip(QListView):
             del self._memo[next(iter(self._memo))]
         return pm
 
-    def is_ready_ahead(self, i: int) -> bool:
-        return (self.prefetcher is not None and self.current < i <= self.current + AHEAD_BAND
-                and self.prefetcher.cached(i) is not None)
+    # -- right-click: reveal the picture in the file manager ----------------------------------------
+    def context_menu_for(self, pos):
+        """The menu for a right-click at `pos` (viewport coordinates), or None over empty space."""
+        ix = self.indexAt(pos)
+        if not ix.isValid():
+            return None
+        return reveal_menu(self, self.catalog.pictures[ix.row()])
+
+    def contextMenuEvent(self, e) -> None:  # noqa: N802
+        menu = self.context_menu_for(e.pos())
+        if menu is not None:
+            menu.exec(e.globalPos())
+            e.accept()
+
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        if e.button() != Qt.MouseButton.LeftButton:  # QListView emits clicked() for any button
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
 
     # -- updates from the window ------------------------------------------------------------------
     def set_current(self, i: int) -> None:
         old, self.current = self.current, i
         self._model.touch(old, old)
-        self._model.touch(i, i + AHEAD_BAND)
+        self._model.touch(i, i)
         if len(self.catalog):
             self.scrollTo(self._model.index(i), QAbstractItemView.ScrollHint.PositionAtCenter)
 
