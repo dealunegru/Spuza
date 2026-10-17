@@ -31,6 +31,10 @@ REVIEW_TABLE = {
     "sidebar:All": "global", "sidebar:Marked": "global",
     "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
     "prefs": "global", "shortcut:Ctrl+,": "global",
+    # friend round 3: Mark all acts on the whole card from anywhere; the turns act on the grid's selected pictures
+    "markall": "global", "rotl": "grid", "rotr": "grid",
+    "shortcut:Ctrl+A": "global", "shortcut:Ctrl+Shift+A": "global", "shortcut:Ctrl+Z": "global",
+    "shortcut:[": "grid", "shortcut:]": "grid",
     "review:Unmark": "grid", "review:Zoom": "grid",
     # advanced-only (hidden, never absent, in classic): N acts on the grid selection; P and O are global switches
     "compare": "grid", "peaking": "global", "afpoint": "global",

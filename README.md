@@ -69,6 +69,10 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 | `→` or `J` | next picture |
 | `←` or `K` | previous picture |
 | `Space` or `M` | mark or unmark the picture |
+| `Ctrl+A` | **Mark all** (`Cmd+A` on a Mac). The toolbar button reads Mark all, and Unmark all while every picture is marked |
+| `Ctrl+Shift+A` | **Unmark all** (`Cmd+Shift+A` on a Mac) |
+| `Ctrl+Z` | undo the last Mark all or Unmark all (`Cmd+Z` on a Mac): one level, and nothing asks first |
+| `[` or `]` | rotate the picture left or right by a quarter turn (in the review, every selected picture; in compare, the focused one) |
 | `A` | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
 | `Z` | 100% zoom; on a raw file the full decode runs in the background |
 | `F` | full screen, picture only |
@@ -78,6 +82,10 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 | `Cmd-,` (`Ctrl-,` on Windows) | Preferences |
 
 With Move on mark (A) on, unmarking also moves on to the next picture.
+
+Mark all and Unmark all say how many pictures changed in the status line ("Marked 312 (Ctrl+Z undoes)", "Unmarked 312 (Ctrl+Z undoes)") and never ask first. A stray Unmark all costs nothing: `Ctrl+Z` puts back exactly the marks you had before it; if you marked or unmarked pictures by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, and the undo stays until the next Mark all or Unmark all, `U` (start fresh) or closing Spuza. The same button and keys work in the review.
+
+Rotate (`[` and `]`) turns the picture on screen, the filmstrip and the review in quarter turns. Your original is never changed: the turn is written, as the EXIF orientation only, into the copy (see Copying and Preferences).
 Full-bleed shows only the picture; move the mouse to see the strip for a second.
 
 Every key also has a toolbar button with its shortcut printed on it.
@@ -122,6 +130,7 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 - If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
 - With **Copy into raw / soc / ed folders** on (the default), the destination gets a `raw` folder for raw files and a `soc` folder for JPEGs and other picture formats (HIF, HEIF, PNG...). A raw+JPEG pair is split between them, and a picture's XMP or MOV goes with its raw (or with its JPEG when there is no raw). An empty `ed` folder is made too, for your Lightroom exports. The result line says how many files went to `raw` and to `soc`.
 - After a successful copy, **Eject the card after copying** and **Quit Spuza after copying** (both on by default) eject the card you opened and then close Spuza, after a 3 second countdown with a **Stay** button. A failed eject is reported and does not stop the quit. If anything failed or you cancelled, nothing is ejected and Spuza stays open.
+- With **Write rotation to copies (EXIF)** on (the default), a picture you turned with `[` or `]` is copied with its EXIF orientation set to match; only the copy is changed, never the original on the card. Turn it off and the copies keep the camera's orientation.
 - Each copy writes a log, `spuza-copy-<date>-<time>.log`, with every file copied, skipped or renamed, and the totals. The log is kept in Spuza's own app-data folder (`logs`), never in the destination, which receives only your pictures and the three folders.
 
 ## Preferences
@@ -129,7 +138,7 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 `Cmd-,` (`Ctrl-,` on Windows) or the toolbar button opens Preferences:
 
 - **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
-- **Copy into raw / soc / ed folders**, **Eject the card after copying** and **Quit Spuza after copying** (all default on): see Copying.
+- **Copy into raw / soc / ed folders**, **Eject the card after copying**, **Quit Spuza after copying** and **Write rotation to copies (EXIF)** (all default on): see Copying.
 - **Advanced mode**: see below.
 - Advanced mode only:
   - **Decode threads** (1-8, default 3, applied at the next launch).
