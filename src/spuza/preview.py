@@ -57,6 +57,8 @@ class PreviewInfo:
     exif: _exif.Exif | None = None  # basic EXIF read on the worker; None when the file carries none
     focus: object | None = None  # spuza.focus.FocusInfo, read on the worker only while focus_point is on
     native: bool | None = None  # set by load_native(): True = the pixels are the picture's own, False = best effort
+    picture_size: tuple[int, int] | None = None  # the PICTURE's (width, height), set by the prefetch worker; None = unknown
+    picture_source: str | None = None  # where picture_size came from (spuza.picsize documents the values)
 
 
 # ---- container slicing ------------------------------------------------------------------------
