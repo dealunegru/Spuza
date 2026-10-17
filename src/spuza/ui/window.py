@@ -81,6 +81,9 @@ BUTTONS = [
     ("review", "Review", "R", True),
     ("copy", "Copy…", "C", False),
 ]
+# Mark all and the two turns sit on a second classic row: with them on the first, Copy and Preferences fell into
+# the overflow chevron at 1280 px (measured on Windows: the row needs 1421 px, 1070 before them)
+ROW2_BUTTONS = ("markall", "rotl", "rotr")
 # advanced-only controls (each shown only while its flag is on): (name, label, key cap, flag)
 NEXT_BUTTONS = [
     ("compare", "Compare", "N", "compare_view"),
@@ -208,6 +211,7 @@ class MainWindow(QMainWindow):
         self.last_message = ""
         self.rotations: dict[int, int] = {}  # friend round 3: catalog index -> clockwise quarter turns 1..3 (0 omitted)
         self._markall_undo: frozenset[int] | None = None  # the marks before the last Mark all / Unmark all
+        self._markall_after: frozenset[int] = frozenset()  # the marks right after it (to count later changes)
         self.is_bleed = False
         self._forwarding = False
         self._was_maximized = False
@@ -241,6 +245,11 @@ class MainWindow(QMainWindow):
             self.next_buttons[nname] = nb
             self._next_actions[nname] = self.toolbar2.addWidget(nb)
         self.toolbar2.setVisible(False)
+        self.addToolBarBreak()
+        self.toolbar3 = QToolBar("Mark and turn", self)
+        self.toolbar3.setMovable(False)
+        self.toolbar3.setFloatable(False)
+        self.addToolBar(self.toolbar3)
         for name, label, cap, checkable in BUTTONS:
             if name in ("mark", "review"):
                 self.toolbar.addSeparator()
@@ -255,7 +264,7 @@ class MainWindow(QMainWindow):
                 self.toolbar.addWidget(spacer)
             b = KeyButton(name, label, cap, checkable)
             self.buttons[name] = b
-            self.toolbar.addWidget(b)
+            (self.toolbar3 if name in ROW2_BUTTONS else self.toolbar).addWidget(b)
         b = self.buttons
         b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
         b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
@@ -427,6 +436,7 @@ class MainWindow(QMainWindow):
         self._markall_undo = before
         for i in range(n):
             c.set_mark(i, on)
+        self._markall_after = self._marks_set()
         self._marks_changed_everywhere()
         if on:
             self.say(f"Marked {changed} (Ctrl+Z undoes)" if changed == n
@@ -440,10 +450,12 @@ class MainWindow(QMainWindow):
             self.say("Nothing to undo")
             return
         c = self.catalog
+        later = len(self._marks_set() ^ self._markall_after)  # pictures marked or unmarked by hand since the action
         for i in range(len(c)):
             c.set_mark(i, i in prev)
         self._marks_changed_everywhere()
-        self.say(f"Undid Mark all / Unmark all: {len(prev)} marked again")
+        note = f" ({later} later change{'s' if later != 1 else ''} replaced)" if later else ""
+        self.say(f"Undid Mark all / Unmark all: {len(prev)} marked again{note}")
 
     # -- rotation (clockwise quarter turns; a copy writes it into the EXIF of the copy only) --------
     def _rotation_of(self, i: int) -> int:
@@ -587,7 +599,7 @@ class MainWindow(QMainWindow):
             self.buttons["fullscreen"].setChecked(self.is_bleed)  # full-bleed is inert in review
             return
         self.is_bleed = on
-        for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
+        for w in (self.toolbar, self.toolbar3, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
             w.setVisible(not on)
         self.toolbar2.setVisible(not on and self._next_row_wanted())
         self.viewer.set_bleed(on)  # hidden; pointer movement reveals it
@@ -1237,6 +1249,7 @@ class MainWindow(QMainWindow):
             f"#btn_copy {{ background: {c.accent}; color: #ffffff; font-weight: 600; border-color: {c.accent}; }}")
         self.toolbar.setStyleSheet(bar_css)
         self.toolbar2.setStyleSheet(bar_css)
+        self.toolbar3.setStyleSheet(bar_css)
         self.sidebar.retheme()
         self.viewer.retheme()
         self.filmstrip.retheme()

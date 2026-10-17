@@ -83,7 +83,7 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 
 With Move on mark (A) on, unmarking also moves on to the next picture.
 
-Mark all and Unmark all say how many pictures changed ("Marked 312", "Unmarked 312") and never ask first. A stray Unmark all costs nothing: `Ctrl+Z` puts back exactly the marks you had before it. Only the last Mark all or Unmark all can be undone, and the undo stays until the next Mark all or Unmark all, `U` (start fresh) or closing Spuza. The same button and keys work in the review.
+Mark all and Unmark all say how many pictures changed in the status line ("Marked 312 (Ctrl+Z undoes)", "Unmarked 312 (Ctrl+Z undoes)") and never ask first. A stray Unmark all costs nothing: `Ctrl+Z` puts back exactly the marks you had before it; if you marked or unmarked pictures by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, and the undo stays until the next Mark all or Unmark all, `U` (start fresh) or closing Spuza. The same button and keys work in the review.
 
 Rotate (`[` and `]`) turns the picture on screen, the filmstrip and the review in quarter turns. Your original is never changed: the turn is written, as the EXIF orientation only, into the copy (see Copying and Preferences).
 Full-bleed shows only the picture; move the mouse to see the strip for a second.

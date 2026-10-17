@@ -207,6 +207,32 @@ def test_mark_all_button_in_review_refreshes_the_grid(w):
     assert w.review.model.rowCount() == 6 and w.stack.currentIndex() == 1
 
 
+def test_undo_says_when_hand_marks_since_the_action_are_replaced(w):
+    w.mark_all(False)
+    w.catalog.set_mark(0, True)
+    w.catalog.set_mark(2, True)
+    w.undo_mark_all()
+    assert marks(w) == {1, 3, 5} and "(2 later changes replaced)" in w.last_message
+    w.mark_all(False)
+    w.undo_mark_all()
+    assert "later" not in w.last_message
+
+
+def test_every_classic_control_is_reachable_at_the_default_size(w):
+    """No button may fall into the overflow chevron at 1280x800. The first row's width is compared with the same
+    row's width at f98bb04 (a relative check: the offscreen test font is wider than a real one, 1999 px on the
+    base): the new buttons live on their own row, so the first row must not have grown."""
+    w.resize(1280, 800)
+    QTest.qWait(50)
+    first_row = [b for n, b in w.buttons.items() if n not in ("markall", "rotl", "rotr")] + [w.prefs_button]
+    assert all(b.parent() is w.toolbar for b in first_row)
+    assert all(w.buttons[n].parent() is w.toolbar3 for n in ("markall", "rotl", "rotr"))
+    BASE_FIRST_ROW_HINT = 1999  # offscreen sizeHint at f98bb04, measured; real Windows measured 1070
+    assert w.toolbar.sizeHint().width() <= BASE_FIRST_ROW_HINT
+    assert w.toolbar3.sizeHint().width() < w.toolbar.sizeHint().width()
+    assert w.toolbar3.isVisible()
+
+
 # -- rotation ------------------------------------------------------------------------------------------------
 def test_rotate_keys_update_rotations_mod_4_and_notify_every_built_view(w):
     recs = record_views(w)
