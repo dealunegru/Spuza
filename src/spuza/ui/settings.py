@@ -165,3 +165,15 @@ def read_write_rotation(s: QSettings) -> bool:
 
 def write_write_rotation(s: QSettings, on: bool) -> None:
     s.setValue(COPY_ROTATION, bool(on))
+
+
+# Friend round 3: what Z shows on a shot the camera cropped (classic Preferences row; off by default).
+ZOOM_FULL_SENSOR = "zoom/full_sensor"
+
+
+def read_zoom_full_sensor(s: QSettings) -> bool:
+    return read_bool(s, ZOOM_FULL_SENSOR, False)
+
+
+def write_zoom_full_sensor(s: QSettings, on: bool) -> None:
+    s.setValue(ZOOM_FULL_SENSOR, bool(on))

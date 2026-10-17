@@ -294,15 +294,16 @@ def _frame_box(s) -> tuple[int, int, int, int] | None:
     return left, top, cw, ch
 
 
-def _rawpy_full(path: Path, half_size: bool) -> Image.Image:
+def _rawpy_full(path: Path, half_size: bool, crop: bool = True) -> Image.Image:
     """Demosaic with the camera white balance, cropped to the camera's frame (an in-camera crop mode keeps
-    the sensor's margins in the raw; they are never part of the picture)."""
+    the sensor's margins in the raw; they are never part of the picture). crop=False keeps the whole visible
+    sensor (what the crop frame was cut from)."""
     try:
         import rawpy
 
         with rawpy.imread(str(path)) as r:
             arr = r.postprocess(use_camera_wb=True, half_size=half_size)
-            box = _frame_box(r.sizes)
+            box = _frame_box(r.sizes) if crop else None
             flip = int(r.sizes.flip)
             vis = (int(r.sizes.height), int(r.sizes.width))
         if box is not None:
@@ -443,9 +444,35 @@ def needs_full_decode(path, info: PreviewInfo) -> bool:
     return max(info.width, info.height) < 0.6 * max(frame)
 
 
-def full_decode(path, half_size: bool = False) -> Image.Image:
-    """Demosaic a raw with the camera white balance; oriented RGB."""
-    return _rawpy_full(Path(path), half_size)
+def full_decode(path, half_size: bool = False, crop: bool = True) -> Image.Image:
+    """Demosaic a raw with the camera white balance; oriented RGB. crop=False keeps the whole visible sensor."""
+    return _rawpy_full(Path(path), half_size, crop)
+
+
+SENSOR_CROP_FRACTION = 0.97  # a frame at least this much of the sensor in both directions is not "cropped in camera"
+
+
+def sensor_geometry(path) -> tuple[tuple[int, int, int, int], tuple[int, int]] | None:
+    """For a raw the camera cropped in-camera: ((left, top, width, height) of the crop frame, (width, height) of
+    the whole visible sensor), both in the frame rawpy returns. None for a non-raw, an uncropped raw, or when
+    rawpy cannot say (the caller then treats the picture as uncropped)."""
+    path = Path(path)
+    if path.suffix.lower() not in RAW_EXTS:
+        return None
+    try:
+        import rawpy
+
+        with rawpy.imread(str(path)) as r:
+            s = r.sizes
+            box = _frame_box(s)
+            w, h, flip = int(s.width), int(s.height), int(s.flip)
+    except Exception:
+        return None
+    if flip in (5, 6):
+        w, h = h, w
+    if box is None or (box[2] >= SENSOR_CROP_FRACTION * w and box[3] >= SENSOR_CROP_FRACTION * h):
+        return None  # no crop, or only the margin of the sensor that a plain DNG always leaves out
+    return box, (w, h)
 
 
 def is_capped(shown: tuple[int, int], info) -> bool:

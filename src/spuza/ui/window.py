@@ -341,6 +341,8 @@ class MainWindow(QMainWindow):
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
+        self.viewer.zoom_full_sensor = settings.read_zoom_full_sensor(self.prefs)
+        self.viewer.pixmap_changed.connect(self._marker_follows_frame)
         self.viewer.zoom_target = self._zoom_target  # None unless advanced + focus_point: Z centres as shipped
         if features.enabled("resume_session"):
             # restore BEFORE the first prefetch so the first paint is the restored place, and no mark can be made
@@ -530,7 +532,7 @@ class MainWindow(QMainWindow):
         if self.peaking is not None:
             self.peaking.show(i, img)
         if self.marker is not None:
-            self.marker.set_point(self._focus_frac(i) if img is not None else None)
+            self.marker.set_point(self._focus_frac(i) if img is not None and not self.viewer.sensor_shown else None)
 
     def _say_banner(self) -> None:
         if self._banner:
@@ -765,7 +767,8 @@ class MainWindow(QMainWindow):
                           organise=settings.read_organise(self.prefs),
                           eject_after=settings.read_eject_after(self.prefs),
                           quit_after=settings.read_quit_after(self.prefs),
-                          write_rotation=settings.read_write_rotation(self.prefs))
+                          write_rotation=settings.read_write_rotation(self.prefs),
+                          zoom_full_sensor=settings.read_zoom_full_sensor(self.prefs))
 
     def _show_mode(self) -> None:
         adv = features.is_advanced()
@@ -830,14 +833,18 @@ class MainWindow(QMainWindow):
                 remember = r
         for name, write in (("organise", settings.write_organise), ("eject_after", settings.write_eject_after),
                             ("quit_after", settings.write_quit_after),
-                            ("write_rotation", settings.write_write_rotation)):  # classic rows: saved in any mode, if flipped
+                            ("write_rotation", settings.write_write_rotation),
+                            ("zoom_full_sensor", settings.write_zoom_full_sensor)):  # classic rows: saved in any mode, if flipped
             getter = getattr(sheet, name, None)
             if callable(getter):
                 v = bool(getter())
                 if v != getattr(sheet, "seeded_" + {"eject_after": "eject", "quit_after": "quit",
-                                                        "write_rotation": "rotation"}.get(name, name), v):
+                                                        "write_rotation": "rotation", "zoom_full_sensor": "sensor"}.get(name, name), v):
                     write(self.prefs, v)
         self.prefs.sync()
+        sensor = getattr(sheet, "zoom_full_sensor", None)  # classic row: the viewer follows the sheet at once
+        if callable(sensor):
+            self.viewer.set_zoom_full_sensor(bool(sensor()))
         if changed:
             self.set_advanced(adv)
         if peak is not None:
@@ -860,6 +867,14 @@ class MainWindow(QMainWindow):
             return fi.frac() if fi is not None else None
         except Exception:  # noqa: BLE001 - a bad point must never break Z or a step
             return None
+
+    def _marker_follows_frame(self, *_a) -> None:
+        """The AF point is in the camera frame (the preview); over the full-sensor image it would be misplaced,
+        so the ring is hidden there and comes back with the camera frame."""
+        if self.marker is None:
+            return
+        i = self.viewer.index
+        self.marker.set_point(None if self.viewer.sensor_shown else self._focus_frac(i))
 
     def _zoom_target(self):
         return self._focus_frac(self.viewer.index)

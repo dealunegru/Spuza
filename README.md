@@ -139,6 +139,7 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 
 - **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
 - **Copy into raw / soc / ed folders**, **Eject the card after copying**, **Quit Spuza after copying** and **Write rotation to copies (EXIF)** (all default on): see Copying.
+- **Zoom shows the full sensor on cropped shots** (default off). Some cameras can crop a shot as they take it. With the row off, `Z` on such a shot shows the camera's own frame at 100%. With it on, `Z` shows the whole sensor at 100% instead, so you see what was outside the crop, and the label says `100% · full sensor`. The fitted view, the review sheet and compare always show the camera's frame; shots that were not cropped and JPEGs are the same either way.
 - **Advanced mode**: see below.
 - Advanced mode only:
   - **Decode threads** (1-8, default 3, applied at the next launch).
