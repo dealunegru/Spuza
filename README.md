@@ -90,7 +90,7 @@ Rotate (`[` and `]`) turns the picture on screen, the filmstrip and the review i
 Full-bleed shows only the picture; move the mouse to see the strip for a second.
 
 Most keys also have a toolbar button with its shortcut printed on it; Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only, to keep the toolbar on one row.
-The inspector on the right shows the file names and sizes, the preview's size and decode time, aperture, shutter, ISO, focal length and camera.
+The inspector on the right shows the file names and sizes, the picture's own size (from the JPG beside a raw, else the camera's frame), the preview's source, size and decode time, aperture, shutter, ISO, focal length and camera.
 Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 
 **Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only four things: the copies you ask for (and the `raw`, `soc` and `ed` folders they go in), a log of each copy in its own app-data folder (never in your destination), its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
