@@ -325,12 +325,12 @@ class ReviewGrid(QWidget):
             self._loader = load
         return self._loader
 
-    def _native_loader(self) -> Callable:
+    def _native_loader(self, sidecar=None) -> Callable:
         if self._loader is not None:  # an injected loader is called as loader(path, None) for native
             return self._loader
         from spuza.preview import load_native
 
-        return lambda path, _max_side: load_native(path)
+        return lambda path, _max_side: load_native(path, sidecar)
 
     def _pump(self) -> None:
         while self._queue and len(self._inflight) < MAX_INFLIGHT:
@@ -483,7 +483,8 @@ class ReviewGrid(QWidget):
                 self._set_zoom_image(self._native_img[1], native=True)
         elif i not in self._native_loading and i not in self._native_failed:
             self._native_loading.add(i)
-            self._pool.start(_Job(self._sig, self._native_loader(), i, self.catalog.pictures[i].primary, NATIVE))
+            self._pool.start(_Job(self._sig, self._native_loader(self.catalog.pictures[i].sidecar), i,
+                                      self.catalog.pictures[i].primary, NATIVE))
 
     def rotation_changed(self, i: int) -> None:
         """Picture i's rotation changed: repaint its thumbnail; if it is the zoom page's, turn it in place."""

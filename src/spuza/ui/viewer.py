@@ -55,6 +55,20 @@ def _default_native_decode(path):
     return native_preview(path)
 
 
+def _default_sidecar_decode(sidecar):
+    from spuza.preview import sidecar_native
+
+    return sidecar_native(sidecar)[0]  # the JPEG at its own size, oriented; raises PreviewError if unreadable
+
+
+def _jpeg_sidecar(pic):
+    """The picture's .jpg/.jpeg sidecar (a .hif one does not count), else None."""
+    from spuza.preview import is_jpeg_sidecar
+
+    side = getattr(pic, "sidecar", None)
+    return side if is_jpeg_sidecar(side) else None
+
+
 def _is_capped(shown, info) -> bool:
     from spuza.preview import is_capped
 
@@ -69,8 +83,9 @@ def to_qimage(im) -> QImage:
 
 class _FullJob(QRunnable):
     def __init__(self, viewer: Viewer, index: int, path, info, shown: tuple[int, int] = (0, 0),
-                 want_sensor: bool = False):
+                 want_sensor: bool = False, sidecar=None):
         super().__init__()
+        self.sidecar = sidecar  # the picture's JPEG sidecar, if any: its pixels are the picture at 100%
         self.viewer, self.index, self.path, self.info = viewer, index, path, info
         self.want_sensor = want_sensor  # the "full sensor" preference when Z was pressed
         self.shown = shown  # size of the (capped) preview on screen when Z was pressed
@@ -97,6 +112,15 @@ class _FullJob(QRunnable):
                 extra = {"geo": geo, "sensor": geo is not None}
             if geo is not None:  # cropped in camera + the preference: the whole sensor at native pixels
                 qimg = to_qimage(v.sensor_decode(self.path))
+            else:
+                qimg = None
+                if self.sidecar is not None:
+                    try:
+                        qimg = to_qimage(v.sidecar_decode(self.sidecar))
+                    except Exception:  # noqa: BLE001 - an unreadable JPEG falls back to the raw rule
+                        extra = {**(extra or {}), "jpg_bad": True}
+            if qimg is not None:  # the JPEG sidecar: the picture's own pixels, no rawpy
+                pass
             elif v.needs_full_decode(self.path, self.info):
                 qimg = to_qimage(v.full_decode(self.path, False))
             elif _is_capped(self.shown, self.info):
@@ -175,6 +199,8 @@ class Viewer(QGraphicsView):
         self.native_decode = _default_native_decode
         self.sensor_geometry = _default_sensor_geometry  # (crop box, sensor size) of an in-camera-cropped raw, else None
         self.sensor_decode = _default_sensor_decode
+        self.sidecar_decode = _default_sidecar_decode  # JPEG sidecar -> its own pixels (no rawpy)
+        self._jpg_bad: set[str] = set()  # primaries whose JPEG sidecar would not open (Z fell back to the raw)
         self.zoom_full_sensor = False  # the "Zoom shows the full sensor on cropped shots" preference
         self._geo: dict[str, tuple | None] = {}  # path -> geometry (cropped) or None (not), once a worker has looked
         self._shown_sensor = False  # the pixmap on screen is the whole sensor, not the camera's frame
@@ -282,6 +308,8 @@ class Viewer(QGraphicsView):
             return "100% … decoding full resolution…"
         if self._shown_sensor:
             return "100% · full sensor"
+        if self._shown_native and self.pic is not None and str(self.pic.primary) in self._jpg_bad:
+            return "100% · JPG unreadable, from the raw"
         if self._shown_native or st == "skipped":
             return "100%"
         if st == "error":
@@ -471,7 +499,8 @@ class Viewer(QGraphicsView):
             return
         self._full[self.index] = "pending"
         shown = (self._preview.width(), self._preview.height())
-        self.pool.start(_FullJob(self, self.index, self.pic.primary, self.info, shown, self.zoom_full_sensor))
+        self.pool.start(_FullJob(self, self.index, self.pic.primary, self.info, shown, self.zoom_full_sensor,
+                                  _jpeg_sidecar(self.pic)))
 
     def _on_full(self, index: int, path: str, qimg, ms: float, status: str, extra=None) -> None:
         if status == "stale":
@@ -483,6 +512,8 @@ class Viewer(QGraphicsView):
         self._full[index] = "done" if status == "done" else ("skipped" if status == "skipped" else "error")
         if isinstance(extra, dict) and "geo" in extra:
             self._geo[path] = extra["geo"]
+        if isinstance(extra, dict) and extra.get("jpg_bad"):
+            self._jpg_bad.add(path)
         got_sensor = bool(isinstance(extra, dict) and extra.get("sensor"))
         on_screen = index == self.index and self.pic is not None and str(self.pic.primary) == path and self.zoomed
         if status == "done" and qimg is not None:
@@ -513,7 +544,9 @@ class Viewer(QGraphicsView):
         self.hud.setText(self.zoom_text())
         self.hud.adjustSize()
         # a failure stays up while zoomed; so does "full sensor", so it is never mistaken for the camera's frame
-        self.hud.setVisible(self.zoomed and (self._full.get(self.index) in ("pending", "error") or self._shown_sensor))
+        bad_jpg = self.pic is not None and str(self.pic.primary) in self._jpg_bad and self._shown_native
+        self.hud.setVisible(self.zoomed and (self._full.get(self.index) in ("pending", "error") or self._shown_sensor
+                                             or bad_jpg))
         self._place()
 
     # -- right-click: reveal the picture in the file manager ----------------------------------------

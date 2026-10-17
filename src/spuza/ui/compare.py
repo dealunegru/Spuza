@@ -411,13 +411,14 @@ class CompareView(QWidget):
             self._loader = load
         return self._loader
 
-    def _zoom_loader(self) -> Callable:
-        """Loader of the 100% cells: an injected one as it is, else the native-pixel loader."""
+    def _zoom_loader(self, sidecar=None) -> Callable:
+        """Loader of the 100% cells: an injected one as it is, else the native-pixel loader (a JPEG sidecar
+        of the picture is its own pixels)."""
         if self._loader is not None:
             return self._loader
         from spuza.preview import load_native
 
-        return lambda path, _max_side: load_native(path)
+        return lambda path, _max_side: load_native(path, sidecar)
 
     def _reset(self) -> None:
         self._gen += 1  # in-flight decodes now belong to nobody
@@ -458,7 +459,7 @@ class CompareView(QWidget):
         if key in self._pending:
             return
         self._pending.add(key)
-        loader = self._get_loader() if max_side else self._zoom_loader()
+        loader = self._get_loader() if max_side else self._zoom_loader(self.catalog.pictures[i].sidecar)
         self._pool.start(_Job(self._sig, loader, self._gen, i, self.catalog.pictures[i].primary, max_side))
 
     def _on_decoded(self, gen: int, index: int, side: int, img, err: str, native=None) -> None:
