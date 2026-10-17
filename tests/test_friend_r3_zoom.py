@@ -410,3 +410,41 @@ def test_real_dng_z_shows_native_6000_not_the_capped_decode():
     assert v.zoom_text() == "100%"
     v.shutdown()
     v.close()
+
+
+CROP_DNG = Path("E:/tmp/spuza-test/crop/R0045543.DNG")
+
+
+@pytest.mark.skipif(not CROP_DNG.exists(), reason="needs the in-camera-crop DNG")
+def test_real_cropped_dng_zooms_without_rawpy_and_shares_the_framing():
+    capped, info = pv.load(CROP_DNG)
+    assert (info.width, info.height) == (3360, 2240) and pv.frame_size(CROP_DNG) == (3360, 2240)
+    called = []
+    v = viewer()
+    v.full_decode = lambda *a, **k: called.append("rawpy")
+    v.native_decode = lambda *a, **k: called.append("native")
+    v.show_image(0, pic_of(CROP_DNG), to_qimage(capped), info)
+    fitted = v.image_size()
+    v.toggle_zoom()
+    assert pump(lambda: v.full_state(0) == "skipped")
+    assert not called and v.zoom_text() == "100%"
+    assert v.image_size() == (3360, 2240) == fitted
+    pytest.importorskip("rawpy")
+    assert pv.full_decode(CROP_DNG).size == (3360, 2240)  # if rawpy were used it would give the same frame
+    v.shutdown()
+    v.close()
+
+
+def test_failed_decode_stays_visible_while_zoomed(tmp_path):
+    path = make_jpeg(tmp_path / "big.jpg")
+    capped, info = pv.load(path, 1000)
+    v = viewer()
+    v.native_decode = lambda p: (_ for _ in ()).throw(OSError("gone"))
+    v.show_image(0, pic_of(path), to_qimage(capped), info)
+    v.toggle_zoom()
+    assert pump(lambda: v.full_state(0) == "error")
+    assert v.hud_visible and v.hud.text().startswith("preview pixels only")
+    v.toggle_zoom()
+    assert not v.hud_visible
+    v.shutdown()
+    v.close()

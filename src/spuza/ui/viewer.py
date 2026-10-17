@@ -418,7 +418,7 @@ class Viewer(QGraphicsView):
     def _sync_hud(self) -> None:
         self.hud.setText(self.zoom_text())
         self.hud.adjustSize()
-        self.hud.setVisible(self._full.get(self.index) == "pending" and self.zoomed)
+        self.hud.setVisible(self._full.get(self.index) in ("pending", "error") and self.zoomed)  # a failure stays up while zoomed
         self._place()
 
     # -- right-click: reveal the picture in the file manager ----------------------------------------
