@@ -3,11 +3,13 @@
 Contract for the window (wired by spz-nx-wire). The window adds one `CompareView` as a page of its stack and
 calls `open(indices, focus)`; the view owns its keys while shown:
   ← → K J  move focus (K back, J next, as in the window) between cells (never off the set)    Space M  mark/unmark the focused cell
-  Z        the focused cell and its neighbour (two at most: memory) to 100% of each embedded JPEG at the same fractional point; drag pans all
+  Z        the focused cell and its neighbour (two at most: memory) to 100% at the same fractional point: the native pixels
+           (an embedded preview of full size uncapped, a raw with a small preview demosaiced and cropped to its frame); drag pans all
   N        2 -> 3 -> 4 cells when opened on a run from the single view; on 4 (or a grid pick) it closes
   Esc      closes
 Fitted cells show the prefetcher's cached QImages (no decode); a cell outside the cache, and every zoomed cell,
-decodes on the view's own worker pool. Owned by task spz-nx-compare.
+decodes on the view's own worker pool. A cell is shown turned by rotation_of(index) quarter turns, applied to its
+item at display time (its overlay is a child of the item, so a peaking mask turns with it and stays aligned). Owned by task spz-nx-compare.
 
 `open(indices, focus)`: `focus` is a position in `indices` (clamped), not a catalog index. Everything is inert
 unless the flag is on: `open` does nothing in classic mode.
@@ -35,13 +37,14 @@ MAX_CELLS = 4
 ZOOM_CELLS = 2  # cells at 100% at once: four full GR III decodes held +577 MB working set (measured)
 FIT_SIDE = 2560  # decode size of a fitted cell the prefetcher does not hold
 POOL_THREADS = 2
-CAPTION_ZOOMED = "preview 100%"
+CAPTION_ZOOMED = "preview 100%"  # pixels of the preview only (the loader did not say they are native)
+CAPTION_NATIVE = "100%"  # the native pixels of the picture
 CAPTION_LOADING = "decoding…"
 _NO_REPEAT = (Qt.Key.Key_Space, Qt.Key.Key_M, Qt.Key.Key_Z, Qt.Key.Key_N)
 
 
 class _Signals(QObject):
-    done = Signal(int, int, int, object, str)  # generation, catalog index, max_side (0 = full), QImage|None, error
+    done = Signal(int, int, int, object, str, object)  # generation, index, max_side (0 = full), QImage|None, error, native
 
 
 class _Job(QRunnable):
@@ -53,18 +56,19 @@ class _Job(QRunnable):
     def run(self) -> None:
         side = self.max_side or 0
         try:
-            img, _info = self.loader(self.path, self.max_side)
+            img, info = self.loader(self.path, self.max_side)
+            native = getattr(info, "native", None)
             rgb = img.convert("RGB")
             w, h = rgb.size
             q = QImage(rgb.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         except Exception as exc:  # noqa: BLE001 - a bad picture shows a message, never raises on a worker
-            self._emit(side, None, str(exc) or type(exc).__name__)
+            self._emit(side, None, str(exc) or type(exc).__name__, None)
             return
-        self._emit(side, q, "")
+        self._emit(side, q, "", native)
 
-    def _emit(self, side: int, q, err: str) -> None:
+    def _emit(self, side: int, q, err: str, native) -> None:
         try:
-            self.sig.done.emit(self.gen, self.index, side, q, err)
+            self.sig.done.emit(self.gen, self.index, side, q, err, native)
         except RuntimeError:  # the view was destroyed while we decoded
             pass
 
@@ -81,6 +85,7 @@ class _Cell(QGraphicsView):
         self.fit_img: QImage | None = None
         self.zoom_img: QImage | None = None
         self.zoomed = False
+        self.rotation = 0  # clockwise quarter turns, set by the view
         self.native_w = 0  # width of the embedded preview, for upscaling the fitted image meanwhile
         self.centre = (0.5, 0.5)
         self._quiet = False
@@ -134,11 +139,11 @@ class _Cell(QGraphicsView):
             self._put(img)
         self.set_message("")
 
-    def set_zoom_image(self, img: QImage) -> None:
+    def set_zoom_image(self, img: QImage, native=None) -> None:
         self.zoom_img = img
         if self.zoomed:
             self._put(img)
-            self.caption.setText(CAPTION_ZOOMED)
+            self.caption.setText(CAPTION_NATIVE if native is True else CAPTION_ZOOMED)
             self.caption.adjustSize()
             self._place()
 
@@ -146,11 +151,43 @@ class _Cell(QGraphicsView):
         self._quiet = True
         try:
             self.item.setPixmap(QPixmap.fromImage(img))
-            self._scene.setSceneRect(self.item.boundingRect())
+            self._orient()
             self._apply()
         finally:
             self._quiet = False
         self._apply_mask()
+
+    def _orient(self) -> None:
+        """Turn the item by `rotation` quarter turns about its centre; the scene follows its bounds."""
+        pm = self.item.pixmap()
+        self.item.setTransformOriginPoint(pm.width() / 2, pm.height() / 2)
+        self.item.setRotation(90.0 * (self.rotation % 4))
+        self._scene.setSceneRect(self.item.sceneBoundingRect())
+
+    def shown_size(self) -> tuple[int, int] | None:
+        """The picture as shown: width and height swap under an odd number of quarter turns."""
+        pm = self.item.pixmap()
+        if pm.isNull():
+            return None
+        return (pm.height(), pm.width()) if self.rotation % 2 else (pm.width(), pm.height())
+
+    def turn(self, quarters: int) -> None:
+        """Show the picture turned by `quarters`; zoom and the centred point stay."""
+        quarters %= 4
+        if quarters == self.rotation:
+            return
+        frac = self.centre_fraction() if self.zoomed and self.has_image else None
+        self.rotation = quarters
+        if not self.has_image:
+            return
+        self._quiet = True
+        try:
+            self._orient()
+        finally:
+            self._quiet = False
+        if frac is not None:
+            self.centre = frac
+        self._apply()
 
     def _scale(self) -> float:
         dpr = self.devicePixelRatioF()
@@ -209,7 +246,7 @@ class _Cell(QGraphicsView):
     # -- pan --------------------------------------------------------------------------------------
     def centre_fraction(self) -> tuple[float, float]:
         pm = self.item.pixmap()
-        c = self.mapToScene(self.viewport().rect().center())
+        c = self.item.mapFromScene(self.mapToScene(self.viewport().rect().center()))
         return (c.x() / max(1, pm.width()), c.y() / max(1, pm.height()))
 
     def set_centre(self, frac: tuple[float, float]) -> None:
@@ -219,7 +256,7 @@ class _Cell(QGraphicsView):
             return
         was, self._quiet = self._quiet, True
         try:
-            self.centerOn(QPointF(frac[0] * pm.width(), frac[1] * pm.height()))
+            self.centerOn(self.item.mapToScene(QPointF(frac[0] * pm.width(), frac[1] * pm.height())))
         finally:
             self._quiet = was
 
@@ -345,8 +382,17 @@ class CompareView(QWidget):
         self._reset()
         self.closed.emit(idx)
 
+    def _quarters(self, i: int) -> int:
+        try:
+            return int(self.rotation_of(i)) % 4
+        except Exception:  # noqa: BLE001 - a bad rotation provider shows the picture unrotated
+            return 0
+
     def rotation_changed(self, i: int) -> None:
-        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
+        """Picture i's rotation changed: turn its cell if shown, keeping zoom and the centred point."""
+        for c in self._cells:
+            if c.index == i:
+                c.turn(self._quarters(i))
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         self._gen += 1
@@ -365,6 +411,14 @@ class CompareView(QWidget):
             self._loader = load
         return self._loader
 
+    def _zoom_loader(self) -> Callable:
+        """Loader of the 100% cells: an injected one as it is, else the native-pixel loader."""
+        if self._loader is not None:
+            return self._loader
+        from spuza.preview import load_native
+
+        return lambda path, _max_side: load_native(path)
+
     def _reset(self) -> None:
         self._gen += 1  # in-flight decodes now belong to nobody
         self._pool.clear()
@@ -382,6 +436,7 @@ class CompareView(QWidget):
     def _add_cell(self, i: int) -> None:
         pic = self.catalog.pictures[i]
         cell = _Cell(i, pic.stem, self)
+        cell.rotation = self._quarters(i)
         cell.clicked.connect(self._on_clicked)
         cell.panned.connect(self._on_panned)
         self._row.addWidget(cell, 1)
@@ -403,9 +458,10 @@ class CompareView(QWidget):
         if key in self._pending:
             return
         self._pending.add(key)
-        self._pool.start(_Job(self._sig, self._get_loader(), self._gen, i, self.catalog.pictures[i].primary, max_side))
+        loader = self._get_loader() if max_side else self._zoom_loader()
+        self._pool.start(_Job(self._sig, loader, self._gen, i, self.catalog.pictures[i].primary, max_side))
 
-    def _on_decoded(self, gen: int, index: int, side: int, img, err: str) -> None:
+    def _on_decoded(self, gen: int, index: int, side: int, img, err: str, native=None) -> None:
         if gen != self._gen:
             return  # from before the last open/close/unzoom
         self._pending.discard((index, side))
@@ -416,7 +472,7 @@ class CompareView(QWidget):
             if not cell.zoomed:
                 return
             if img is not None and not img.isNull():
-                cell.set_zoom_image(img)
+                cell.set_zoom_image(img, native)
             else:
                 cell.caption.setText("preview failed")
                 cell.caption.adjustSize()

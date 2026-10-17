@@ -4,6 +4,11 @@ Keys: M or Space unmarks the selected picture (Delete is deliberately NOT bound:
 deleted), Z or double-click zooms (Z again toggles fit / 100%), Return/Enter emits ``open_index``,
 Esc leaves zoom, or on the grid emits ``closed``.
 
+Z shows the native pixels: the zoom page opens on the fast ZOOM_SIDE decode (fitted), and going to 100% loads
+the real size on a worker (a plain image or a good embedded preview uncapped, a raw with a small preview
+demosaiced and cropped to its frame) and swaps it in; the caption says "100%" only once those are on screen.
+Pictures are shown turned by rotation_of(i) quarter turns (thumbnails, the zoom page); caches stay unrotated.
+
 Thumbnails come from ``prefetcher.cached(i)`` when it has the picture, else from a small decode on a
 QThreadPool (at most ``MAX_INFLIGHT`` queued at once, 2 threads), cached per index.
 """
@@ -13,7 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QPointF, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QImage, QKeyEvent, QPainter, QPixmap, QStandardItem, QStandardItemModel
+from PySide6.QtGui import (QColor, QImage, QKeyEvent, QPainter, QPixmap, QStandardItem, QStandardItemModel,
+                           QTransform)
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -37,6 +43,7 @@ THUMB_SIDE = 480  # decode size for the worker
 CELL = QSize(212, 176)
 THUMB_BOX = QSize(196, 130)
 ZOOM_SIDE = 2560
+NATIVE = 0  # the "side" of a native-size decode (the loader gets max_side None)
 MAX_INFLIGHT = 8  # decodes queued at once
 AMBER = QColor("#d98a00")
 IDX_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -70,7 +77,7 @@ class _Job(QRunnable):
 
     def run(self) -> None:
         try:
-            img, _info = self.loader(self.path, self.max_side)
+            img, _info = self.loader(self.path, self.max_side or None)
             rgb = img.convert("RGB")
             w, h = rgb.size
             q = QImage(rgb.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888).copy()
@@ -97,7 +104,7 @@ class _Delegate(QStyledItemDelegate):
             p.fillRect(option.rect, pal.highlight())
         text_col = pal.highlightedText().color() if selected else pal.text().color()
         box = QRect(r.x() + (r.width() - THUMB_BOX.width()) // 2, r.y(), THUMB_BOX.width(), THUMB_BOX.height())
-        pm = self.grid._pixmap(index.data(IDX_ROLE))
+        pm = self.grid._shown_pixmap(index.data(IDX_ROLE))
         if pm is None:
             p.fillRect(box, pal.alternateBase())
             p.setPen(pal.placeholderText().color())
@@ -145,6 +152,11 @@ class ReviewGrid(QWidget):
         self._zoom_fit = True
         self._zoom_loading: set[int] = set()  # ZOOM_SIDE decodes in flight
         self._zoom_big: dict[int, QImage] = {}
+        self._native_img: tuple[int, QImage] | None = None  # the one native-size decode held (96 MB at 24 MP)
+        self._native_loading: set[int] = set()
+        self._native_failed: set[int] = set()
+        self._zoom_native = False  # the image in the zoom page is the native pixels
+        self._turned: dict[tuple[int, int], QPixmap] = {}  # (index, quarters) -> rotated thumbnail
 
         self.header = QLabel()
         self.unmark_button = QPushButton("Unmark")
@@ -287,12 +299,38 @@ class ReviewGrid(QWidget):
             return pm
         return None
 
+    def _quarters(self, i) -> int:
+        try:
+            return int(self.rotation_of(i)) % 4
+        except Exception:  # noqa: BLE001 - a bad rotation provider shows the picture unrotated
+            return 0
+
+    def _shown_pixmap(self, i: int) -> QPixmap | None:
+        """The thumbnail as shown: turned by the picture's rotation, fitted back into the thumbnail box."""
+        pm = self._pixmap(i)
+        q = self._quarters(i)
+        if pm is None or q == 0:
+            return pm
+        got = self._turned.get((i, q))
+        if got is None:
+            turned = pm.transformed(QTransform().rotate(90.0 * q), Qt.TransformationMode.SmoothTransformation)
+            got = turned.scaled(THUMB_BOX, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self._turned[(i, q)] = got
+        return got
+
     def _get_loader(self) -> Callable:
         if self._loader is None:
             from spuza.preview import load  # lazy: keeps decoders out of module import
 
             self._loader = load
         return self._loader
+
+    def _native_loader(self) -> Callable:
+        if self._loader is not None:  # an injected loader is called as loader(path, None) for native
+            return self._loader
+        from spuza.preview import load_native
+
+        return lambda path, _max_side: load_native(path)
 
     def _pump(self) -> None:
         while self._queue and len(self._inflight) < MAX_INFLIGHT:
@@ -303,12 +341,23 @@ class ReviewGrid(QWidget):
             self._pool.start(_Job(self._sig, self._get_loader(), i, self.catalog.pictures[i].primary, THUMB_SIDE))
 
     def _on_loaded(self, i: int, img, max_side: int, err: str) -> None:
+        if max_side == NATIVE:
+            self._native_loading.discard(i)
+            if img is None or img.isNull():
+                self._native_failed.add(i)
+            else:
+                self._native_img = (i, img)
+                if self._zoom_index == i and not self._zoom_fit:
+                    self._set_zoom_image(img, native=True)
+            if self._zoom_index == i:
+                self._update_caption()
+            return
         if max_side == ZOOM_SIDE:
             self._zoom_loading.discard(i)
             if img is not None and not img.isNull():
                 self._zoom_big[i] = img
-                if self._zoom_index == i:
-                    self._set_zoom_image(img)
+                if self._zoom_index == i and not (self._zoom_native and not self._zoom_fit):
+                    self._set_zoom_image(img)  # never over the native pixels already on screen
             return
         self._inflight.discard(i)
         if img is None or img.isNull():
@@ -348,12 +397,10 @@ class ReviewGrid(QWidget):
             return
         self._zoom_index, self._zoom_fit = i, True
         self.stack.setCurrentIndex(PAGE_ZOOM)
-        pic = self.catalog.pictures[i]
-        self.zoom_caption.setText(
-            f"{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}"
-            "   (Z: fit / 100%, M: unmark, Esc: back)"
-        )
+        self._update_caption()
         img = self._zoom_big.get(i)
+        if self._native_img is not None and self._native_img[0] != i:
+            self._native_img = None  # one native decode at a time
         if img is None and self.prefetcher is not None:
             img = self.prefetcher.cached(i)
         if img is None:
@@ -364,26 +411,89 @@ class ReviewGrid(QWidget):
         else:  # nothing for this picture yet: do not leave the previous one under the new caption
             self.scene.clear()
             self._zoom_item = None
+            self._zoom_native = False
         if i not in self._zoom_big and i not in self._zoom_loading:
             self._zoom_loading.add(i)
             self._pool.start(_Job(self._sig, self._get_loader(), i, self.catalog.pictures[i].primary, ZOOM_SIDE))
         self.zoom_view.setFocus()
 
-    def _set_zoom_image(self, img: QImage) -> None:
-        self.scene.clear()
-        self._zoom_item = self.scene.addPixmap(QPixmap.fromImage(img))
-        self.scene.setSceneRect(self._zoom_item.boundingRect())
-        self._apply_zoom()
+    def _update_caption(self) -> None:
+        i = self._zoom_index
+        if i is None:
+            return
+        pic = self.catalog.pictures[i]
+        state = ""
+        if not self._zoom_fit:
+            if self._zoom_native:
+                state = " · 100%"
+            elif i in self._native_failed:
+                state = " · preview pixels only (full decode failed)"
+            else:
+                state = " · 100% … decoding full resolution…"
+        self.zoom_caption.setText(
+            f"{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}{state}"
+            "   (Z: fit / 100%, M: unmark, Esc: back)"
+        )
 
-    def _apply_zoom(self) -> None:
+    def _centre_frac(self):
+        """The centre of the zoom page as a fraction of the picture, in its own (unrotated) frame."""
+        if self._zoom_item is None:
+            return None
+        pm = self._zoom_item.pixmap()
+        c = self._zoom_item.mapFromScene(self.zoom_view.mapToScene(self.zoom_view.viewport().rect().center()))
+        return (c.x() / max(1, pm.width()), c.y() / max(1, pm.height()))
+
+    def _orient_item(self) -> None:
+        if self._zoom_item is None:
+            return
+        pm = self._zoom_item.pixmap()
+        self._zoom_item.setTransformOriginPoint(pm.width() / 2, pm.height() / 2)
+        self._zoom_item.setRotation(90.0 * self._quarters(self._zoom_index))
+        self.scene.setSceneRect(self._zoom_item.sceneBoundingRect())
+
+    def _set_zoom_image(self, img: QImage, native: bool = False) -> None:
+        frac = self._centre_frac() if not self._zoom_fit else None  # a swap keeps the centred point
+        self.scene.clear()
+        self._zoom_native = native
+        self._zoom_item = self.scene.addPixmap(QPixmap.fromImage(img))
+        self._orient_item()
+        self._apply_zoom(frac)
+
+    def _apply_zoom(self, frac=None) -> None:
         self.zoom_view.resetTransform()
         if self._zoom_fit and self._zoom_item is not None:
             self.zoom_view.fitInView(self._zoom_item, Qt.AspectRatioMode.KeepAspectRatio)
         elif self._zoom_item is not None:
-            frac = self._focus_frac(self._zoom_index)  # advanced + focus_point: 100% lands on the AF point
+            dpr = self.zoom_view.devicePixelRatioF()
+            if dpr > 1.0:  # 100% means one image pixel per device pixel
+                self.zoom_view.scale(1.0 / dpr, 1.0 / dpr)
+            if frac is None:
+                frac = self._focus_frac(self._zoom_index)  # advanced + focus_point: 100% lands on the AF point
             if frac is not None:
                 pm = self._zoom_item.pixmap()
-                self.zoom_view.centerOn(QPointF(frac[0] * pm.width(), frac[1] * pm.height()))
+                self.zoom_view.centerOn(self._zoom_item.mapToScene(QPointF(frac[0] * pm.width(), frac[1] * pm.height())))
+
+    def _want_native(self) -> None:
+        """Going to 100%: put the native pixels on screen, loading them once if they are not held yet."""
+        i = self._zoom_index
+        if i is None:
+            return
+        if self._native_img is not None and self._native_img[0] == i:
+            if not self._zoom_native:
+                self._set_zoom_image(self._native_img[1], native=True)
+        elif i not in self._native_loading and i not in self._native_failed:
+            self._native_loading.add(i)
+            self._pool.start(_Job(self._sig, self._native_loader(), i, self.catalog.pictures[i].primary, NATIVE))
+
+    def rotation_changed(self, i: int) -> None:
+        """Picture i's rotation changed: repaint its thumbnail; if it is the zoom page's, turn it in place."""
+        for key in [k for k in self._turned if k[0] == i]:
+            del self._turned[key]
+        self.view.viewport().update()
+        if self._zoom_index == i and self._zoom_item is not None:
+            frac = self._centre_frac() if not self._zoom_fit else None
+            self._orient_item()
+            self._apply_zoom(frac)
 
     def _focus_frac(self, i):
         """The picture's AF point as a (fx, fy) fraction, or None (flag off, no info, no usable point)."""
@@ -402,6 +512,9 @@ class ReviewGrid(QWidget):
         else:
             self._zoom_fit = not self._zoom_fit
             self._apply_zoom()
+            if not self._zoom_fit:
+                self._want_native()
+            self._update_caption()
 
     def leave_zoom(self) -> None:
         self._zoom_index = None
@@ -461,9 +574,6 @@ class ReviewGrid(QWidget):
         else:
             return False
         return True
-
-    def rotation_changed(self, i: int) -> None:
-        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         self._queue.clear()
