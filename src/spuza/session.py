@@ -14,11 +14,12 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PRUNE_DAYS = 30
-VERSION = 1
+VERSION = 2  # 2 adds "rotations" beside the marks; a version 1 session (no rotations) still loads
+READ_VERSIONS = (1, 2)
 MAX_BYTES = 8 * 1024 * 1024  # a session bigger than this is not ours (or not sane): ignored
 MTIME_TOLERANCE = 2.0  # seconds; FAT stores mtime in 2 s steps
 ENV_DIR = "SPUZA_SESSIONS_DIR"  # overrides default_dir(); the tests set it so they never touch real app data
@@ -30,6 +31,7 @@ class Restored:
     index: int  # the place, clamped to the catalog
     saved_at: float  # epoch seconds of the save
     dropped: int  # marked pictures that no longer match (gone, resized, re-dated)
+    rotations: dict[int, int] = field(default_factory=dict, hash=False)  # catalog index -> clockwise quarter turns 1..3
 
 
 def default_dir() -> Path:
@@ -81,7 +83,8 @@ class SessionStore:
     def _path(self, key: str) -> Path | None:
         return self.folder / f"{key}.json" if _valid_key(key) else None
 
-    def save(self, key: str, root, pictures, marks, index: int, now: float | None = None) -> None:
+    def save(self, key: str, root, pictures, marks, index: int, now: float | None = None,
+             rotations=None) -> None:
         """Write this card's session atomically. Never raises on I/O (a full disk must not stop a cull)."""
         path = self._path(key)
         if path is None:
@@ -94,9 +97,16 @@ class SessionStore:
                 if 0 <= i < n:
                     p = pictures[i]
                     rows.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime)})
+            turned = []
+            for i in sorted(rotations or {}):
+                t = rotations[i]
+                if isinstance(i, int) and 0 <= i < n and isinstance(t, int) and not isinstance(t, bool) and 1 <= t <= 3:
+                    p = pictures[i]
+                    turned.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime), "turns": t})
             idx = max(0, min(int(index), n - 1)) if n else 0
             doc = {"version": VERSION, "root": str(root), "saved_at": time.time() if now is None else float(now),
-                   "index": idx, "index_name": _rel(root, pictures[idx]) if n else "", "marks": rows}
+                   "index": idx, "index_name": _rel(root, pictures[idx]) if n else "", "marks": rows,
+                   "rotations": turned}
             data = json.dumps(doc, separators=(",", ":")).encode("utf-8", "replace")
             self.folder.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(prefix=key + ".", suffix=".tmp", dir=self.folder)
@@ -122,7 +132,7 @@ class SessionStore:
             doc = json.loads(path.read_bytes())
         except (OSError, ValueError, RecursionError, MemoryError):
             return None
-        if not isinstance(doc, dict) or doc.get("version") != VERSION:
+        if not isinstance(doc, dict) or doc.get("version") not in READ_VERSIONS:
             return None
         return doc
 
@@ -148,6 +158,16 @@ class SessionStore:
                 marks.add(i)
             else:
                 dropped += 1
+        turned = {}
+        for r in doc.get("rotations") if isinstance(doc.get("rotations"), list) else ():
+            try:
+                i, t = by_name.get(r["name"]), r["turns"]
+                if (i is not None and _number(r["size"]) and r["size"] == pictures[i].size_bytes
+                        and _number(r["mtime"]) and abs(r["mtime"] - pictures[i].mtime) <= MTIME_TOLERANCE
+                        and isinstance(t, int) and not isinstance(t, bool) and 1 <= t <= 3):
+                    turned[i] = t
+            except (KeyError, TypeError):
+                pass
         n = len(pictures)
         name, num = doc.get("index_name"), doc.get("index")
         if isinstance(name, str) and name in by_name:
@@ -156,9 +176,9 @@ class SessionStore:
             index = max(0, min(num, n - 1)) if n else 0
         else:
             index = 0
-        if not marks and index == 0:
+        if not marks and not turned and index == 0:
             return None  # nothing worth restoring
-        return Restored(frozenset(marks), index, float(saved_at), dropped)
+        return Restored(frozenset(marks), index, float(saved_at), dropped, turned)
 
     def forget(self, key: str) -> None:
         path = self._path(key)
