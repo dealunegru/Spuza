@@ -285,9 +285,9 @@ class Catalog:
 
 
 class _Job(QRunnable):
-    def __init__(self, owner: Prefetcher, i: int, path: Path):
+    def __init__(self, owner: Prefetcher, i: int, path: Path, pic: Picture | None = None):
         super().__init__()
-        self.owner, self.i, self.path = owner, i, path
+        self.owner, self.i, self.path, self.pic = owner, i, path, pic
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -300,10 +300,18 @@ class _Job(QRunnable):
             rgb = img.convert("RGB")
             w, h = rgb.size
             qimg = QImage(rgb.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+            from spuza import picsize  # worker thread only; never fails the load
+
+            info = picsize.quick_picture_size(self.pic, info)  # Pillow header only: no rawpy before first paint
         except Exception as exc:  # noqa: BLE001 - any decode failure is reported, never raised
             o._done.emit(self.i, None, None, str(exc) or type(exc).__name__, False)
             return
         o._done.emit(self.i, qimg, info, "", False)
+        try:  # the raw's frame needs rawpy (a one-time import): read it AFTER the image is on its way
+            if picsize.needs_frame(info):
+                o._sized.emit(self.i, picsize.with_picture_size(self.pic, info))
+        except Exception:  # noqa: BLE001 - a failed size read never fails a load
+            pass
 
 
 class Prefetcher(QObject):
@@ -311,7 +319,9 @@ class Prefetcher(QObject):
 
     ready = Signal(int, QImage, object)
     failed = Signal(int, str)
+    sized = Signal(int, object)  # (index, info): the picture's size arrived after `ready` (raw frame, read late)
     _done = Signal(int, object, object, str, bool)
+    _sized = Signal(int, object)
 
     def __init__(self, catalog: Catalog, ahead: int = settings.DEFAULT_AHEAD,
                  behind: int = settings.DEFAULT_BEHIND, max_side: int = 2560,
@@ -332,6 +342,7 @@ class Prefetcher(QObject):
         self._closed = False
         self._lock = threading.Lock()
         self._done.connect(self._on_done)
+        self._sized.connect(self._on_sized)
 
     def _loader(self) -> Callable:
         if self._loader_fn is None:
@@ -395,7 +406,7 @@ class Prefetcher(QObject):
         if k in self._cache or k in self._inflight or k in self._failed or self._closed:
             return
         self._inflight.add(k)
-        self.pool.start(_Job(self, k, self.catalog.pictures[k].primary))
+        self.pool.start(_Job(self, k, self.catalog.pictures[k].primary, self.catalog.pictures[k]))
 
     def _on_done(self, i: int, img, info, err: str, skipped: bool) -> None:
         self._inflight.discard(i)
@@ -412,6 +423,12 @@ class Prefetcher(QObject):
             self._cache[i] = img
             self._info[i] = info
             self.ready.emit(i, img, info)
+
+    def _on_sized(self, i: int, info) -> None:
+        if self._closed or i not in self._cache or info is self._info.get(i):
+            return
+        self._info[i] = info
+        self.sized.emit(i, info)
 
     def shutdown(self, timeout_ms: int = 5000) -> None:
         self._closed = True

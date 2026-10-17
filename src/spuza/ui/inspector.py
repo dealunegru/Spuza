@@ -89,8 +89,13 @@ class Inspector(QWidget):
         if reason:
             lines.append(f"Preview failed: {reason}")
         elif info is not None:
-            lines.append(f"Preview: {info.source}")
-            lines.append(f"Size: {info.width} x {info.height}")
+            ps = getattr(info, "picture_size", None)
+            pw, ph = ps if ps else (info.width, info.height)  # unset (injected loader): the decoded size
+            late = ps is None and hasattr(info, "picture_source") and getattr(info, "picture_source") is None
+            lines.append(f"Size: {pw} x {ph}" + (" (preview; picture size still reading)" if late else ""))
+            lines.append(f"Preview: {info.source} {info.width} x {info.height}")
+            if str(getattr(info, "picture_source", None) or "").endswith("sidecar unreadable"):
+                lines.append("JPG beside it unreadable: zoom uses the raw")
             lines.append(f"Decode: {info.ms:.1f} ms")
         else:
             lines.append("Preview: loading...")
