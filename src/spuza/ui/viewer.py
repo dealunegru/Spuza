@@ -37,6 +37,18 @@ def _default_full_decode(path, half_size: bool = False):
     return full_decode(path, half_size)
 
 
+def _default_sensor_geometry(path):
+    from spuza.preview import sensor_geometry
+
+    return sensor_geometry(path)
+
+
+def _default_sensor_decode(path):
+    from spuza.preview import full_decode
+
+    return full_decode(path, False, crop=False)  # the whole visible sensor, not the camera's crop frame
+
+
 def _default_native_decode(path):
     from spuza.preview import native_preview
 
@@ -56,9 +68,11 @@ def to_qimage(im) -> QImage:
 
 
 class _FullJob(QRunnable):
-    def __init__(self, viewer: Viewer, index: int, path, info, shown: tuple[int, int] = (0, 0)):
+    def __init__(self, viewer: Viewer, index: int, path, info, shown: tuple[int, int] = (0, 0),
+                 want_sensor: bool = False):
         super().__init__()
         self.viewer, self.index, self.path, self.info = viewer, index, path, info
+        self.want_sensor = want_sensor  # the "full sensor" preference when Z was pressed
         self.shown = shown  # size of the (capped) preview on screen when Z was pressed
         self.setAutoDelete(True)
 
@@ -70,24 +84,30 @@ class _FullJob(QRunnable):
 
     def run(self) -> None:
         v, t0 = self.viewer, time.perf_counter()
+        extra = None  # what the preference found out about this file (None: it was not asked)
         try:
             if v.index != self.index:  # the user moved on while this waited in the queue
-                self._emit(self.index, str(self.path), None, 0.0, "stale")
+                self._emit(self.index, str(self.path), None, 0.0, "stale", None)
                 return
             if self.info is None:
-                self._emit(self.index, str(self.path), None, 0.0, "skipped")
+                self._emit(self.index, str(self.path), None, 0.0, "skipped", None)
                 return
-            if v.needs_full_decode(self.path, self.info):
+            geo = v.sensor_geometry(self.path) if self.want_sensor else None
+            if self.want_sensor:
+                extra = {"geo": geo, "sensor": geo is not None}
+            if geo is not None:  # cropped in camera + the preference: the whole sensor at native pixels
+                qimg = to_qimage(v.sensor_decode(self.path))
+            elif v.needs_full_decode(self.path, self.info):
                 qimg = to_qimage(v.full_decode(self.path, False))
             elif _is_capped(self.shown, self.info):
                 qimg = to_qimage(v.native_decode(self.path))  # the preview is full size; the screen copy is not
             else:
-                self._emit(self.index, str(self.path), None, 0.0, "skipped")  # the preview on screen is native
+                self._emit(self.index, str(self.path), None, 0.0, "skipped", extra)  # the preview on screen is native
                 return
         except Exception as exc:  # noqa: BLE001 - reported to the HUD, never raised on a worker
-            self._emit(self.index, str(self.path), None, 0.0, str(exc) or type(exc).__name__)
+            self._emit(self.index, str(self.path), None, 0.0, str(exc) or type(exc).__name__, extra)
             return
-        self._emit(self.index, str(self.path), qimg, (time.perf_counter() - t0) * 1000, "done")
+        self._emit(self.index, str(self.path), qimg, (time.perf_counter() - t0) * 1000, "done", extra)
 
 
 class BleedStrip(QFrame):
@@ -145,7 +165,7 @@ class Viewer(QGraphicsView):
     full_skipped = Signal(int)
     full_failed = Signal(int, str)
     pixmap_changed = Signal(int)  # the item's pixmap was replaced (preview, full-res swap, or cleared)
-    _full_result = Signal(int, str, object, float, str)
+    _full_result = Signal(int, str, object, float, str, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -153,6 +173,11 @@ class Viewer(QGraphicsView):
         self.needs_full_decode = _default_needs_full_decode
         self.full_decode = _default_full_decode
         self.native_decode = _default_native_decode
+        self.sensor_geometry = _default_sensor_geometry  # (crop box, sensor size) of an in-camera-cropped raw, else None
+        self.sensor_decode = _default_sensor_decode
+        self.zoom_full_sensor = False  # the "Zoom shows the full sensor on cropped shots" preference
+        self._geo: dict[str, tuple | None] = {}  # path -> geometry (cropped) or None (not), once a worker has looked
+        self._shown_sensor = False  # the pixmap on screen is the whole sensor, not the camera's frame
         self.index = -1
         self.pic = None
         self.info = None
@@ -161,7 +186,7 @@ class Viewer(QGraphicsView):
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
         self._preview: QImage | None = None
-        self._full_cache: OrderedDict[str, QImage] = OrderedDict()
+        self._full_cache: OrderedDict[tuple[str, str], QImage] = OrderedDict()  # (path, "frame" | "sensor")
         self._full: dict[int, str] = {}  # index -> pending | done | skipped | error
         self._shown_native = False  # the pixmap on screen is the native pixels (a full decode)
         self._paint_pending: int | None = None
@@ -255,11 +280,18 @@ class Viewer(QGraphicsView):
         st = self._full.get(self.index)
         if st == "pending":
             return "100% … decoding full resolution…"
+        if self._shown_sensor:
+            return "100% · full sensor"
         if self._shown_native or st == "skipped":
             return "100%"
         if st == "error":
             return "preview pixels only (full decode failed)"
         return "100% …"
+
+    @property
+    def sensor_shown(self) -> bool:
+        """True while the whole sensor (not the camera's frame) is on screen."""
+        return self._shown_sensor
 
     def image_item(self) -> QGraphicsPixmapItem:
         """The picture's item; overlays parent to it so they share its transform."""
@@ -277,6 +309,7 @@ class Viewer(QGraphicsView):
     def _clear(self, index: int, pic) -> None:
         self.index, self.pic, self.info, self._preview = index, pic, None, None
         self._shown_native = False
+        self._shown_sensor = False
         self._item.setPixmap(QPixmap())
         self.pixmap_changed.emit(index)
         self._paint_pending = None
@@ -301,8 +334,9 @@ class Viewer(QGraphicsView):
         self.index, self.pic, self.info, self._preview = index, pic, info, qimg
         self.error_text = ""
         self._set_message("")
-        full = self._full_cache.get(str(pic.primary)) if self.zoomed else None
-        self._put(full if full is not None else qimg, keep_centre=False, native=full is not None)
+        hit = self._cached_full(str(pic.primary)) if self.zoomed else None
+        full, sensor = hit if hit is not None else (None, False)
+        self._put(full if full is not None else qimg, keep_centre=False, native=full is not None, sensor=sensor)
         self._paint_pending = index
         self.shown.emit(index)
         if self.zoomed and full is None:
@@ -322,9 +356,29 @@ class Viewer(QGraphicsView):
         self._item.setRotation(90.0 * self._quarters())
         self._scene.setSceneRect(self._item.sceneBoundingRect())
 
-    def _put(self, qimg: QImage, keep_centre: bool, native: bool = False) -> None:
+    @staticmethod
+    def _map_frac(frac, geo, to_sensor: bool):
+        """A fraction of the camera's frame <-> the same subject as a fraction of the whole sensor."""
+        (left, top, cw, ch), (w, h) = geo
+        if to_sensor:
+            return ((left + frac[0] * cw) / max(1, w), (top + frac[1] * ch) / max(1, h))
+        return (min(1.0, max(0.0, (frac[0] * w - left) / max(1, cw))),
+                min(1.0, max(0.0, (frac[1] * h - top) / max(1, ch))))
+
+    def _put(self, qimg: QImage, keep_centre: bool, native: bool = False, sensor: bool = False) -> None:
         frac = self._centre_frac() if keep_centre and self.has_image else None
+        geo = self._geo.get(str(self.pic.primary)) if self.pic is not None else None
+        if geo is not None and self.zoomed:
+            if frac is not None and sensor != self._shown_sensor:  # the other picture: same subject, other fractions
+                frac = self._map_frac(frac, geo, sensor)
+            elif frac is None and sensor:  # the crop frame centre (or the target point) in the sensor
+                try:
+                    target = self.zoom_target() if self.zoom_target is not None else None
+                except Exception:  # noqa: BLE001 - a bad target must never break Z
+                    target = None
+                frac = self._map_frac(target or (0.5, 0.5), geo, True)
         self._shown_native = native
+        self._shown_sensor = sensor
         self._item.setPixmap(QPixmap.fromImage(qimg))
         self._orient_item()
         self.pixmap_changed.emit(self.index)
@@ -375,13 +429,39 @@ class Viewer(QGraphicsView):
         self._sync_hud()
         self.zoom_changed.emit(self.zoomed)
 
+    def _wanted_variant(self, path: str) -> str:
+        """"frame" (the camera's frame), "sensor" (the whole sensor) or "?" (the preference is on and no worker
+        has yet said whether this file is cropped)."""
+        if not self.zoom_full_sensor:
+            return "frame"
+        if path not in self._geo:
+            return "?"
+        return "frame" if self._geo[path] is None else "sensor"
+
+    def _cached_full(self, path: str):
+        """(image, is_sensor) of the cached full decode that matches the preference, else None."""
+        want = self._wanted_variant(path)
+        full = None if want == "?" else self._full_cache.get((path, want))
+        return None if full is None else (full, want == "sensor")
+
+    def set_zoom_full_sensor(self, on: bool) -> None:
+        """The preference changed: if Z is on, show the variant it now asks for."""
+        on = bool(on)
+        if on == self.zoom_full_sensor:
+            return
+        self.zoom_full_sensor = on
+        if self.zoomed and self.pic is not None and self.has_image:
+            if not self._swap_cached_full():
+                self._request_full()
+            self._sync_hud()
+
     def _swap_cached_full(self) -> bool:
         if self.pic is None:
             return False
-        full = self._full_cache.get(str(self.pic.primary))
-        if full is None:
+        hit = self._cached_full(str(self.pic.primary))
+        if hit is None:
             return False
-        self._put(full, keep_centre=True, native=True)
+        self._put(hit[0], keep_centre=True, native=True, sensor=hit[1])
         return True
 
     def _request_full(self) -> None:
@@ -391,9 +471,9 @@ class Viewer(QGraphicsView):
             return
         self._full[self.index] = "pending"
         shown = (self._preview.width(), self._preview.height())
-        self.pool.start(_FullJob(self, self.index, self.pic.primary, self.info, shown))
+        self.pool.start(_FullJob(self, self.index, self.pic.primary, self.info, shown, self.zoom_full_sensor))
 
-    def _on_full(self, index: int, path: str, qimg, ms: float, status: str) -> None:
+    def _on_full(self, index: int, path: str, qimg, ms: float, status: str, extra=None) -> None:
         if status == "stale":
             self._full.pop(index, None)
             if index == self.index and self.zoomed:  # the user came back before this was processed
@@ -401,15 +481,29 @@ class Viewer(QGraphicsView):
             self._sync_hud()
             return
         self._full[index] = "done" if status == "done" else ("skipped" if status == "skipped" else "error")
+        if isinstance(extra, dict) and "geo" in extra:
+            self._geo[path] = extra["geo"]
+        got_sensor = bool(isinstance(extra, dict) and extra.get("sensor"))
+        on_screen = index == self.index and self.pic is not None and str(self.pic.primary) == path and self.zoomed
         if status == "done" and qimg is not None:
-            self._full_cache[path] = qimg
-            self._full_cache.move_to_end(path)
+            key = (path, "sensor" if got_sensor else "frame")
+            self._full_cache[key] = qimg
+            self._full_cache.move_to_end(key)
             while len(self._full_cache) > FULL_CACHE:
                 self._full_cache.popitem(last=False)
-            if index == self.index and self.pic is not None and str(self.pic.primary) == path and self.zoomed:
-                self._put(qimg, keep_centre=True, native=True)
+            if on_screen and self._wanted_variant(path) == key[1]:
+                self._put(qimg, keep_centre=True, native=True, sensor=got_sensor)
+            elif on_screen:  # the preference changed while this decoded: fetch the variant it asks for now
+                self._full.pop(index, None)
+                if not self._swap_cached_full():
+                    self._request_full()
             self.full_done.emit(index, ms)
         elif status == "skipped":
+            if on_screen and not extra and self.info is not None and self._wanted_variant(path) != "frame":
+                self._full.pop(index, None)  # asked before the preference was on: look again with it
+                self._request_full()
+            elif on_screen and self._shown_sensor and self._preview is not None:  # the preview is the native frame
+                self._put(self._preview, keep_centre=True, native=False, sensor=False)
             self.full_skipped.emit(index)
         else:
             self.full_failed.emit(index, status)
@@ -418,7 +512,8 @@ class Viewer(QGraphicsView):
     def _sync_hud(self) -> None:
         self.hud.setText(self.zoom_text())
         self.hud.adjustSize()
-        self.hud.setVisible(self._full.get(self.index) in ("pending", "error") and self.zoomed)  # a failure stays up while zoomed
+        # a failure stays up while zoomed; so does "full sensor", so it is never mistaken for the camera's frame
+        self.hud.setVisible(self.zoomed and (self._full.get(self.index) in ("pending", "error") or self._shown_sensor))
         self._place()
 
     # -- right-click: reveal the picture in the file manager ----------------------------------------
