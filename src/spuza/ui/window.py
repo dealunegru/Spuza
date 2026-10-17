@@ -301,6 +301,9 @@ class MainWindow(QMainWindow):
 
         prefetcher.ready.connect(self._on_ready)
         prefetcher.failed.connect(self._on_failed)
+        sized = getattr(prefetcher, "sized", None)  # a raw's frame size arrives after its image
+        if sized is not None:
+            sized.connect(self._on_sized)
         self.viewer.shown.connect(self._on_shown)
         self.viewer.zoom_changed.connect(lambda z: self.buttons["zoom"].setChecked(z))
         self.filmstrip.picked.connect(self.go_to)
@@ -553,6 +556,12 @@ class MainWindow(QMainWindow):
             self._render_current()
         else:
             self.refresh_status()
+
+    def _on_sized(self, i: int, info) -> None:
+        """The picture's own size came in late (Prefetcher.sized): refresh the inspector, nothing else."""
+        cat = self.catalog
+        if i == cat.index and 0 <= i < len(cat):
+            self.inspector.set_picture(cat.pictures[i], info, cat.is_marked(i), self.prefetcher.failed_reason(i))
 
     def _on_failed(self, i: int, _reason: str) -> None:
         self.filmstrip.item_changed(i)
