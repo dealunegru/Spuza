@@ -1,6 +1,6 @@
 """The main window: toolbar, sidebar | viewer | inspector, filmstrip, status bar, review page, full-bleed.
 
-Design: 02-bench, with 01-bleed as its full-screen mode. Every key has a visible toolbar button.
+Design: 02-bench, with 01-bleed as its full-screen mode. Most keys have a toolbar button; Mark all, Unmark all, undo and the turns ([ ]) are keys only.
 The review grid and the copy sheet are built lazily through `review_factory` / `copy_sheet_factory`
 so they are only imported when used (and tests can inject fakes).
 
@@ -400,10 +400,6 @@ class MainWindow(QMainWindow):
         if self._compare_shown():
             self._sync_compare()
         self.refresh_marks()
-
-    def toggle_mark_all(self) -> None:
-        """The control-bar button: Mark all, or Unmark all while every picture is already marked."""
-        self.mark_all(not self._all_marked())
 
     def mark_all(self, on: bool) -> None:
         """Mark (or unmark) every picture, never asking first. The marks from before are kept for ONE Ctrl+Z; the
