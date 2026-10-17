@@ -1,6 +1,6 @@
 [project]
 name = "spuza"
-version = "0.6.0"
+version = "0.7.0"
 description = "Fast photo culling: step through a card, mark, review, copy the marked pictures."
 readme = "README.md"
 license = "MIT"
