@@ -406,7 +406,7 @@ def _run(sheet):
     done = []
     sheet.finished.connect(done.append)
     sheet.copy_button.click()
-    assert wait_for(lambda: done)
+    assert wait_for(lambda: done, timeout=30.0)  # CI's Windows runner is slow; the copy itself is tiny
     assert sheet.wait_idle()
     return done[0]
 

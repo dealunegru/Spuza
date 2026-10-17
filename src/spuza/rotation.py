@@ -14,6 +14,7 @@ bytes except for the patched bytes. Any doubt, and the copy is put back to the s
 
 from __future__ import annotations
 
+import functools
 import io
 import os
 import shutil
@@ -343,7 +344,10 @@ def describe(exc: BaseException) -> str:
     return str(exc) if isinstance(exc, _Doubt) else f"{type(exc).__name__}: {exc}"
 
 
+@functools.lru_cache(maxsize=1)
 def _which_exiftool() -> str | None:
+    # once per process: on Windows which() is hundreds of os.access calls, and a copy thread making them
+    # while the UI thread spins was measured at 7 s (CI windows-latest failed its 10 s wait); alone it is 20 ms
     return shutil.which("exiftool")
 
 
