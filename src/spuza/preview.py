@@ -57,6 +57,8 @@ class PreviewInfo:
     exif: _exif.Exif | None = None  # basic EXIF read on the worker; None when the file carries none
     focus: object | None = None  # spuza.focus.FocusInfo, read on the worker only while focus_point is on
     native: bool | None = None  # set by load_native(): True = the pixels are the picture's own, False = best effort
+    picture_size: tuple[int, int] | None = None  # the PICTURE's (width, height), set by the prefetch worker; None = unknown
+    picture_source: str | None = None  # where picture_size came from (spuza.picsize documents the values)
 
 
 # ---- container slicing ------------------------------------------------------------------------
@@ -491,13 +493,53 @@ def native_preview(path) -> Image.Image:
     return load(path, None)[0]
 
 
-def load_native(path):
+JPEG_SIDECAR_EXTS = (".jpg", ".jpeg")  # a .hif sidecar is not the picture's own pixels for Z
+
+
+def is_jpeg_sidecar(sidecar) -> bool:
+    """True when `sidecar` names a .jpg/.jpeg file (the only sidecar kind Z treats as the picture's pixels)."""
+    try:
+        return sidecar is not None and Path(sidecar).suffix.lower() in JPEG_SIDECAR_EXTS
+    except TypeError:
+        return False
+
+
+def sidecar_native(sidecar):
+    """(RGB image, PreviewInfo) of a JPEG sidecar at its native size, EXIF orientation applied.
+
+    Raises PreviewError when it is not a JPEG sidecar or does not open or decode."""
+    sidecar = Path(sidecar)
+    if not is_jpeg_sidecar(sidecar):
+        raise PreviewError(f"not a JPEG sidecar: {sidecar.name}")
+    t0 = time.perf_counter()
+    try:
+        nbytes = sidecar.stat().st_size
+    except OSError as e:
+        raise PreviewError(f"cannot stat {sidecar}: {e}") from e
+    got: list = []
+    im, _native = _decode(sidecar, None, exif_out=got)
+    ex = got[0] if got else None
+    ex = None if ex is None or ex.empty() else ex
+    info = PreviewInfo(sidecar, "jpeg-sidecar", im.size[0], im.size[1], nbytes,
+                       (time.perf_counter() - t0) * 1000, ex, None, True)
+    return im, info
+
+
+def load_native(path, sidecar=None):
     """(RGB image, PreviewInfo) at the picture's native pixels, for Z.
 
-    A plain image, or a raw whose embedded preview is at least 0.6 of the sensor, is decoded at the preview's
-    native size; a raw with a smaller preview is demosaiced. If the demosaic fails the preview comes back with
+    A JPEG `sidecar` that opens is the picture's own pixels: it comes back at its native size (info.source
+    "jpeg-sidecar") and the raw is not touched. Without one (or when it does not open) the rule is: a plain
+    image, or a raw whose embedded preview is at least 0.6 of the frame, is decoded at the preview's native
+    size; a raw with a smaller preview is demosaiced. If the demosaic fails the preview comes back with
     info.native False, so the caller can say it is not the real pixels."""
     path = Path(path)
+    if sidecar is not None and is_jpeg_sidecar(sidecar):
+        try:
+            im, info = sidecar_native(sidecar)
+            return im, replace(info, path=path)
+        except PreviewError:
+            pass  # unreadable sidecar: today's rule
     im, info = load(path, None)
     if path.suffix.lower() in RAW_EXTS and needs_full_decode(path, info):
         try:
