@@ -70,12 +70,12 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 | `→` or `J` | next picture |
 | `←` or `K` | previous picture |
 | `Space` or `M` | mark or unmark the picture |
-| `Ctrl+A` | **Mark all** (`Cmd+A` on a Mac). The toolbar button reads Mark all, and Unmark all while every picture is marked |
+| `Ctrl+A` | **Mark all** (`Cmd+A` on a Mac). Keys only: there is no toolbar button |
 | `Ctrl+Shift+A` | **Unmark all** (`Cmd+Shift+A` on a Mac) |
 | `Ctrl+Z` | undo the last Mark all or Unmark all (`Cmd+Z` on a Mac): one level, and nothing asks first |
 | `[` or `]` | rotate the picture left or right by a quarter turn (in the review, every selected picture; in compare, the focused one) |
 | `A` | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
-| `Z` | 100% zoom; on a raw file the full decode runs in the background |
+| `Z` | 100% zoom. A raw shot with a JPG beside it shows the JPG's own pixels; a raw alone is decoded in full in the background |
 | `F` | full screen, picture only |
 | `Esc` | leave full screen or the review |
 | `R` | review the marked pictures |
@@ -84,12 +84,12 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 
 With Move on mark (A) on, unmarking also moves on to the next picture.
 
-Mark all and Unmark all say how many pictures changed in the status line ("Marked 312 (Ctrl+Z undoes)", "Unmarked 312 (Ctrl+Z undoes)") and never ask first. A stray Unmark all costs nothing: `Ctrl+Z` puts back exactly the marks you had before it; if you marked or unmarked pictures by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, and the undo stays until the next Mark all or Unmark all, `U` (start fresh) or closing Spuza. The same button and keys work in the review.
+Mark all and Unmark all say how many pictures changed in the status line ("Marked 312 (Ctrl+Z undoes)", "Unmarked 312 (Ctrl+Z undoes)") and never ask first. A stray Unmark all costs nothing: `Ctrl+Z` puts back exactly the marks you had before it; if you marked or unmarked pictures by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, and the undo stays until the next Mark all or Unmark all, `U` (start fresh) or closing Spuza. The same keys work in the review.
 
 Rotate (`[` and `]`) turns the picture on screen, the filmstrip and the review in quarter turns. Your original is never changed: the turn is written, as the EXIF orientation only, into the copy (see Copying and Preferences).
 Full-bleed shows only the picture; move the mouse to see the strip for a second.
 
-Every key also has a toolbar button with its shortcut printed on it.
+Most keys also have a toolbar button with its shortcut printed on it; Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only, to keep the toolbar on one row.
 The inspector on the right shows the file names and sizes, the preview's size and decode time, aperture, shutter, ISO, focal length and camera.
 Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 

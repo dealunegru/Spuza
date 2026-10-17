@@ -70,8 +70,9 @@ def marks(win):
     return {i for i in range(len(win.catalog)) if win.catalog.is_marked(i)}
 
 
-def label(win):
-    return win.buttons["markall"].label
+def click_mark_all(win):
+    """Mark all has no button since round 4: Ctrl+A marks everything, Ctrl+Shift+A unmarks it."""
+    QTest.keyClick(win, Qt.Key_A, CTRL_SHIFT if win.catalog.marked_count == len(win.catalog) else CTRL)
 
 
 class Recorder:
@@ -93,14 +94,13 @@ def record_views(win):
 
 
 # -- mark all / unmark all ---------------------------------------------------------------------------------
-def test_mark_all_marks_everything_and_the_label_flips(w):
-    assert label(w) == "Mark all"
-    w.buttons["markall"].click()
-    assert marks(w) == set(range(6)) and label(w) == "Unmark all"
+def test_mark_all_marks_everything_and_unmark_all_clears_it(w):
+    click_mark_all(w)
+    assert marks(w) == set(range(6))
     assert w.last_message.startswith("Marked 3 more, 6 in all")  # 3 were marked already: the count that changed
     assert w.sidebar.counts()["Marked"] == 6
-    w.buttons["markall"].click()
-    assert marks(w) == set() and label(w) == "Mark all"
+    click_mark_all(w)
+    assert marks(w) == set()
     assert w.last_message.startswith("Unmarked 6")
 
 
@@ -135,7 +135,7 @@ def test_undo_after_mark_all_and_nothing_to_undo_at_start(w):
     assert w.last_message == "Nothing to undo"
     w.mark_all(True)
     w.undo_mark_all()
-    assert marks(w) == {1, 3, 5} and label(w) == "Mark all"
+    assert marks(w) == {1, 3, 5}
 
 
 def test_a_second_mark_all_replaces_the_snapshot(w):
@@ -152,17 +152,6 @@ def test_start_fresh_drops_the_undo_snapshot(w):
     assert w.last_message == "Nothing to undo"
 
 
-def test_label_follows_a_manual_mark_that_completes_or_breaks_all(w):
-    for i in (0, 2, 4):
-        w.catalog.set_mark(i, True)
-    w.refresh_marks()
-    assert label(w) == "Unmark all"
-    w.toggle_mark()  # picture 0 off
-    assert label(w) == "Mark all"
-    w.toggle_mark()
-    assert label(w) == "Unmark all"
-
-
 def test_no_op_cases_say_so_and_keep_the_snapshot(w):
     w.mark_all(True)
     w.mark_all(True)
@@ -175,7 +164,7 @@ def test_empty_catalog_does_not_throw():
     win = make_window(n=0, marked=())
     try:
         win.mark_all(True)
-        assert win.last_message == "No pictures to mark" and label(win) == "Mark all"
+        assert win.last_message == "No pictures to mark"
         win.rotate(1)
         assert win.rotations == {}
         QTest.keyClick(win, Qt.Key_Z, CTRL)
@@ -188,7 +177,6 @@ def test_ctrl_a_works_with_the_review_grid_shown(w):
     assert w.stack.currentIndex() == 1
     QTest.keyClick(w.review.view, Qt.Key_A, CTRL)
     assert marks(w) == set(range(6)) and w.review.model.rowCount() == 6  # the grid lists the newly marked ones
-    assert label(w) == "Unmark all"
     QTest.keyClick(w.review.view, Qt.Key_A, CTRL_SHIFT)
     assert marks(w) == set() and w.review.model.rowCount() == 0
     QTest.keyClick(w.review.view, Qt.Key_Z, CTRL)  # Ctrl+Z is the window's undo, not the grid's Z (zoom)
@@ -201,9 +189,9 @@ def test_ctrl_a_in_the_multi_select_grid_marks_rather_than_selects(wa):
     assert marks(wa) == set(range(6))
 
 
-def test_mark_all_button_in_review_refreshes_the_grid(w):
+def test_mark_all_key_in_review_refreshes_the_grid(w):
     w.buttons["review"].click()
-    w.buttons["markall"].click()
+    click_mark_all(w)
     assert w.review.model.rowCount() == 6 and w.stack.currentIndex() == 1
 
 
@@ -218,19 +206,12 @@ def test_undo_says_when_hand_marks_since_the_action_are_replaced(w):
     assert "later" not in w.last_message
 
 
-def test_every_classic_control_is_reachable_at_the_default_size(w):
-    """No button may fall into the overflow chevron at 1280x800. The first row's width is compared with the same
-    row's width at f98bb04 (a relative check: the offscreen test font is wider than a real one, 1999 px on the
-    base): the new buttons live on their own row, so the first row must not have grown."""
-    w.resize(1280, 800)
-    QTest.qWait(50)
-    first_row = [b for n, b in w.buttons.items() if n not in ("markall", "rotl", "rotr")] + [w.prefs_button]
-    assert all(b.parent() is w.toolbar for b in first_row)
-    assert all(w.buttons[n].parent() is w.toolbar3 for n in ("markall", "rotl", "rotr"))
-    BASE_FIRST_ROW_HINT = 1999  # offscreen sizeHint at f98bb04, measured; real Windows measured 1070
-    assert w.toolbar.sizeHint().width() <= BASE_FIRST_ROW_HINT
-    assert w.toolbar3.sizeHint().width() < w.toolbar.sizeHint().width()
-    assert w.toolbar3.isVisible()
+def test_every_classic_control_is_on_the_one_classic_row(w):
+    """Round 4 put Mark all and the turns back on row 1 (the second row is gone); the measured width rule lives in
+    test_friend_r4_toolbar.py and scripts on the real platform."""
+    row = list(w.buttons.values()) + [w.prefs_button]
+    assert all(b.parent() is w.toolbar for b in row)
+    assert not hasattr(w, "toolbar3") and not {"markall", "rotl", "rotr"} & set(w.buttons)
 
 
 # -- rotation ------------------------------------------------------------------------------------------------
@@ -249,15 +230,14 @@ def test_rotate_keys_update_rotations_mod_4_and_notify_every_built_view(w):
     assert recs["viewer"].calls == [0] * 5 and recs["filmstrip"].calls == [0] * 5
 
 
-def test_rotate_buttons_and_the_views_read_the_window_dict(w):
+def test_rotate_keys_and_the_views_read_the_window_dict(w):
     w.step(1)
-    w.buttons["rotr"].click()
-    w.buttons["rotl"].click()
-    w.buttons["rotl"].click()
+    QTest.keyClick(w, Qt.Key_BracketRight)
+    QTest.keyClick(w, Qt.Key_BracketLeft)
+    QTest.keyClick(w, Qt.Key_BracketLeft)
     assert w.rotations == {1: 3}
     for v in (w.viewer, w.filmstrip):
         assert v.rotation_of(1) == 3 and v.rotation_of(0) == 0
-    assert (w.buttons["rotl"].cap, w.buttons["rotr"].cap) == ("[", "]")
 
 
 def test_rotate_in_review_turns_the_selected_pictures(wa):
@@ -272,7 +252,7 @@ def test_rotate_in_review_turns_the_selected_pictures(wa):
 
 def test_rotate_in_classic_review_turns_the_one_selected_picture(w):
     w.buttons["review"].click()
-    w.buttons["rotl"].click()
+    QTest.keyClick(w, Qt.Key_BracketLeft)
     assert w.rotations == {1: 3} and w.catalog.index == 0
 
 

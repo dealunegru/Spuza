@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from spuza.catalog import Catalog, Picture, Prefetcher
 from spuza.preview import PreviewInfo
-from spuza.ui.window import MARK_ALL_CAP, MainWindow, default_copy_dest
+from spuza.ui.window import MainWindow, default_copy_dest
 
 # A QApplication must exist before any other test file's fixture makes a bare QGuiApplication
 # (test_catalog does, and then widgets abort). Collection imports this module first, so create it here.
@@ -107,8 +107,7 @@ def test_keys_move_index_and_status(win):
 def test_toolbar_has_every_key_with_its_cap(win):
     caps = {n: b.cap for n, b in win.buttons.items()}
     assert caps == {"back": "←/K", "next": "→/J", "mark": "Space/M", "advance": "A", "zoom": "Z",
-                    "fullscreen": "F", "review": "R", "copy": "C",
-                    "markall": MARK_ALL_CAP, "rotl": "[", "rotr": "]"}
+                    "fullscreen": "F", "review": "R", "copy": "C"}
     assert win.buttons["zoom"].text().startswith("Zoom 100%")
     for b in win.buttons.values():
         assert b.cap in b.text()

@@ -65,25 +65,19 @@ def default_copy_dest() -> Path:
 _NOT_IN_REVIEW = object()
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
                        Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
-# (name, label, key cap shown on the button, checkable)
+# (name, label, key cap shown on the button, checkable). Mark all and the turns have no buttons (round 4: they
+# did not fit the one classic row at 1280 px); Ctrl+A, Ctrl+Shift+A, Ctrl+Z, [ and ] are window shortcuts only.
 PREFS_CAP = "⌘," if sys.platform == "darwin" else "Ctrl+,"
-MARK_ALL_CAP = "⌘A" if sys.platform == "darwin" else "Ctrl+A"
 BUTTONS = [
     ("back", "Back", "←/K", False),
     ("next", "Next", "→/J", False),
     ("mark", "Mark", "Space/M", True),
-    ("markall", "Mark all", MARK_ALL_CAP, False),  # reads "Unmark all" while every picture is marked
     ("advance", "Move on mark", "A", True),
     ("zoom", "Zoom 100%", "Z", True),
-    ("rotl", "Rotate left", "[", False),
-    ("rotr", "Rotate right", "]", False),
     ("fullscreen", "Full screen", "F", True),
     ("review", "Review", "R", True),
     ("copy", "Copy…", "C", False),
 ]
-# Mark all and the two turns sit on a second classic row: with them on the first, Copy and Preferences fell into
-# the overflow chevron at 1280 px (measured on Windows: the row needs 1421 px, 1070 before them)
-ROW2_BUTTONS = ("markall", "rotl", "rotr")
 # advanced-only controls (each shown only while its flag is on): (name, label, key cap, flag)
 NEXT_BUTTONS = [
     ("compare", "Compare", "N", "compare_view"),
@@ -245,11 +239,6 @@ class MainWindow(QMainWindow):
             self.next_buttons[nname] = nb
             self._next_actions[nname] = self.toolbar2.addWidget(nb)
         self.toolbar2.setVisible(False)
-        self.addToolBarBreak()
-        self.toolbar3 = QToolBar("Mark and turn", self)
-        self.toolbar3.setMovable(False)
-        self.toolbar3.setFloatable(False)
-        self.addToolBar(self.toolbar3)
         for name, label, cap, checkable in BUTTONS:
             if name in ("mark", "review"):
                 self.toolbar.addSeparator()
@@ -264,14 +253,11 @@ class MainWindow(QMainWindow):
                 self.toolbar.addWidget(spacer)
             b = KeyButton(name, label, cap, checkable)
             self.buttons[name] = b
-            (self.toolbar3 if name in ROW2_BUTTONS else self.toolbar).addWidget(b)
+            self.toolbar.addWidget(b)
         b = self.buttons
         b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
         b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
         b["mark"].clicked.connect(lambda: self._control(Qt.Key_Space, self.toggle_mark))
-        b["markall"].clicked.connect(lambda: self.toggle_mark_all())
-        b["rotl"].clicked.connect(lambda: self.rotate(-1))
-        b["rotr"].clicked.connect(lambda: self.rotate(1))
         b["advance"].clicked.connect(lambda: self.set_advance_on_mark(not self.advance_on_mark))
         b["zoom"].clicked.connect(lambda: self._control(Qt.Key_Z, self.viewer.toggle_zoom))
         b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
@@ -400,9 +386,6 @@ class MainWindow(QMainWindow):
     # -- mark all / unmark all (one level of undo) -------------------------------------------------
     def _all_marked(self) -> bool:
         return len(self.catalog) > 0 and self.catalog.marked_count == len(self.catalog)
-
-    def _sync_mark_all(self) -> None:
-        self.buttons["markall"].set_label("Unmark all" if self._all_marked() else "Mark all")
 
     def _marks_set(self) -> frozenset[int]:
         c = self.catalog
@@ -556,7 +539,6 @@ class MainWindow(QMainWindow):
             self.buttons["mark"].setEnabled(shown is not None)
             self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
         self.sidebar.set_counts(len(cat), cat.marked_count)
-        self._sync_mark_all()
         if pic is not None:
             self.viewer.strip.set_state(cat.position_text(), marked, pic.stem, pic.kind, cat.marked_count)
             self.inspector.set_picture(pic, self.prefetcher.info(i), marked, self.prefetcher.failed_reason(i))
@@ -601,7 +583,7 @@ class MainWindow(QMainWindow):
             self.buttons["fullscreen"].setChecked(self.is_bleed)  # full-bleed is inert in review
             return
         self.is_bleed = on
-        for w in (self.toolbar, self.toolbar3, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
+        for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
             w.setVisible(not on)
         self.toolbar2.setVisible(not on and self._next_row_wanted())
         self.viewer.set_bleed(on)  # hidden; pointer movement reveals it
@@ -1264,7 +1246,6 @@ class MainWindow(QMainWindow):
             f"#btn_copy {{ background: {c.accent}; color: #ffffff; font-weight: 600; border-color: {c.accent}; }}")
         self.toolbar.setStyleSheet(bar_css)
         self.toolbar2.setStyleSheet(bar_css)
-        self.toolbar3.setStyleSheet(bar_css)
         self.sidebar.retheme()
         self.viewer.retheme()
         self.filmstrip.retheme()

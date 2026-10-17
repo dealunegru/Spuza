@@ -32,7 +32,7 @@ REVIEW_TABLE = {
     "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
     "prefs": "global", "shortcut:Ctrl+,": "global",
     # friend round 3: Mark all acts on the whole card from anywhere; the turns act on the grid's selected pictures
-    "markall": "global", "rotl": "grid", "rotr": "grid",
+    # (round 4: hotkeys only, no buttons)
     "shortcut:Ctrl+A": "global", "shortcut:Ctrl+Shift+A": "global", "shortcut:Ctrl+Z": "global",
     "shortcut:[": "grid", "shortcut:]": "grid",
     "review:Unmark": "grid", "review:Zoom": "grid",
