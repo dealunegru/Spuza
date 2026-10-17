@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from spuza import copy as copy_mod
 from spuza import eject as eject_mod
+from spuza.catalog import KNOWN_EXTS
 from spuza.copy import human_size
 
 MIN_PROGRESS_INTERVAL = 1 / 30  # seconds between progress emits (about 30 per second)
@@ -319,7 +320,7 @@ class CopySheet(QDialog):
             return
         self.dest_label.setText(str(self.dest))
         if self.pictures:  # plan once: the bytes still to write (not the identical ones) decide "short"
-            self.plan = copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise)
+            self.plan = self._plan()
         free = self._free()
         short = self.space_short()
         if free is None:
@@ -337,8 +338,25 @@ class CopySheet(QDialog):
         if self.pictures and not short:
             self._show_plan(self.plan)
 
+    def _turns(self) -> dict[Path, int]:
+        """Source image file -> clockwise quarter turns to write into its copy (empty when the write is off).
+        A picture's turns go to its picture files (a raw and its JPEG twin), never to its companions."""
+        out: dict[Path, int] = {}
+        if not self.write_rotation:
+            return out
+        for p in self.pictures:
+            t = self.rotations.get(getattr(p, "primary", None), 0)
+            t = t % 4 if isinstance(t, int) and not isinstance(t, bool) else 0
+            if t:
+                skip = set(getattr(p, "companions", ()))
+                out.update({f: t for f in p.files if f not in skip and f.suffix.lower() in KNOWN_EXTS})
+        return out
+
+    def _plan(self):
+        return copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise, self._turns())
+
     def _show_plan(self, plan=None) -> None:
-        self.plan = plan or copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise)
+        self.plan = plan or self._plan()
         skip = sum(1 for it in self.plan.items if it.action == "skip")
         text = f"Will copy {len(self.plan.items) - skip} files, skip {skip} already there"
         if self.total_twins:
@@ -403,6 +421,9 @@ class CopySheet(QDialog):
             text += " · cancelled"
         if self.total_twins:
             text += f" · {self._twin_note()}"
+        rot = self._rotation_text(res)
+        if rot:
+            text += f" · {rot}"
         where = self._where_text(res)
         if where:
             text += f" · {where}"
@@ -426,6 +447,18 @@ class CopySheet(QDialog):
             return
         if not res.failed and not res.cancelled:
             self._after_copy()
+
+    def _rotation_text(self, res) -> str:
+        """Which copies got a new orientation and which kept their original one (and the first reason why)."""
+        rotated, kept = getattr(res, "rotated", ()), getattr(res, "rotation_kept", ())
+        if not rotated and not kept:
+            return ""
+        text = f"rotation written to {_n(len(rotated), 'file', 'files')}"
+        if kept:
+            names = ", ".join(f"{src.name} ({why})" for src, why in kept[:3])
+            more = f" and {len(kept) - 3} more" if len(kept) > 3 else ""
+            text += f" · {_n(len(kept), 'file', 'files')} kept the original orientation: {names}{more}"
+        return text
 
     def _where_text(self, res) -> str:
         """With organise on: how many copied files went to raw and to soc."""
