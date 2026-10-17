@@ -53,6 +53,10 @@ def strip_of(pics, prefetcher):
     return s
 
 
+def loader_of(pics):
+    return thumbs.ThumbLoader(lambda i: pics[i].primary)
+
+
 def test_far_scroll_loads_thumbnails_without_a_click(tmp_path):
     pics = make_pics(tmp_path, 120)
     s = strip_of(pics, Empty())
@@ -70,14 +74,13 @@ def test_far_scroll_loads_thumbnails_without_a_click(tmp_path):
 def test_cache_stays_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(thumbs, "THUMB_CACHE_MAX", 5)
     pics = make_pics(tmp_path, 40)
-    s = strip_of(pics, Empty())
+    loader = loader_of(pics)  # the loader alone: a strip's settle timer would issue its own request
     try:
-        loader = s._loader
         loader.request(list(range(20)), 104, 62)
         assert pump_until(lambda: loader._inflight == 0 and not loader._queue)
         assert 0 < len(loader._cache) <= 5
     finally:
-        s.shutdown()
+        loader.shutdown()
 
 
 def test_cache_bound_constant_is_at_most_400():
@@ -87,16 +90,17 @@ def test_cache_bound_constant_is_at_most_400():
 
 def test_stale_requests_are_dropped(tmp_path):
     pics = make_pics(tmp_path, 60)
-    s = strip_of(pics, Empty())
+    # the loader alone: through a strip, its 150 ms settle timer fired mid-test on a slow macOS runner and
+    # replaced the request with the visible range, so 50..59 were dropped as stale (CI, 2026-10-17)
+    loader = loader_of(pics)
     try:
-        loader = s._loader
         loader.request(list(range(0, 30)), 104, 62)
         loader.request(list(range(50, 60)), 104, 62)  # the user scrolled on
         assert pump_until(lambda: loader._inflight == 0 and not loader._queue)
         assert all(i in loader._cache for i in range(50, 60))
         assert len(loader._cache) < 30  # most of the first request never decoded
     finally:
-        s.shutdown()
+        loader.shutdown()
 
 
 def test_rotated_picture_is_painted_rotated():
