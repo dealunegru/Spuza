@@ -264,7 +264,8 @@ def test_zoom_decodes_off_thread_and_swaps(win):
     assert win.viewer.zoomed and win.buttons["zoom"].isChecked()
     pump(lambda: win.viewer.image_size() == (200, 100))
     assert seen["thread"] != main
-    assert not win.viewer.hud_visible
+    # A0 is a RAF+JPG pair whose JPG is not on disk: Z falls back to the raw, and the HUD keeps saying so
+    assert win.viewer.zoom_text() == "100% · JPG unreadable, from the raw" and win.viewer.hud_visible
     key(win, Qt.Key_Z)
     assert not win.viewer.zoomed and not win.buttons["zoom"].isChecked()
 
