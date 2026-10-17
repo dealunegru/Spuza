@@ -25,7 +25,7 @@ KEYS = ("copy/organise", "copy/eject", "copy/quit")
 
 
 def fake_loader(path, max_side):
-    return Image.new("RGB", (64, 48), (200, 80, 40)), PreviewInfo(path, "raf-embedded", 1920, 1280, 1000, 3.5)
+    return Image.new("RGB", (64, 48), (200, 80, 40)), PreviewInfo(path, "raf-embedded", 64, 48, 1000, 3.5)
 
 
 def pump(cond, timeout=5.0):

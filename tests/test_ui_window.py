@@ -41,7 +41,7 @@ PICS = [pic("A0.RAF", True), pic("A1.RAF"), pic("A2.JPG"), pic("bad3.JPG"), pic(
 def fake_loader(path, max_side):
     if "bad" in path.name:
         raise ValueError("corrupt file")
-    return Image.new("RGB", (64, 48), (200, 80, 40)), PreviewInfo(path, "raf-embedded", 1920, 1280, 1000, 3.5)
+    return Image.new("RGB", (64, 48), (200, 80, 40)), PreviewInfo(path, "raf-embedded", 64, 48, 1000, 3.5)
 
 
 def pump(cond, timeout=5.0):
@@ -317,7 +317,7 @@ def test_inspector_explains_pairs(win):
     assert "RAF only: no JPG beside it" in win.inspector.plain()
     assert win.inspector.amber
     pump(lambda: "raf-embedded" in win.inspector.plain())
-    assert "1920" in win.inspector.plain() and "3.5 ms" in win.inspector.plain()
+    assert "Size: 64 x 48" in win.inspector.plain() and "3.5 ms" in win.inspector.plain()
     key(win, Qt.Key_M)
     assert "Marked" in win.inspector.plain() and "Not marked" not in win.inspector.plain()
 

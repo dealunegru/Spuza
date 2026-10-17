@@ -22,7 +22,7 @@ PICS = [Picture("A0", ROOT / "A0.JPG", None, (ROOT / "A0.JPG",), "JPG", 1000, 1.
 
 
 def fake_loader(path, max_side):
-    return Image.new("RGB", (64, 48)), PreviewInfo(path, "raf-embedded", 1920, 1280, 1000, 3.5)
+    return Image.new("RGB", (64, 48)), PreviewInfo(path, "raf-embedded", 64, 48, 1000, 3.5)
 
 
 def pump(cond, timeout=5.0):

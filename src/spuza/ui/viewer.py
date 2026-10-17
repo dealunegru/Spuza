@@ -1,8 +1,11 @@
 """The big picture: a QGraphicsView on the raster backend (never OpenGL).
 
-Fit-to-window by default; Z toggles 1:1 at the centre and the state carries to the next picture. A raw
-whose embedded preview is much smaller than the sensor (dec-044) is demosaiced on a worker thread when
-you zoom; the result replaces the preview only if that picture is still on screen.
+Fit-to-window by default; Z toggles 1:1 at the centre and the state carries to the next picture. Z shows the
+native pixels of the picture: the fitted view uses the fast capped decode, so on Z a worker decodes the real
+size (a raw whose embedded preview is much smaller than the frame of the camera, dec-044, is demosaiced and
+cropped to that frame; any other picture is decoded again at the native size of its preview, uncapped). The
+result replaces the preview only if that picture is still on screen. The picture is shown turned by
+rotation_of(index) quarter turns, applied to the item at display time; the caches hold the unrotated pixels.
 """
 
 from __future__ import annotations
@@ -34,6 +37,18 @@ def _default_full_decode(path, half_size: bool = False):
     return full_decode(path, half_size)
 
 
+def _default_native_decode(path):
+    from spuza.preview import native_preview
+
+    return native_preview(path)
+
+
+def _is_capped(shown, info) -> bool:
+    from spuza.preview import is_capped
+
+    return is_capped(shown, info)
+
+
 def to_qimage(im) -> QImage:
     rgb = im.convert("RGB")
     w, h = rgb.size
@@ -41,9 +56,10 @@ def to_qimage(im) -> QImage:
 
 
 class _FullJob(QRunnable):
-    def __init__(self, viewer: Viewer, index: int, path, info):
+    def __init__(self, viewer: Viewer, index: int, path, info, shown: tuple[int, int] = (0, 0)):
         super().__init__()
         self.viewer, self.index, self.path, self.info = viewer, index, path, info
+        self.shown = shown  # size of the (capped) preview on screen when Z was pressed
         self.setAutoDelete(True)
 
     def _emit(self, *args) -> None:
@@ -58,10 +74,16 @@ class _FullJob(QRunnable):
             if v.index != self.index:  # the user moved on while this waited in the queue
                 self._emit(self.index, str(self.path), None, 0.0, "stale")
                 return
-            if self.info is None or not v.needs_full_decode(self.path, self.info):
+            if self.info is None:
                 self._emit(self.index, str(self.path), None, 0.0, "skipped")
                 return
-            qimg = to_qimage(v.full_decode(self.path, False))
+            if v.needs_full_decode(self.path, self.info):
+                qimg = to_qimage(v.full_decode(self.path, False))
+            elif _is_capped(self.shown, self.info):
+                qimg = to_qimage(v.native_decode(self.path))  # the preview is full size; the screen copy is not
+            else:
+                self._emit(self.index, str(self.path), None, 0.0, "skipped")  # the preview on screen is native
+                return
         except Exception as exc:  # noqa: BLE001 - reported to the HUD, never raised on a worker
             self._emit(self.index, str(self.path), None, 0.0, str(exc) or type(exc).__name__)
             return
@@ -130,6 +152,7 @@ class Viewer(QGraphicsView):
         self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self.needs_full_decode = _default_needs_full_decode
         self.full_decode = _default_full_decode
+        self.native_decode = _default_native_decode
         self.index = -1
         self.pic = None
         self.info = None
@@ -140,6 +163,7 @@ class Viewer(QGraphicsView):
         self._preview: QImage | None = None
         self._full_cache: OrderedDict[str, QImage] = OrderedDict()
         self._full: dict[int, str] = {}  # index -> pending | done | skipped | error
+        self._shown_native = False  # the pixmap on screen is the native pixels (a full decode)
         self._paint_pending: int | None = None
         # Where Z lands: a callable returning the (fx, fy) fraction of the image to centre on, or None for
         # the centre. Set by the window (focus_point); None keeps the shipped behaviour.
@@ -212,8 +236,30 @@ class Viewer(QGraphicsView):
         return not self.hud.isHidden()
 
     def image_size(self) -> tuple[int, int] | None:
+        """The picture as shown: width and height swap under an odd number of quarter turns."""
         pm = self._item.pixmap()
-        return None if pm.isNull() else (pm.width(), pm.height())
+        if pm.isNull():
+            return None
+        return (pm.height(), pm.width()) if self._quarters() % 2 else (pm.width(), pm.height())
+
+    def _quarters(self) -> int:
+        try:
+            return int(self.rotation_of(self.index)) % 4
+        except Exception:  # noqa: BLE001 - a bad rotation provider shows the picture unrotated
+            return 0
+
+    def zoom_text(self) -> str:
+        """What the HUD may say about the zoom: "100%" only while native pixels are on screen."""
+        if not self.zoomed:
+            return ""
+        st = self._full.get(self.index)
+        if st == "pending":
+            return "100% … decoding full resolution…"
+        if self._shown_native or st == "skipped":
+            return "100%"
+        if st == "error":
+            return "preview pixels only (full decode failed)"
+        return "100% …"
 
     def image_item(self) -> QGraphicsPixmapItem:
         """The picture's item; overlays parent to it so they share its transform."""
@@ -230,6 +276,7 @@ class Viewer(QGraphicsView):
 
     def _clear(self, index: int, pic) -> None:
         self.index, self.pic, self.info, self._preview = index, pic, None, None
+        self._shown_native = False
         self._item.setPixmap(QPixmap())
         self.pixmap_changed.emit(index)
         self._paint_pending = None
@@ -255,27 +302,44 @@ class Viewer(QGraphicsView):
         self.error_text = ""
         self._set_message("")
         full = self._full_cache.get(str(pic.primary)) if self.zoomed else None
-        self._put(full if full is not None else qimg, keep_centre=False)
+        self._put(full if full is not None else qimg, keep_centre=False, native=full is not None)
         self._paint_pending = index
         self.shown.emit(index)
         if self.zoomed and full is None:
             self._request_full()
         self._sync_hud()
 
-    def _put(self, qimg: QImage, keep_centre: bool) -> None:
-        frac = None
-        if keep_centre and self.has_image:
-            c = self.mapToScene(self.viewport().rect().center())
-            old = self._item.pixmap()
-            frac = (c.x() / max(1, old.width()), c.y() / max(1, old.height()))
-        self._item.setPixmap(QPixmap.fromImage(qimg))
-        self._scene.setSceneRect(self._item.boundingRect())
-        self.pixmap_changed.emit(self.index)
-        self._apply_zoom()
-        if frac is not None and self.zoomed:
-            self.centerOn(QPointF(frac[0] * qimg.width(), frac[1] * qimg.height()))
+    def _centre_frac(self):
+        """The viewport centre as a fraction of the picture, in the own (unrotated) frame of the picture."""
+        old = self._item.pixmap()
+        c = self._item.mapFromScene(self.mapToScene(self.viewport().rect().center()))
+        return (c.x() / max(1, old.width()), c.y() / max(1, old.height()))
 
-    def _apply_zoom(self) -> None:
+    def _orient_item(self) -> None:
+        """Turn the item by rotation_of(index) quarter turns about its centre; the scene follows its bounds."""
+        pm = self._item.pixmap()
+        self._item.setTransformOriginPoint(pm.width() / 2, pm.height() / 2)
+        self._item.setRotation(90.0 * self._quarters())
+        self._scene.setSceneRect(self._item.sceneBoundingRect())
+
+    def _put(self, qimg: QImage, keep_centre: bool, native: bool = False) -> None:
+        frac = self._centre_frac() if keep_centre and self.has_image else None
+        self._shown_native = native
+        self._item.setPixmap(QPixmap.fromImage(qimg))
+        self._orient_item()
+        self.pixmap_changed.emit(self.index)
+        self._apply_zoom(frac if self.zoomed else None)
+
+    def rotation_changed(self, i: int) -> None:
+        """Picture i's rotation changed: if it is on screen, turn it now, keeping zoom and the centred point."""
+        if i != self.index or not self.has_image:
+            return
+        frac = self._centre_frac() if self.zoomed else None
+        self._orient_item()
+        self._apply_zoom(frac)
+        self.viewport().update()
+
+    def _apply_zoom(self, frac=None) -> None:
         if not self.has_image:
             return
         if self.zoomed:
@@ -284,17 +348,16 @@ class Viewer(QGraphicsView):
             if dpr > 1.0:  # 100% means one image pixel per device pixel, not per logical pixel
                 self.scale(1.0 / dpr, 1.0 / dpr)
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-            frac = None
-            if self.zoom_target is not None:
+            if frac is None and self.zoom_target is not None:
                 try:
                     frac = self.zoom_target()
                 except Exception:  # noqa: BLE001 - a bad target must never break Z
                     frac = None
             if frac is None:
                 self.centerOn(self._item)
-            else:
+            else:  # a fraction of the own frame of the picture; the turn of the item maps it into the scene
                 pm = self._item.pixmap()
-                self.centerOn(QPointF(frac[0] * pm.width(), frac[1] * pm.height()))
+                self.centerOn(self._item.mapToScene(QPointF(frac[0] * pm.width(), frac[1] * pm.height())))
         else:
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
@@ -318,7 +381,7 @@ class Viewer(QGraphicsView):
         full = self._full_cache.get(str(self.pic.primary))
         if full is None:
             return False
-        self._put(full, keep_centre=True)
+        self._put(full, keep_centre=True, native=True)
         return True
 
     def _request_full(self) -> None:
@@ -327,7 +390,8 @@ class Viewer(QGraphicsView):
         if self._full.get(self.index) == "pending":
             return
         self._full[self.index] = "pending"
-        self.pool.start(_FullJob(self, self.index, self.pic.primary, self.info))
+        shown = (self._preview.width(), self._preview.height())
+        self.pool.start(_FullJob(self, self.index, self.pic.primary, self.info, shown))
 
     def _on_full(self, index: int, path: str, qimg, ms: float, status: str) -> None:
         if status == "stale":
@@ -343,7 +407,7 @@ class Viewer(QGraphicsView):
             while len(self._full_cache) > FULL_CACHE:
                 self._full_cache.popitem(last=False)
             if index == self.index and self.pic is not None and str(self.pic.primary) == path and self.zoomed:
-                self._put(qimg, keep_centre=True)
+                self._put(qimg, keep_centre=True, native=True)
             self.full_done.emit(index, ms)
         elif status == "skipped":
             self.full_skipped.emit(index)
@@ -352,7 +416,9 @@ class Viewer(QGraphicsView):
         self._sync_hud()
 
     def _sync_hud(self) -> None:
-        self.hud.setVisible(self._full.get(self.index) == "pending" and self.zoomed)
+        self.hud.setText(self.zoom_text())
+        self.hud.adjustSize()
+        self.hud.setVisible(self._full.get(self.index) in ("pending", "error") and self.zoomed)  # a failure stays up while zoomed
         self._place()
 
     # -- right-click: reveal the picture in the file manager ----------------------------------------
@@ -393,9 +459,6 @@ class Viewer(QGraphicsView):
         self.setBackgroundBrush(QColor(c.stage))
         self.message.setStyleSheet(f"color: {c.dim}; font-size: 15px;")
         self.viewport().update()
-
-    def rotation_changed(self, i: int) -> None:
-        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         self.pool.clear()
