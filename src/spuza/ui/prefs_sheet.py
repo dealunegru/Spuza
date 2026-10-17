@@ -30,7 +30,8 @@ class PrefsSheet(QDialog):
     def __init__(self, ahead: int, behind: int, max_side: int = 2560, parent=None, *,
                  advanced: bool = False, threads: int = settings.DEFAULT_THREADS,
                  peaking_threshold: int = settings.DEFAULT_PEAKING_THRESHOLD, resume: bool = True,
-                 organise: bool = True, eject_after: bool = True, quit_after: bool = True):
+                 organise: bool = True, eject_after: bool = True, quit_after: bool = True,
+                 write_rotation: bool = True, zoom_full_sensor: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.max_side = max_side
@@ -60,6 +61,12 @@ class PrefsSheet(QDialog):
         self.eject_check = QCheckBox("Eject the card after copying")
         self.quit_check = QCheckBox("Quit Spuza after copying")
         self.seeded_organise, self.seeded_eject, self.seeded_quit = bool(organise), bool(eject_after), bool(quit_after)
+        self.rotation_check = QCheckBox("Write rotation to copies (EXIF)")
+        self.seeded_rotation = bool(write_rotation)
+        self.rotation_check.setChecked(self.seeded_rotation)
+        self.sensor_check = QCheckBox("Zoom shows the full sensor on cropped shots")
+        self.seeded_sensor = bool(zoom_full_sensor)
+        self.sensor_check.setChecked(self.seeded_sensor)
         self.organise_check.setChecked(self.seeded_organise)
         self.eject_check.setChecked(self.seeded_eject)
         self.quit_check.setChecked(self.seeded_quit)
@@ -85,6 +92,8 @@ class PrefsSheet(QDialog):
         lay.addWidget(self.organise_check)
         lay.addWidget(self.eject_check)
         lay.addWidget(self.quit_check)
+        lay.addWidget(self.rotation_check)
+        lay.addWidget(self.sensor_check)
         lay.addWidget(self.advanced_check)
         lay.addWidget(self.note_label)
         lay.addWidget(self.reset_button)
@@ -126,6 +135,12 @@ class PrefsSheet(QDialog):
     def quit_after(self) -> bool:
         return self.quit_check.isChecked()
 
+    def write_rotation(self) -> bool:
+        return self.rotation_check.isChecked()
+
+    def zoom_full_sensor(self) -> bool:
+        return self.sensor_check.isChecked()
+
     def values(self) -> tuple[int, int]:
         return self.ahead_spin.value(), self.behind_spin.value()
 
@@ -134,12 +149,14 @@ class PrefsSheet(QDialog):
 
     def reset_to_defaults(self) -> None:
         """Set the spins to the defaults; nothing is saved until OK. The mode checkbox and threads are left alone
-        (a mode is not a tuning value); the three copy rows go back to on, their shipped default."""
+        (a mode is not a tuning value); the four copy rows go back to on, their shipped default; the zoom row goes back to off."""
         self.ahead_spin.setValue(settings.DEFAULT_AHEAD)
         self.behind_spin.setValue(settings.DEFAULT_BEHIND)
         self.organise_check.setChecked(True)
         self.eject_check.setChecked(True)
         self.quit_check.setChecked(True)
+        self.rotation_check.setChecked(True)
+        self.sensor_check.setChecked(False)
 
     def _update_memory(self) -> None:
         a, b = self.values()

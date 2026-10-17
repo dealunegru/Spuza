@@ -12,7 +12,7 @@ import io
 import struct
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image
@@ -56,6 +56,7 @@ class PreviewInfo:
     ms: float  # wall time of load()
     exif: _exif.Exif | None = None  # basic EXIF read on the worker; None when the file carries none
     focus: object | None = None  # spuza.focus.FocusInfo, read on the worker only while focus_point is on
+    native: bool | None = None  # set by load_native(): True = the pixels are the picture's own, False = best effort
 
 
 # ---- container slicing ------------------------------------------------------------------------
@@ -273,12 +274,45 @@ def _decode(src, max_side: int | None, fallback_orient: int = 0, exif_out: list 
         raise PreviewError(f"cannot decode image: {e}") from e
 
 
-def _rawpy_full(path: Path, half_size: bool) -> Image.Image:
+def _frame_box(s) -> tuple[int, int, int, int] | None:
+    """The camera's crop (DefaultCropOrigin / DefaultCropSize) as (left, top, width, height) in the frame
+    rawpy's postprocess returns (visible area, after the flip); None when it is absent, empty or outside it."""
+    try:
+        w, h, flip = int(s.width), int(s.height), int(s.flip)
+        left, top = int(s.crop_left_margin) - int(s.left_margin), int(s.crop_top_margin) - int(s.top_margin)
+        cw, ch = int(s.crop_width), int(s.crop_height)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if cw <= 0 or ch <= 0 or left < 0 or top < 0 or left + cw > w or top + ch > h:
+        return None
+    if flip == 3:
+        return w - (left + cw), h - (top + ch), cw, ch
+    if flip == 5:  # 90 counter-clockwise
+        return top, w - (left + cw), ch, cw
+    if flip == 6:  # 90 clockwise
+        return h - (top + ch), left, ch, cw
+    return left, top, cw, ch
+
+
+def _rawpy_full(path: Path, half_size: bool, crop: bool = True) -> Image.Image:
+    """Demosaic with the camera white balance, cropped to the camera's frame (an in-camera crop mode keeps
+    the sensor's margins in the raw; they are never part of the picture). crop=False keeps the whole visible
+    sensor (what the crop frame was cut from)."""
     try:
         import rawpy
 
         with rawpy.imread(str(path)) as r:
             arr = r.postprocess(use_camera_wb=True, half_size=half_size)
+            box = _frame_box(r.sizes) if crop else None
+            flip = int(r.sizes.flip)
+            vis = (int(r.sizes.height), int(r.sizes.width))
+        if box is not None:
+            oh, ow = (vis[1], vis[0]) if flip in (5, 6) else vis  # the visible area as returned, after the flip
+            fy, fx = arr.shape[0] / max(1, oh), arr.shape[1] / max(1, ow)  # half_size halves it
+            x0, y0 = round(box[0] * fx), round(box[1] * fy)
+            x1, y1 = min(arr.shape[1], round((box[0] + box[2]) * fx)), min(arr.shape[0], round((box[1] + box[3]) * fy))
+            if x1 > x0 and y1 > y0:
+                arr = arr[y0:y1, x0:x1]
         return Image.fromarray(arr).convert("RGB")
     except Exception as e:
         raise PreviewError(f"cannot demosaic {path.name}: {e}") from e
@@ -380,17 +414,98 @@ def sensor_size(path) -> tuple[int, int] | None:
         return None
 
 
+def frame_size(path) -> tuple[int, int] | None:
+    """Width and height of the camera's frame (its crop; the whole visible sensor when none), else None."""
+    path = Path(path)
+    if path.suffix.lower() not in RAW_EXTS:
+        return None
+    try:
+        import rawpy
+
+        with rawpy.imread(str(path)) as r:
+            s = r.sizes
+            box = _frame_box(s)
+            if box is not None:
+                return box[2], box[3]
+            w, h, flip = int(s.width), int(s.height), int(s.flip)
+        return (h, w) if flip in (5, 6) else (w, h)
+    except Exception:
+        return None
+
+
 def needs_full_decode(path, info: PreviewInfo) -> bool:
-    """True when a raw's embedded preview is much smaller than the sensor (dec-044)."""
-    sensor = sensor_size(path)
-    if sensor is None:
+    """True when a raw's embedded preview is much smaller than the camera's FRAME (dec-044).
+
+    The frame is the crop the camera shot (a crop mode makes the preview small against the sensor but not
+    against the frame, and the embedded preview already is that frame)."""
+    frame = frame_size(path)
+    if frame is None:
         return False
-    return max(info.width, info.height) < 0.6 * max(sensor)
+    return max(info.width, info.height) < 0.6 * max(frame)
 
 
-def full_decode(path, half_size: bool = False) -> Image.Image:
-    """Demosaic a raw with the camera white balance; oriented RGB."""
-    return _rawpy_full(Path(path), half_size)
+def full_decode(path, half_size: bool = False, crop: bool = True) -> Image.Image:
+    """Demosaic a raw with the camera white balance; oriented RGB. crop=False keeps the whole visible sensor."""
+    return _rawpy_full(Path(path), half_size, crop)
+
+
+SENSOR_CROP_FRACTION = 0.97  # a frame at least this much of the sensor in both directions is not "cropped in camera"
+
+
+def sensor_geometry(path) -> tuple[tuple[int, int, int, int], tuple[int, int]] | None:
+    """For a raw the camera cropped in-camera: ((left, top, width, height) of the crop frame, (width, height) of
+    the whole visible sensor), both in the frame rawpy returns. None for a non-raw, an uncropped raw, or when
+    rawpy cannot say (the caller then treats the picture as uncropped)."""
+    path = Path(path)
+    if path.suffix.lower() not in RAW_EXTS:
+        return None
+    try:
+        import rawpy
+
+        with rawpy.imread(str(path)) as r:
+            s = r.sizes
+            box = _frame_box(s)
+            w, h, flip = int(s.width), int(s.height), int(s.flip)
+    except Exception:
+        return None
+    if flip in (5, 6):
+        w, h = h, w
+    if box is None or (box[2] >= SENSOR_CROP_FRACTION * w and box[3] >= SENSOR_CROP_FRACTION * h):
+        return None  # no crop, or only the margin of the sensor that a plain DNG always leaves out
+    return box, (w, h)
+
+
+def is_capped(shown: tuple[int, int], info) -> bool:
+    """True when a decode of `shown` (w, h) was scaled down from the preview's NATIVE size in `info`.
+
+    The capped fast decode (load's max_side) and the native size are different pictures at 1:1: Z must compare
+    the native size, never the decode on screen. Unknown or malformed info is "not capped" (nothing to fetch)."""
+    try:
+        return max(int(shown[0]), int(shown[1])) < max(int(info.width), int(info.height))
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return False
+
+
+def native_preview(path) -> Image.Image:
+    """The file's own preview or image at its native size (no max_side cap), oriented RGB."""
+    return load(path, None)[0]
+
+
+def load_native(path):
+    """(RGB image, PreviewInfo) at the picture's native pixels, for Z.
+
+    A plain image, or a raw whose embedded preview is at least 0.6 of the sensor, is decoded at the preview's
+    native size; a raw with a smaller preview is demosaiced. If the demosaic fails the preview comes back with
+    info.native False, so the caller can say it is not the real pixels."""
+    path = Path(path)
+    im, info = load(path, None)
+    if path.suffix.lower() in RAW_EXTS and needs_full_decode(path, info):
+        try:
+            full = _rawpy_full(path, False)
+        except PreviewError:
+            return im, replace(info, native=False)
+        return full, replace(info, source="rawpy-full", width=full.size[0], height=full.size[1], native=True)
+    return im, replace(info, native=True)
 
 
 def report(path) -> dict:

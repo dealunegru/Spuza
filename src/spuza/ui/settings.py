@@ -131,6 +131,7 @@ def write_resume_on(s: QSettings, on: bool) -> None:
 COPY_ORGANISE = "copy/organise"  # raw / soc / ed folders in the destination
 COPY_EJECT = "copy/eject"  # eject the card after a successful copy
 COPY_QUIT = "copy/quit"  # quit Spuza after a successful copy
+COPY_ROTATION = "copy/rotation"  # friend round 3: write a picture's rotation into the copy's EXIF (never the original)
 
 
 def read_organise(s: QSettings) -> bool:
@@ -156,3 +157,23 @@ def read_quit_after(s: QSettings) -> bool:
 def write_quit_after(s: QSettings, on: bool) -> None:
     s.setValue(COPY_QUIT, bool(on))
 
+
+
+def read_write_rotation(s: QSettings) -> bool:
+    return read_bool(s, COPY_ROTATION, True)
+
+
+def write_write_rotation(s: QSettings, on: bool) -> None:
+    s.setValue(COPY_ROTATION, bool(on))
+
+
+# Friend round 3: what Z shows on a shot the camera cropped (classic Preferences row; off by default).
+ZOOM_FULL_SENSOR = "zoom/full_sensor"
+
+
+def read_zoom_full_sensor(s: QSettings) -> bool:
+    return read_bool(s, ZOOM_FULL_SENSOR, False)
+
+
+def write_zoom_full_sensor(s: QSettings, on: bool) -> None:
+    s.setValue(ZOOM_FULL_SENSOR, bool(on))

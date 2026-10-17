@@ -67,16 +67,23 @@ GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key
                        Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
 # (name, label, key cap shown on the button, checkable)
 PREFS_CAP = "⌘," if sys.platform == "darwin" else "Ctrl+,"
+MARK_ALL_CAP = "⌘A" if sys.platform == "darwin" else "Ctrl+A"
 BUTTONS = [
     ("back", "Back", "←/K", False),
     ("next", "Next", "→/J", False),
     ("mark", "Mark", "Space/M", True),
+    ("markall", "Mark all", MARK_ALL_CAP, False),  # reads "Unmark all" while every picture is marked
     ("advance", "Move on mark", "A", True),
     ("zoom", "Zoom 100%", "Z", True),
+    ("rotl", "Rotate left", "[", False),
+    ("rotr", "Rotate right", "]", False),
     ("fullscreen", "Full screen", "F", True),
     ("review", "Review", "R", True),
     ("copy", "Copy…", "C", False),
 ]
+# Mark all and the two turns sit on a second classic row: with them on the first, Copy and Preferences fell into
+# the overflow chevron at 1280 px (measured on Windows: the row needs 1421 px, 1070 before them)
+ROW2_BUTTONS = ("markall", "rotl", "rotr")
 # advanced-only controls (each shown only while its flag is on): (name, label, key cap, flag)
 NEXT_BUTTONS = [
     ("compare", "Compare", "N", "compare_view"),
@@ -99,6 +106,11 @@ class KeyButton(QToolButton):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setToolTip(f"{label} ({cap})")
         self.setObjectName(f"btn_{name}")
+
+    def set_label(self, label: str) -> None:
+        self.label = label
+        self.setText(f"{label}   {self.cap}")
+        self.setToolTip(f"{label} ({self.cap})")
 
 
 class Sidebar(QWidget):
@@ -197,6 +209,9 @@ class MainWindow(QMainWindow):
         self._prefs_sheet = None
         self._prefs_seed = False
         self.last_message = ""
+        self.rotations: dict[int, int] = {}  # friend round 3: catalog index -> clockwise quarter turns 1..3 (0 omitted)
+        self._markall_undo: frozenset[int] | None = None  # the marks before the last Mark all / Unmark all
+        self._markall_after: frozenset[int] = frozenset()  # the marks right after it (to count later changes)
         self.is_bleed = False
         self._forwarding = False
         self._was_maximized = False
@@ -209,6 +224,7 @@ class MainWindow(QMainWindow):
         self.sidebar = Sidebar(self.root)
         self.inspector = Inspector()
         self.filmstrip = Filmstrip(catalog, prefetcher)
+        self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -229,6 +245,11 @@ class MainWindow(QMainWindow):
             self.next_buttons[nname] = nb
             self._next_actions[nname] = self.toolbar2.addWidget(nb)
         self.toolbar2.setVisible(False)
+        self.addToolBarBreak()
+        self.toolbar3 = QToolBar("Mark and turn", self)
+        self.toolbar3.setMovable(False)
+        self.toolbar3.setFloatable(False)
+        self.addToolBar(self.toolbar3)
         for name, label, cap, checkable in BUTTONS:
             if name in ("mark", "review"):
                 self.toolbar.addSeparator()
@@ -243,11 +264,14 @@ class MainWindow(QMainWindow):
                 self.toolbar.addWidget(spacer)
             b = KeyButton(name, label, cap, checkable)
             self.buttons[name] = b
-            self.toolbar.addWidget(b)
+            (self.toolbar3 if name in ROW2_BUTTONS else self.toolbar).addWidget(b)
         b = self.buttons
         b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
         b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
         b["mark"].clicked.connect(lambda: self._control(Qt.Key_Space, self.toggle_mark))
+        b["markall"].clicked.connect(lambda: self.toggle_mark_all())
+        b["rotl"].clicked.connect(lambda: self.rotate(-1))
+        b["rotr"].clicked.connect(lambda: self.rotate(1))
         b["advance"].clicked.connect(lambda: self.set_advance_on_mark(not self.advance_on_mark))
         b["zoom"].clicked.connect(lambda: self._control(Qt.Key_Z, self.viewer.toggle_zoom))
         b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
@@ -306,9 +330,19 @@ class MainWindow(QMainWindow):
         prefs_sc = QShortcut(QKeySequence("Ctrl+,"), self, context=Qt.ShortcutContext.WindowShortcut,
                              activated=lambda: self.open_prefs())
         prefs_sc.setAutoRepeat(False)
+        # Mark all / Unmark all / Undo and the two rotations are window shortcuts, so they work with the review grid
+        # focused too (a window shortcut is matched before the list view's own select-all key handling).
+        for seq, fn in ((QKeySequence("Ctrl+A"), lambda: self.mark_all(True)),
+                        (QKeySequence("Ctrl+Shift+A"), lambda: self.mark_all(False)),
+                        (QKeySequence("Ctrl+Z"), lambda: self.undo_mark_all()),
+                        (QKeySequence("["), lambda: self.rotate(-1)), (QKeySequence("]"), lambda: self.rotate(1))):
+            sc = QShortcut(seq, self, context=Qt.ShortcutContext.WindowShortcut, activated=fn)
+            sc.setAutoRepeat(False)  # a held key must not mark, undo or turn repeatedly
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
+        self.viewer.zoom_full_sensor = settings.read_zoom_full_sensor(self.prefs)
+        self.viewer.pixmap_changed.connect(self._marker_follows_frame)
         self.viewer.zoom_target = self._zoom_target  # None unless advanced + focus_point: Z centres as shipped
         if features.enabled("resume_session"):
             # restore BEFORE the first prefetch so the first paint is the restored place, and no mark can be made
@@ -363,6 +397,116 @@ class MainWindow(QMainWindow):
         if announce:
             self.say("Move on mark: on (marking shows the next picture)" if on else "Move on mark: off")
 
+    # -- mark all / unmark all (one level of undo) -------------------------------------------------
+    def _all_marked(self) -> bool:
+        return len(self.catalog) > 0 and self.catalog.marked_count == len(self.catalog)
+
+    def _sync_mark_all(self) -> None:
+        self.buttons["markall"].set_label("Unmark all" if self._all_marked() else "Mark all")
+
+    def _marks_set(self) -> frozenset[int]:
+        c = self.catalog
+        return frozenset(i for i in range(len(c)) if c.is_marked(i))
+
+    def _marks_changed_everywhere(self) -> None:
+        """The same refreshes toggle_mark does, plus the review grid (which lists only marked pictures) and compare.
+        The resume controller polls the marks on its own tick, as it does after a single mark."""
+        self.filmstrip.viewport().update()
+        if self.review is not None and hasattr(self.review, "refresh"):
+            self.review.refresh()
+        if self._compare_shown():
+            self._sync_compare()
+        self.refresh_marks()
+
+    def toggle_mark_all(self) -> None:
+        """The control-bar button: Mark all, or Unmark all while every picture is already marked."""
+        self.mark_all(not self._all_marked())
+
+    def mark_all(self, on: bool) -> None:
+        """Mark (or unmark) every picture, never asking first. The marks from before are kept for ONE Ctrl+Z; the
+        snapshot lives until the next Mark all / Unmark all or U (start fresh) replaces it, or the window closes."""
+        c = self.catalog
+        n = len(c)
+        if not n:
+            self.say("No pictures to mark")
+            return
+        before = self._marks_set()
+        changed = n - len(before) if on else len(before)
+        if changed == 0:
+            self.say("Everything is already marked" if on else "Nothing is marked")
+            return
+        self._markall_undo = before
+        for i in range(n):
+            c.set_mark(i, on)
+        self._markall_after = self._marks_set()
+        self._marks_changed_everywhere()
+        if on:
+            self.say(f"Marked {changed} (Ctrl+Z undoes)" if changed == n
+                     else f"Marked {changed} more, {n} in all (Ctrl+Z undoes)")
+        else:
+            self.say(f"Unmarked {changed} (Ctrl+Z undoes)")
+
+    def undo_mark_all(self) -> None:
+        prev, self._markall_undo = self._markall_undo, None
+        if prev is None:
+            self.say("Nothing to undo")
+            return
+        c = self.catalog
+        later = len(self._marks_set() ^ self._markall_after)  # pictures marked or unmarked by hand since the action
+        for i in range(len(c)):
+            c.set_mark(i, i in prev)
+        self._marks_changed_everywhere()
+        note = f" ({later} later change{'s' if later != 1 else ''} replaced)" if later else ""
+        self.say(f"Undid Mark all / Unmark all: {len(prev)} marked again{note}")
+
+    # -- rotation (clockwise quarter turns; a copy writes it into the EXIF of the copy only) --------
+    def _rotation_of(self, i: int) -> int:
+        return self.rotations.get(i, 0)
+
+    def _views(self) -> list:
+        return [v for v in (self.viewer, self.filmstrip, self.review, self.compare) if v is not None]
+
+    def _rotation_targets(self) -> list[int]:
+        if self._compare_shown():
+            f = self.compare.focused_index()
+            return [f] if f >= 0 else []
+        shown = self._review_shown_index()
+        if shown is _NOT_IN_REVIEW:
+            return [self.catalog.index] if len(self.catalog) else []
+        if getattr(getattr(self.review, "stack", None), "currentIndex", lambda: 0)() == 2 and shown is not None:
+            return [shown]  # the grid's zoom page: the picture it shows
+        picks = self._review_picks()
+        return picks if picks else ([] if shown is None else [shown])
+
+    def rotate(self, delta: int) -> None:
+        """Turn the picture(s) in view by `delta` quarter turns (-1 left, +1 right): the viewer's picture, the
+        review's selected pictures, compare's focused cell."""
+        targets = self._rotation_targets()
+        if not targets:
+            return
+        for i in targets:
+            t = (self.rotations.get(i, 0) + delta) % 4
+            if t:
+                self.rotations[i] = t
+            else:
+                self.rotations.pop(i, None)
+        for i in targets:
+            for v in self._views():
+                v.rotation_changed(i)
+        side = "right" if delta > 0 else "left"
+        if len(targets) == 1:
+            t = self.rotations.get(targets[0], 0)
+            name = self.catalog.pictures[targets[0]].stem
+            self.say(f"Turned {name} {side}: now {t * 90}° clockwise" if t else f"Turned {name} {side}: upright again")
+        else:
+            self.say(f"Turned {len(targets)} pictures {side}")
+
+    def _copy_rotations(self, pictures) -> dict:
+        """Picture.primary -> quarter turns, for the pictures being copied that have a turn."""
+        want = {id(p) for p in pictures}
+        return {p.primary: self.rotations[i] for i, p in enumerate(self.catalog.pictures)
+                if self.rotations.get(i) and id(p) in want}
+
     # -- rendering --------------------------------------------------------------------------------
     def _render_current(self) -> None:
         i, pic = self.catalog.index, self.catalog.current
@@ -388,7 +532,7 @@ class MainWindow(QMainWindow):
         if self.peaking is not None:
             self.peaking.show(i, img)
         if self.marker is not None:
-            self.marker.set_point(self._focus_frac(i) if img is not None else None)
+            self.marker.set_point(self._focus_frac(i) if img is not None and not self.viewer.sensor_shown else None)
 
     def _say_banner(self) -> None:
         if self._banner:
@@ -412,6 +556,7 @@ class MainWindow(QMainWindow):
             self.buttons["mark"].setEnabled(shown is not None)
             self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
         self.sidebar.set_counts(len(cat), cat.marked_count)
+        self._sync_mark_all()
         if pic is not None:
             self.viewer.strip.set_state(cat.position_text(), marked, pic.stem, pic.kind, cat.marked_count)
             self.inspector.set_picture(pic, self.prefetcher.info(i), marked, self.prefetcher.failed_reason(i))
@@ -456,7 +601,7 @@ class MainWindow(QMainWindow):
             self.buttons["fullscreen"].setChecked(self.is_bleed)  # full-bleed is inert in review
             return
         self.is_bleed = on
-        for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
+        for w in (self.toolbar, self.toolbar3, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
             w.setVisible(not on)
         self.toolbar2.setVisible(not on and self._next_row_wanted())
         self.viewer.set_bleed(on)  # hidden; pointer movement reveals it
@@ -500,6 +645,7 @@ class MainWindow(QMainWindow):
                 self.stack.removeWidget(self._review_slot)
                 self._review_slot.deleteLater()
                 self._review_slot = None
+            self.review.rotation_of = self._rotation_of
             self.stack.insertWidget(1, self.review)
             self.review.open_index.connect(self._review_open_index)
             self.review.marks_changed.connect(self._review_marks_changed)
@@ -592,7 +738,9 @@ class MainWindow(QMainWindow):
         return CopySheet(pictures, default_dest=default_dest, parent=parent,
                          others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()),
                          organise=settings.read_organise(self.prefs), eject_after=settings.read_eject_after(self.prefs),
-                         quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount)
+                         quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount,
+                         rotations=self._copy_rotations(pictures),
+                         write_rotation=settings.read_write_rotation(self.prefs))
 
     def open_copy(self) -> None:
         marked = self.catalog.marked()
@@ -618,7 +766,9 @@ class MainWindow(QMainWindow):
                           resume=settings.read_resume_on(self.prefs),
                           organise=settings.read_organise(self.prefs),
                           eject_after=settings.read_eject_after(self.prefs),
-                          quit_after=settings.read_quit_after(self.prefs))
+                          quit_after=settings.read_quit_after(self.prefs),
+                          write_rotation=settings.read_write_rotation(self.prefs),
+                          zoom_full_sensor=settings.read_zoom_full_sensor(self.prefs))
 
     def _show_mode(self) -> None:
         adv = features.is_advanced()
@@ -682,13 +832,19 @@ class MainWindow(QMainWindow):
                 settings.write_resume_on(self.prefs, r)
                 remember = r
         for name, write in (("organise", settings.write_organise), ("eject_after", settings.write_eject_after),
-                            ("quit_after", settings.write_quit_after)):  # classic rows: saved in any mode, if flipped
+                            ("quit_after", settings.write_quit_after),
+                            ("write_rotation", settings.write_write_rotation),
+                            ("zoom_full_sensor", settings.write_zoom_full_sensor)):  # classic rows: saved in any mode, if flipped
             getter = getattr(sheet, name, None)
             if callable(getter):
                 v = bool(getter())
-                if v != getattr(sheet, "seeded_" + {"eject_after": "eject", "quit_after": "quit"}.get(name, name), v):
+                if v != getattr(sheet, "seeded_" + {"eject_after": "eject", "quit_after": "quit",
+                                                        "write_rotation": "rotation", "zoom_full_sensor": "sensor"}.get(name, name), v):
                     write(self.prefs, v)
         self.prefs.sync()
+        sensor = getattr(sheet, "zoom_full_sensor", None)  # classic row: the viewer follows the sheet at once
+        if callable(sensor):
+            self.viewer.set_zoom_full_sensor(bool(sensor()))
         if changed:
             self.set_advanced(adv)
         if peak is not None:
@@ -711,6 +867,14 @@ class MainWindow(QMainWindow):
             return fi.frac() if fi is not None else None
         except Exception:  # noqa: BLE001 - a bad point must never break Z or a step
             return None
+
+    def _marker_follows_frame(self, *_a) -> None:
+        """The AF point is in the camera frame (the preview); over the full-sensor image it would be misplaced,
+        so the ring is hidden there and comes back with the camera frame."""
+        if self.marker is None:
+            return
+        i = self.viewer.index
+        self.marker.set_point(None if self.viewer.sensor_shown else self._focus_frac(i))
 
     def _zoom_target(self):
         return self._focus_frac(self.viewer.index)
@@ -834,7 +998,7 @@ class MainWindow(QMainWindow):
             from spuza.ui.resume import ResumeController
 
             store = SessionStore()  # builds a path only; the folder is made on the first save
-            self.resume = ResumeController(self.catalog, self.root, store, parent=self)
+            self.resume = ResumeController(self.catalog, self.root, store, parent=self, rotations=self.rotations)
             remember = settings.read_resume_on(self.prefs)
             self.resume.set_enabled(remember)
             if remember and not self._pruned:
@@ -853,6 +1017,7 @@ class MainWindow(QMainWindow):
 
     def start_fresh(self) -> None:
         ctl = self._ensure_resume()
+        self._markall_undo = None  # U has its own undo; a stale Mark all snapshot must not undo over it
         if ctl is None:
             return
         text = ctl.start_fresh()
@@ -870,6 +1035,7 @@ class MainWindow(QMainWindow):
             from spuza.ui.compare import CompareView  # lazy: only advanced mode ever builds it
 
             cv = CompareView(self.catalog, self.prefetcher)
+            cv.rotation_of = self._rotation_of
             strip = QLabel()
             strip.setStyleSheet("background: rgba(0,0,0,150); color: #f2f2f4; padding: 6px 14px;")
             strip.setVisible(self.is_bleed)
@@ -1098,6 +1264,7 @@ class MainWindow(QMainWindow):
             f"#btn_copy {{ background: {c.accent}; color: #ffffff; font-weight: 600; border-color: {c.accent}; }}")
         self.toolbar.setStyleSheet(bar_css)
         self.toolbar2.setStyleSheet(bar_css)
+        self.toolbar3.setStyleSheet(bar_css)
         self.sidebar.retheme()
         self.viewer.retheme()
         self.filmstrip.retheme()
@@ -1123,6 +1290,7 @@ class MainWindow(QMainWindow):
             self._cmp_pool.waitForDone(MASK_WAIT_MS)
         if self.peaking is not None:
             self.peaking.shutdown()
+        self.filmstrip.shutdown()
         self.prefetcher.shutdown()
         self.viewer.shutdown()
         super().closeEvent(e)

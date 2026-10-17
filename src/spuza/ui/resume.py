@@ -28,8 +28,10 @@ IO_WAIT_SECONDS = 1.0  # the longest start_fresh() waits for the store lock (a s
 
 
 class ResumeController(QObject):
-    def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None):
+    def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None,
+                 rotations: dict | None = None):
         super().__init__(parent)
+        self.rotations = rotations if rotations is not None else {}  # contract fr3: the window's dict, shared
         self._catalog, self._root = catalog, root
         self._store = store  # built on first use: classic never touches app data
         self._key: str | None = None
@@ -55,7 +57,9 @@ class ResumeController(QObject):
 
     def _snapshot(self):
         c = self._catalog
-        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index
+        turned = frozenset((i, t % 4) for i, t in dict(self.rotations).items()
+                           if isinstance(t, int) and not isinstance(t, bool) and t % 4)
+        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned
 
     def _get_store(self) -> SessionStore:
         if self._store is None:
@@ -67,16 +71,20 @@ class ResumeController(QObject):
             self._key = card_key(self._root, self._catalog.pictures)
         return self._key
 
+    def _save(self, snap) -> None:
+        extra = {"rotations": dict(snap[2])} if snap[2] else {}  # a store without the keyword still saves marks
+        self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1], **extra)
+
     def _write(self, snap) -> None:
         with self._io:
-            self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1])
+            self._save(snap)
 
     def _write_bounded(self, snap) -> bool:
         """_write, but give up (False) when the store lock is not free within IO_WAIT_SECONDS."""
         if not self._io.acquire(timeout=IO_WAIT_SECONDS):
             return False
         try:
-            self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1])
+            self._save(snap)
         finally:
             self._io.release()
         return True
@@ -140,9 +148,13 @@ class ResumeController(QObject):
         for i in r.marks:
             c.set_mark(i, True)
         c.go(r.index)
+        self.rotations.clear()
+        self.rotations.update(r.rotations)
         self._last = self._snapshot()
         n = len(r.marks)
-        what = f"{n} mark{'s' if n != 1 else ''} and your place" if n else "your place"
+        k = len(r.rotations)
+        parts = ([f"{n} mark{'s' if n != 1 else ''}"] if n else []) + ([f"{k} rotation{'s' if k != 1 else ''}"] if k else [])
+        what = " and ".join(parts + ["your place"])
         when = datetime.fromtimestamp(r.saved_at).strftime("%d %b %H:%M")
         extra = f" ({r.dropped} changed or missing skipped)" if r.dropped else ""
         return f"Restored {what} (picture {c.index + 1}) from {when}{extra} · U to start fresh"
@@ -176,7 +188,7 @@ class ResumeController(QObject):
                 self._get_store().forget(self._get_key())
             finally:
                 self._io.release()
-            self._last = self._snapshot()
+            self._last = self._snapshot() if not self.rotations else None  # rotations outlive U: the next tick saves them
             busy = ""
         else:  # a write is stuck: do not freeze the GUI behind it; the next tick saves the cleared state instead
             busy = " (the saved session is busy; it is replaced when it frees)"

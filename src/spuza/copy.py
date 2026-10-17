@@ -6,11 +6,12 @@ worker thread. The only file this module ever removes is its own half-written ``
 
 import os
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from spuza import rotation
 from spuza.catalog import KNOWN_EXTS, RAW_EXTS
 
 CHUNK = 1024 * 1024
@@ -25,6 +26,7 @@ class CopyItem:
     dst: Path
     size: int
     action: str  # "copy" | "skip" | "rename"
+    turns: int = 0  # clockwise quarter turns to write into this copy as EXIF orientation (0: none)
 
 
 @dataclass
@@ -44,6 +46,8 @@ class CopyResult:
     bytes_copied: int = 0
     log_path: Path | None = None
     cancelled: bool = False
+    rotated: list[Path] = field(default_factory=list)  # source paths whose copy got a new EXIF orientation
+    rotation_kept: list[tuple[Path, str]] = field(default_factory=list)  # source path, why the copy kept its own
 
 
 def human_size(n: int) -> str:
@@ -84,6 +88,17 @@ def _same_content(a: Path, b: Path) -> bool:
         return False
 
 
+def _same_planned(src: Path, dst: Path, turns: int) -> bool:
+    """dst already holds what a copy of src with `turns` would hold (src plus the orientation patch, if it applies)."""
+    patch = None
+    if turns:
+        try:
+            patch = rotation.plan_patch(src, turns)
+        except Exception:  # noqa: BLE001 - a file that cannot be patched is copied (and reported) as it is
+            patch = None
+    return rotation.matches(src, dst, patch) if patch else _same_content(src, dst)
+
+
 def _suffixed(name: str, n: int) -> str:
     if n == 0:
         return name
@@ -108,11 +123,14 @@ def _subdir(f: Path, has_raw: bool) -> str:
     return RAW_DIR if has_raw else SOC_DIR
 
 
-def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = False) -> CopyPlan:
+def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = False,
+              turns: Mapping[Path, int] | None = None) -> CopyPlan:
     """Decide, per file, copy / skip / rename. Creates nothing.
 
     With ``organise`` each file targets ``dest/raw`` or ``dest/soc`` (companions follow the group's picture:
     raw if the group has a raw file, else soc); a RAF+JPG pair splits. Names are checked per target folder.
+    ``turns`` maps a source file to the clockwise quarter turns to write into its copy as EXIF orientation; a copy
+    already there counts as identical when it equals the source plus that patch.
     """
     dest = Path(dest)
     plan = CopyPlan(dest=dest, organise=bool(organise))
@@ -135,7 +153,7 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
                 break
             if not os.path.lexists(target):
                 actions.append("copy")
-            elif _same_content(f, target):
+            elif _same_planned(f, target, int((turns or {}).get(f, 0)) % 4):
                 actions.append("skip")
             else:
                 actions = None
@@ -153,7 +171,7 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
             name = _suffixed(f.name, n)
             taken.add((sub, name.casefold()))
             size = _size(f)
-            plan.items.append(CopyItem(f, folder / name, size, act))
+            plan.items.append(CopyItem(f, folder / name, size, act, int((turns or {}).get(f, 0)) % 4))
             if act != "skip":
                 plan.total_bytes += size
     return plan
@@ -234,7 +252,7 @@ def run_copy(
         if progress:
             progress(done, total, src)
 
-    def copy_one(item: CopyItem) -> Path:
+    def copy_one(item: CopyItem) -> tuple[Path, rotation.Outcome | None]:
         nonlocal done
         tmp = item.dst.with_name(f".{item.dst.name}.spuza-part")
         try:
@@ -249,6 +267,7 @@ def run_copy(
                     done += len(chunk)
                     res.bytes_copied += len(chunk)
                     report(item.src)
+            outcome = rotation.apply_rotation(item.src, tmp, item.turns) if item.turns else None
             shutil.copystat(item.src, tmp)
             dst = item.dst
             while True:
@@ -257,7 +276,7 @@ def run_copy(
                     break
                 except FileExistsError:
                     dst = _free_name(item.dst)  # target appeared meanwhile: rename, never overwrite
-            return dst
+            return dst, outcome
         except BaseException:
             try:
                 os.unlink(tmp)  # our own temp, the only removal this module makes
@@ -275,7 +294,7 @@ def run_copy(
             continue
         before = done
         try:
-            final = copy_one(item)
+            final, outcome = copy_one(item)
         except _Cancelled:
             res.bytes_copied -= done - before
             res.cancelled = True
@@ -291,6 +310,13 @@ def run_copy(
         res.copied.append(item.src)
         tag = "RENAME" if item.action == "rename" or final != item.dst else "COPY  "
         notes.append(f"{tag} {item.src} -> {final}")
+        if outcome is not None and outcome.status == "written":
+            res.rotated.append(item.src)
+            notes.append(f"ROTATE {final}: orientation {outcome.before} -> {outcome.after} "
+                         f"(checked: {', '.join(outcome.checked_with)})")
+        elif outcome is not None and outcome.status == "kept":
+            res.rotation_kept.append((item.src, outcome.reason))
+            notes.append(f"KEPT   {final}: original orientation kept ({outcome.reason})")
 
     if log_path is None:
         log_path = logs_dir() / f"spuza-copy-{datetime.now():%Y%m%d-%H%M%S}.log"
@@ -299,6 +325,8 @@ def run_copy(
         f"Totals: {len(res.copied)} copied, {len(res.skipped)} skipped, {len(res.failed)} failed, "
         f"{human_size(res.bytes_copied)} written" + (", CANCELLED" if res.cancelled else "")
     )
+    if res.rotated or res.rotation_kept:
+        lines.append(f"Rotation: {len(res.rotated)} written, {len(res.rotation_kept)} kept their original orientation")
     try:
         res.log_path = _write_log(Path(log_path), "\n".join(lines) + "\n")
     except OSError:

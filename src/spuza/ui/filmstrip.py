@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtWidgets import QAbstractItemView, QListView, QStyledItemDelegate
 
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
+from spuza.ui.thumbs import ThumbLoader
 
 CELL_W, CELL_H = 112, 84
 THUMB_W, THUMB_H = 104, 62
 MEMO_MAX = 600  # scaled thumbnails kept; oldest dropped first
+SCROLL_DEBOUNCE_MS = 150  # a scroll or resize settles this long before the strip asks for thumbnails
 
 
 class _Model(QAbstractListModel):
@@ -98,7 +100,14 @@ class Filmstrip(QListView):
     def __init__(self, catalog, prefetcher=None, parent=None):
         super().__init__(parent)
         self.catalog, self.prefetcher, self.current = catalog, prefetcher, 0
-        self._memo: dict[int, QPixmap] = {}
+        self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
+        self._memo: dict[tuple[int, int], QPixmap] = {}  # (index, quarter turns) -> scaled, rotated pixmap
+        self._loader = ThumbLoader(lambda i: self.catalog.pictures[i].primary, self)
+        self._loader.loaded.connect(self._on_loaded)
+        self._settle = QTimer(self)
+        self._settle.setSingleShot(True)
+        self._settle.setInterval(SCROLL_DEBOUNCE_MS)
+        self._settle.timeout.connect(self.request_visible)
         self.highlight: frozenset[int] = frozenset()  # compare's cells; empty in classic
         self._model = _Model(self)
         self.setModel(self._model)
@@ -114,15 +123,28 @@ class Filmstrip(QListView):
         self.setFrameShape(QListView.Shape.NoFrame)
         self.setFixedHeight(CELL_H + 18)
         self.clicked.connect(lambda ix: self.picked.emit(ix.row()))
+        self.horizontalScrollBar().valueChanged.connect(lambda _v: self._settle.start())
 
     # -- data the delegate reads ------------------------------------------------------------------
+    def _turns(self, i: int) -> int:
+        try:
+            return int(self.rotation_of(i)) % 4
+        except Exception:
+            return 0
+
     def thumb(self, i: int) -> QPixmap | None:
-        got = self._memo.get(i)
+        turns = self._turns(i)
+        got = self._memo.get((i, turns))
         if got is not None:
             return got
         img = self.prefetcher.cached(i) if self.prefetcher is not None else None
-        if img is None or img.isNull():
-            return None
+        scaled = img is None or img.isNull()
+        if scaled:  # the main prefetch does not hold it: the strip's own loader may
+            img = self._loader.cached(i)
+            if img is None or img.isNull():
+                return None
+        if turns:
+            img = img.transformed(QTransform().rotate(90 * turns))
         dpr = max(1.0, self.devicePixelRatioF())
         tw, th = round(THUMB_W * dpr), round(THUMB_H * dpr)
         big = img.scaled(tw * 3, th * 3, Qt.AspectRatioMode.KeepAspectRatio,
@@ -130,10 +152,45 @@ class Filmstrip(QListView):
         pm = QPixmap.fromImage(big.scaled(tw, th, Qt.AspectRatioMode.KeepAspectRatio,
                                           Qt.TransformationMode.SmoothTransformation))
         pm.setDevicePixelRatio(dpr)
-        self._memo[i] = pm
+        self._memo[(i, turns)] = pm
         while len(self._memo) > MEMO_MAX:
             del self._memo[next(iter(self._memo))]
         return pm
+
+    # -- the strip's own thumbnail requests ---------------------------------------------------------
+    def visible_range(self) -> tuple[int, int]:
+        """First and last cell index at least partly in view (cells are uniform, laid out left to right)."""
+        n = len(self.catalog)
+        if n == 0:
+            return 0, -1
+        lo = max(0, self.horizontalScrollBar().value() // CELL_W)
+        hi = (self.horizontalScrollBar().value() + self.viewport().width()) // CELL_W
+        return min(lo, n - 1), min(max(lo, hi), n - 1)
+
+    def request_visible(self) -> None:
+        """Ask the loader for the visible cells plus one screen either side, nearest the middle first."""
+        n = len(self.catalog)
+        if n == 0:
+            return
+        lo, hi = self.visible_range()
+        span = hi - lo + 1
+        a, b = max(0, lo - span), min(n - 1, hi + span)
+        mid = (lo + hi) / 2
+        want = [i for i in sorted(range(a, b + 1), key=lambda k: abs(k - mid))
+                if self.prefetcher is None or self.prefetcher.cached(i) is None]
+        dpr = max(1.0, self.devicePixelRatioF())
+        self._loader.request(want, round(THUMB_W * dpr), round(THUMB_H * dpr))
+
+    def _on_loaded(self, i: int) -> None:
+        self._model.touch(i, i)
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        self._settle.start()
+
+    def showEvent(self, e) -> None:  # noqa: N802
+        super().showEvent(e)
+        self._settle.start()
 
     # -- right-click: reveal the picture in the file manager ----------------------------------------
     def context_menu_for(self, pos):
@@ -173,6 +230,15 @@ class Filmstrip(QListView):
     def item_changed(self, i: int) -> None:
         """A thumbnail arrived or a mark flipped."""
         self._model.touch(i, i)
+
+    def rotation_changed(self, i: int) -> None:
+        """Contract fr3: picture i's rotation changed; repaint it (the memo is keyed by turns, so it just misses)."""
+        self._model.touch(i, i)
+
+    def shutdown(self, timeout_ms: int = 3000) -> None:
+        """Contract fr3: stop the strip's own thumbnail workers (the window's closeEvent calls it)."""
+        self._settle.stop()
+        self._loader.shutdown(timeout_ms)
 
     def retheme(self) -> None:
         self.viewport().update()
