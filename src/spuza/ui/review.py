@@ -132,6 +132,7 @@ class ReviewGrid(QWidget):
         super().__init__(parent)
         self.catalog, self.prefetcher = catalog, prefetcher
         self._loader = loader
+        self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self._thumbs: dict[int, QPixmap] = {}
         self._failed: set[int] = set()
         self._queue: list[int] = []
@@ -460,6 +461,9 @@ class ReviewGrid(QWidget):
         else:
             return False
         return True
+
+    def rotation_changed(self, i: int) -> None:
+        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         self._queue.clear()

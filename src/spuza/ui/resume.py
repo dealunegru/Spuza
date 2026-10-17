@@ -28,8 +28,10 @@ IO_WAIT_SECONDS = 1.0  # the longest start_fresh() waits for the store lock (a s
 
 
 class ResumeController(QObject):
-    def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None):
+    def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None,
+                 rotations: dict | None = None):
         super().__init__(parent)
+        self.rotations = rotations if rotations is not None else {}  # contract fr3: the window's dict, shared
         self._catalog, self._root = catalog, root
         self._store = store  # built on first use: classic never touches app data
         self._key: str | None = None

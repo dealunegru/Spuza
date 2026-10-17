@@ -98,6 +98,7 @@ class Filmstrip(QListView):
     def __init__(self, catalog, prefetcher=None, parent=None):
         super().__init__(parent)
         self.catalog, self.prefetcher, self.current = catalog, prefetcher, 0
+        self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self._memo: dict[int, QPixmap] = {}
         self.highlight: frozenset[int] = frozenset()  # compare's cells; empty in classic
         self._model = _Model(self)
@@ -173,6 +174,13 @@ class Filmstrip(QListView):
     def item_changed(self, i: int) -> None:
         """A thumbnail arrived or a mark flipped."""
         self._model.touch(i, i)
+
+    def rotation_changed(self, i: int) -> None:
+        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
+        self._model.touch(i, i)
+
+    def shutdown(self, timeout_ms: int = 3000) -> None:
+        """Contract fr3: stop the strip's own thumbnail workers (the window's closeEvent calls it)."""
 
     def retheme(self) -> None:
         self.viewport().update()

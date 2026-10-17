@@ -127,6 +127,7 @@ class Viewer(QGraphicsView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self.needs_full_decode = _default_needs_full_decode
         self.full_decode = _default_full_decode
         self.index = -1
@@ -392,6 +393,9 @@ class Viewer(QGraphicsView):
         self.setBackgroundBrush(QColor(c.stage))
         self.message.setStyleSheet(f"color: {c.dim}; font-size: 15px;")
         self.viewport().update()
+
+    def rotation_changed(self, i: int) -> None:
+        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         self.pool.clear()

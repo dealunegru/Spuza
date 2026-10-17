@@ -262,6 +262,7 @@ class CompareView(QWidget):
         super().__init__(parent)
         self.catalog, self.prefetcher = catalog, prefetcher
         self._loader = loader
+        self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self._cells: list[_Cell] = []
         self._focus = 0  # position in _cells
         self._run = False
@@ -343,6 +344,9 @@ class CompareView(QWidget):
         idx = self.focused_index()
         self._reset()
         self.closed.emit(idx)
+
+    def rotation_changed(self, i: int) -> None:
+        """Contract fr3: picture i's rotation changed; repaint it if shown (filled in by its cluster)."""
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         self._gen += 1
