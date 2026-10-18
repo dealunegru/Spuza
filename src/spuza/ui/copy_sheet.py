@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from spuza import copy as copy_mod
 from spuza import crop as crop_mod
 from spuza import eject as eject_mod
+from spuza import story as story_mod
 from spuza.catalog import KNOWN_EXTS
 from spuza.copy import human_size
 
@@ -129,7 +130,9 @@ class CopySheet(QDialog):
             c = crop_mod.normalise(v)
             if c is not None:
                 self.crops[k] = c
-        self.stories = dict(stories or {})  # contract fr5: Picture.primary -> spuza.story.Story (export: fr5-storycopy)
+        # contract fr5: Picture.primary -> spuza.story.Story; an entry that is not a Story is dropped. Each exports as
+        # <dest>/ed/<stem>_story.jpg (1080x1920) with the picture's turns baked in.
+        self.stories = {k: v for k, v in dict(stories or {}).items() if isinstance(v, story_mod.Story)}
         self.organise = bool(organise)
         self.eject_after = bool(eject_after)
         self.quit_after = bool(quit_after)
@@ -374,9 +377,21 @@ class CopySheet(QDialog):
             jobs.append(crop_mod.CropJob(p.primary, getattr(p, "sidecar", None), c, t))
         return jobs
 
+    def _story_jobs(self) -> list:
+        """One job per marked picture that has a story fit; turns baked in, like a crop's."""
+        jobs = []
+        for p in self.pictures:
+            s = self.stories.get(getattr(p, "primary", None))
+            if s is None:
+                continue
+            t = self.rotations.get(p.primary, 0)
+            t = t % 4 if isinstance(t, int) and not isinstance(t, bool) else 0
+            jobs.append(story_mod.StoryJob(p.primary, getattr(p, "sidecar", None), s, t))
+        return jobs
+
     def _plan(self):
         return copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise, self._turns(),
-                                  self._crop_jobs())
+                                  self._crop_jobs(), self._story_jobs())
 
     def _show_plan(self, plan=None) -> None:
         self.plan = plan or self._plan()
@@ -384,6 +399,8 @@ class CopySheet(QDialog):
         text = f"Will copy {len(self.plan.items) - skip} files, skip {skip} already there"
         if self.plan.crop_items:
             text += f" · {len(self.plan.crop_items)} cropped into {copy_mod.ED_DIR} (size estimated)"
+        if self.plan.story_items:
+            text += f" · {len(self.plan.story_items)} story fit into {copy_mod.ED_DIR} (size estimated)"
         if self.total_twins:
             text += f" · {self._twin_note()}"
         self.plan_label.setText(text)
@@ -449,6 +466,9 @@ class CopySheet(QDialog):
         cropped = getattr(res, "cropped", ())
         if cropped:
             text += f" · cropped {len(cropped)} into {copy_mod.ED_DIR}"
+        stories = getattr(res, "stories", ())
+        if stories:
+            text += f" · story {len(stories)} into {copy_mod.ED_DIR}"
         rot = self._rotation_text(res)
         if rot:
             text += f" · {rot}"
