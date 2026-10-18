@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from spuza import features
 from spuza.copy import human_size
 from spuza.reveal import reveal_menu
+from spuza.ui.viewer import info_native_size, step_scale
 
 THUMB_SIDE = 480  # decode size for the worker
 CELL = QSize(212, 176)
@@ -150,6 +151,8 @@ class ReviewGrid(QWidget):
         self._pool.setMaxThreadCount(2)
         self._zoom_index: int | None = None
         self._zoom_fit = True
+        self._zoom_scale = 1.0  # while not fit: picture pixels per device pixel (1.0 = Z's 100%)
+        self._zoom_pct = False  # the level was chosen with + / -: the caption shows its percentage
         self._zoom_loading: set[int] = set()  # ZOOM_SIDE decodes in flight
         self._zoom_big: dict[int, QImage] = {}
         self._native_img: tuple[int, QImage] | None = None  # the one native-size decode held (96 MB at 24 MP)
@@ -395,7 +398,7 @@ class ReviewGrid(QWidget):
         i = self.selected_index()
         if i is None:
             return
-        self._zoom_index, self._zoom_fit = i, True
+        self._zoom_index, self._zoom_fit, self._zoom_pct = i, True, False
         self.stack.setCurrentIndex(PAGE_ZOOM)
         self._update_caption()
         img = self._zoom_big.get(i)
@@ -423,17 +426,22 @@ class ReviewGrid(QWidget):
             return
         pic = self.catalog.pictures[i]
         state = ""
+        lab = self.zoom_label()
         if not self._zoom_fit:
             if self._zoom_native:
-                state = " · 100%"
+                state = f" · {lab}"
             elif i in self._native_failed:
                 state = " · preview pixels only (full decode failed)"
             else:
-                state = " · 100% … decoding full resolution…"
+                state = f" · {lab} … decoding full resolution…"
         self.zoom_caption.setText(
             f"{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}{state}"
-            "   (Z: fit / 100%, M: unmark, Esc: back)"
+            "   (Z: fit / 100%, + / -: zoom, M: unmark, Esc: back)"
         )
+
+    def zoom_label(self) -> str:
+        """"100%" for Z; the level's own percentage once + or - chose it."""
+        return f"{int(round(self._zoom_scale * 100))}%" if self._zoom_pct and not self._zoom_fit else "100%"
 
     def _centre_frac(self):
         """The centre of the zoom page as a fraction of the picture, in its own (unrotated) frame."""
@@ -465,13 +473,70 @@ class ReviewGrid(QWidget):
             self.zoom_view.fitInView(self._zoom_item, Qt.AspectRatioMode.KeepAspectRatio)
         elif self._zoom_item is not None:
             dpr = self.zoom_view.devicePixelRatioF()
-            if dpr > 1.0:  # 100% means one image pixel per device pixel
-                self.zoom_view.scale(1.0 / dpr, 1.0 / dpr)
+            # 100% means one picture pixel per device pixel; a smaller picture on screen than the native one
+            # is drawn at the native size, so the swap to the native pixels does not jump
+            t = self._zoom_scale * self._preview_ratio() / dpr
+            if abs(t - 1.0) > 1e-9:
+                self.zoom_view.scale(t, t)
             if frac is None:
                 frac = self._focus_frac(self._zoom_index)  # advanced + focus_point: 100% lands on the AF point
             if frac is not None:
                 pm = self._zoom_item.pixmap()
                 self.zoom_view.centerOn(self._zoom_item.mapToScene(QPointF(frac[0] * pm.width(), frac[1] * pm.height())))
+
+    def _native_size(self):
+        """The zoom page picture's native (w, h) in its pixmap's frame; None with no picture on screen."""
+        if self._zoom_item is None:
+            return None
+        pm = self._zoom_item.pixmap()
+        shown = (pm.width(), pm.height())
+        if self._zoom_native:
+            return shown
+        i = self._zoom_index
+        if self._native_img is not None and self._native_img[0] == i:
+            return (self._native_img[1].width(), self._native_img[1].height())
+        try:
+            info = self.prefetcher.info(i) if self.prefetcher is not None else None
+        except Exception:  # noqa: BLE001 - a bad info provider just means the pixmap size is used
+            info = None
+        return info_native_size(info, shown) or shown
+
+    def _preview_ratio(self) -> float:
+        nat = self._native_size()
+        if nat is None or self._zoom_item is None or self._zoom_item.pixmap().width() <= 0:
+            return 1.0
+        return nat[0] / self._zoom_item.pixmap().width()
+
+    def _fit_scale(self) -> float:
+        nat = self._native_size()
+        if nat is None:
+            return 1.0
+        w, h = (nat[1], nat[0]) if self._quarters(self._zoom_index) % 2 else nat
+        vp = self.zoom_view.viewport()
+        return min(vp.width() / max(1, w), vp.height() / max(1, h)) * self.zoom_view.devicePixelRatioF()
+
+    def zoom_step(self, up: bool) -> None:
+        """+ (up) or - (down) on the zoom page: the next 25% level; - from the lowest goes back to fit. The grid
+        page ignores both."""
+        if self.stack.currentIndex() != PAGE_ZOOM or self._zoom_item is None:
+            return
+        if self._zoom_fit and not up:
+            return
+        fit = self._fit_scale()
+        new = step_scale(fit if self._zoom_fit else self._zoom_scale, fit, up)
+        if new is None:
+            return
+        was_fit = self._zoom_fit
+        frac = None if was_fit else self._centre_frac()
+        if new == 0.0:
+            self._zoom_fit, self._zoom_pct = True, False
+            self._apply_zoom()
+        else:
+            self._zoom_fit, self._zoom_scale, self._zoom_pct = False, new, True
+            self._apply_zoom(frac)
+            if was_fit:
+                self._want_native()
+        self._update_caption()
 
     def _want_native(self) -> None:
         """Going to 100%: put the native pixels on screen, loading them once if they are not held yet."""
@@ -512,6 +577,7 @@ class ReviewGrid(QWidget):
             self.show_zoom()
         else:
             self._zoom_fit = not self._zoom_fit
+            self._zoom_scale, self._zoom_pct = 1.0, False
             self._apply_zoom()
             if not self._zoom_fit:
                 self._want_native()
@@ -563,6 +629,10 @@ class ReviewGrid(QWidget):
             self.unmark_selected()
         elif k == Qt.Key.Key_Z:
             self.toggle_zoom()
+        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_step(True)
+        elif k == Qt.Key.Key_Minus:
+            self.zoom_step(False)
         elif k in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             i = self._zoom_index if zooming else self.selected_index()
             if i is not None:

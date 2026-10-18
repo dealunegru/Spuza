@@ -21,6 +21,7 @@ from PySide6.QtCore import QObject, QTimer
 
 from spuza import features
 from spuza.session import SessionStore, card_key
+from spuza.story import Story
 
 UNDO_SECONDS = 10.0
 JOIN_SECONDS = 1.0  # the longest flush() / start_fresh() wait for a write in flight
@@ -29,9 +30,11 @@ IO_WAIT_SECONDS = 1.0  # the longest start_fresh() waits for the store lock (a s
 
 class ResumeController(QObject):
     def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None,
-                 rotations: dict | None = None):
+                 rotations: dict | None = None, crops: dict | None = None, stories: dict | None = None):
         super().__init__(parent)
         self.rotations = rotations if rotations is not None else {}  # contract fr3: the window's dict, shared
+        self.crops = crops if crops is not None else {}  # friend round 5: index -> (l, t, r, b), shared the same way
+        self.stories = stories if stories is not None else {}  # friend round 5: index -> spuza.story.Story
         self._catalog, self._root = catalog, root
         self._store = store  # built on first use: classic never touches app data
         self._key: str | None = None
@@ -59,7 +62,9 @@ class ResumeController(QObject):
         c = self._catalog
         turned = frozenset((i, t % 4) for i, t in dict(self.rotations).items()
                            if isinstance(t, int) and not isinstance(t, bool) and t % 4)
-        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned
+        cropped = frozenset((i, tuple(r)) for i, r in dict(self.crops).items() if isinstance(i, int) and r)
+        storied = frozenset((i, (s.zoom, s.dx, s.dy)) for i, s in dict(self.stories).items() if isinstance(i, int))
+        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned, cropped, storied
 
     def _get_store(self) -> SessionStore:
         if self._store is None:
@@ -73,6 +78,10 @@ class ResumeController(QObject):
 
     def _save(self, snap) -> None:
         extra = {"rotations": dict(snap[2])} if snap[2] else {}  # a store without the keyword still saves marks
+        if snap[3]:
+            extra["crops"] = dict(snap[3])
+        if snap[4]:
+            extra["stories"] = {i: Story(*t) for i, t in snap[4]}
         self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1], **extra)
 
     def _write(self, snap) -> None:
@@ -150,10 +159,16 @@ class ResumeController(QObject):
         c.go(r.index)
         self.rotations.clear()
         self.rotations.update(r.rotations)
+        self.crops.clear()
+        self.crops.update(r.crops)
+        self.stories.clear()
+        self.stories.update({i: Story(*t) for i, t in r.stories.items()})
         self._last = self._snapshot()
         n = len(r.marks)
         k = len(r.rotations)
         parts = ([f"{n} mark{'s' if n != 1 else ''}"] if n else []) + ([f"{k} rotation{'s' if k != 1 else ''}"] if k else [])
+        parts += [f"{len(d)} {word}{'s' if len(d) != 1 else ''}" for d, word in ((r.crops, "crop"), (r.stories, "story fit"))
+                  if d]
         what = " and ".join(parts + ["your place"])
         when = datetime.fromtimestamp(r.saved_at).strftime("%d %b %H:%M")
         extra = f" ({r.dropped} changed or missing skipped)" if r.dropped else ""
@@ -188,7 +203,8 @@ class ResumeController(QObject):
                 self._get_store().forget(self._get_key())
             finally:
                 self._io.release()
-            self._last = self._snapshot() if not self.rotations else None  # rotations outlive U: the next tick saves them
+            # rotations, crops and story fits outlive U (only the marks go): the next tick saves them
+            self._last = self._snapshot() if not (self.rotations or self.crops or self.stories) else None
             busy = ""
         else:  # a write is stuck: do not freeze the GUI behind it; the next tick saves the cleared state instead
             busy = " (the saved session is busy; it is replaced when it frees)"

@@ -1,6 +1,7 @@
 """The big picture: a QGraphicsView on the raster backend (never OpenGL).
 
-Fit-to-window by default; Z toggles 1:1 at the centre and the state carries to the next picture. Z shows the
+Fit-to-window by default; Z toggles 1:1 at the centre, + and - step the zoom in 25% levels of the picture's own
+pixels (fit, 25% .. 400%), and the level carries to the next picture. Z shows the
 native pixels of the picture: the fitted view uses the fast capped decode, so on Z a worker decodes the real
 size (a raw whose embedded preview is much smaller than the frame of the camera, dec-044, is demosaiced and
 cropped to that frame; any other picture is decoded again at the native size of its preview, uncapped). The
@@ -23,6 +24,46 @@ from spuza.ui import theme
 
 REVEAL_MS = 1000  # full-bleed: how long the strip stays after the last pointer move
 FULL_CACHE = 3 # full-resolution decodes kept (a 24 MP image is ~70 MB as a pixmap)
+ZOOM_STEPS = tuple(n / 4 for n in range(1, 17))  # + / - levels above fit: 25% .. 400% of the picture's own pixels
+_EPS = 1e-6
+
+
+def step_scale(cur: float, fit: float, up: bool):
+    """The next + / - level from scale `cur` (1.0 = one picture pixel per device pixel) when fit fills `fit`.
+
+    Returns the new scale, 0.0 for fit, or None when nothing changes (nothing above 400%).
+    In: the smallest step strictly above cur. Out: the largest strictly below, or fit when that is at or below fit."""
+    if up:
+        above = [s for s in ZOOM_STEPS if s > cur + _EPS]
+        return above[0] if above else None
+    below = [s for s in ZOOM_STEPS if s < cur - _EPS]
+    if not below or below[-1] <= fit + _EPS:
+        return 0.0
+    return below[-1]
+
+
+def _size_pair(v):
+    """(w, h) when v is a pair of positive ints, else None."""
+    try:
+        w, h = v
+        if isinstance(w, int) and isinstance(h, int) and not isinstance(w, bool) and w > 0 and h > 0:
+            return w, h
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def info_native_size(info, shown):
+    """The picture's native (w, h) as far as `info` says (picture size, else the preview's own size), turned to
+    the aspect of `shown` (the pixmap on screen); None when it says nothing usable."""
+    got = _size_pair(getattr(info, "picture_size", None))
+    if got is None:
+        got = _size_pair((getattr(info, "width", None), getattr(info, "height", None)))
+    if got is None:
+        return None
+    if shown is not None and (got[0] > got[1]) != (shown[0] > shown[1]) and shown[0] != shown[1]:
+        got = (got[1], got[0])
+    return got
 
 
 def _default_needs_full_decode(path, info) -> bool:
@@ -208,6 +249,8 @@ class Viewer(QGraphicsView):
         self.pic = None
         self.info = None
         self.zoomed = False
+        self.zoom_scale = 1.0  # while zoomed: picture pixels per device pixel (1.0 = Z's 100%)
+        self._pct_mode = False  # the level was chosen with + / -: the HUD shows its percentage
         self.error_text = ""
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
@@ -299,22 +342,27 @@ class Viewer(QGraphicsView):
         except Exception:  # noqa: BLE001 - a bad rotation provider shows the picture unrotated
             return 0
 
+    def zoom_label(self) -> str:
+        """"100%" for Z; the level's own percentage once + or - chose it."""
+        return f"{int(round(self.zoom_scale * 100))}%" if self._pct_mode else "100%"
+
     def zoom_text(self) -> str:
-        """What the HUD may say about the zoom: "100%" only while native pixels are on screen."""
+        """What the HUD may say about the zoom: the level's percentage only while native pixels are on screen."""
         if not self.zoomed:
             return ""
+        lab = self.zoom_label()
         st = self._full.get(self.index)
         if st == "pending":
-            return "100% … decoding full resolution…"
+            return f"{lab} … decoding full resolution…"
         if self._shown_sensor:
-            return "100% · full sensor"
+            return f"{lab} · full sensor"
         if self._shown_native and self.pic is not None and str(self.pic.primary) in self._jpg_bad:
-            return "100% · JPG unreadable, from the raw"
+            return f"{lab} · JPG unreadable, from the raw"
         if self._shown_native or st == "skipped":
-            return "100%"
+            return lab
         if st == "error":
             return "preview pixels only (full decode failed)"
-        return "100% …"
+        return f"{lab} …"
 
     @property
     def sensor_shown(self) -> bool:
@@ -427,8 +475,11 @@ class Viewer(QGraphicsView):
         if self.zoomed:
             self.resetTransform()
             dpr = self.devicePixelRatioF()
-            if dpr > 1.0:  # 100% means one image pixel per device pixel, not per logical pixel
-                self.scale(1.0 / dpr, 1.0 / dpr)
+            # 100% means one picture pixel per device pixel, not per logical pixel; a capped preview still on
+            # screen is drawn at the size the native pixels will have, so the swap does not jump
+            t = self.zoom_scale * self._preview_ratio() / dpr
+            if abs(t - 1.0) > 1e-9:
+                self.scale(t, t)
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             if frac is None and self.zoom_target is not None:
                 try:
@@ -446,16 +497,78 @@ class Viewer(QGraphicsView):
 
     # -- zoom and full decode ---------------------------------------------------------------------
     def toggle_zoom(self) -> None:
-        self.zoomed = not self.zoomed
         if self.zoomed:
-            self._apply_zoom()
-            if not self._swap_cached_full():
-                self._request_full()
+            self._leave_zoom()
         else:
-            if self._preview is not None:
-                self._put(self._preview, keep_centre=False)  # the 1:1 pixmap is not needed to fit
+            self._enter_zoom(1.0, False)
+
+    def _native_size(self):
+        """The picture's native (w, h) in the pixmap's own frame: the pixels on screen when they are native, a
+        full decode in the cache, else what the info says; None when nothing is on screen."""
+        pm = self._item.pixmap()
+        if pm.isNull():
+            return None
+        shown = (pm.width(), pm.height())
+        if self._shown_native or self._shown_sensor or self._full.get(self.index) == "skipped":
+            return shown
+        if self.pic is not None:
+            hit = self._cached_full(str(self.pic.primary))
+            if hit is not None:
+                return (hit[0].width(), hit[0].height())
+        return info_native_size(self.info, shown) or shown
+
+    def _preview_ratio(self) -> float:
+        """How much bigger the native pixels are than the pixmap on screen (1.0 once they are on screen)."""
+        nat, pm = self._native_size(), self._item.pixmap()
+        if nat is None or pm.isNull() or pm.width() <= 0:
+            return 1.0
+        return nat[0] / pm.width()
+
+    def fit_scale(self) -> float:
+        """Picture pixels per device pixel when the picture fills the window (the fit level)."""
+        nat = self._native_size()
+        if nat is None:
+            return 1.0
+        w, h = (nat[1], nat[0]) if self._quarters() % 2 else nat
+        vp = self.viewport()
+        return min(vp.width() / max(1, w), vp.height() / max(1, h)) * self.devicePixelRatioF()
+
+    def _enter_zoom(self, scale: float, pct_mode: bool) -> None:
+        was = self.zoomed
+        frac = self._centre_frac() if was and self.has_image else None  # a step change keeps the centred point
+        self.zoomed, self.zoom_scale, self._pct_mode = True, scale, pct_mode
+        self._apply_zoom(frac)
+        if not was and not self._swap_cached_full():
+            self._request_full()
         self._sync_hud()
-        self.zoom_changed.emit(self.zoomed)
+        if not was:
+            self.zoom_changed.emit(True)
+
+    def _leave_zoom(self) -> None:
+        self.zoomed, self._pct_mode = False, False
+        if self._preview is not None:
+            self._put(self._preview, keep_centre=False)  # the 1:1 pixmap is not needed to fit
+        self._sync_hud()
+        self.zoom_changed.emit(False)
+
+    def zoom_step(self, up: bool) -> None:
+        """+ (up) or - (down): to the next 25% level; - from the lowest level goes back to fit."""
+        if not self.has_image or (not self.zoomed and not up):
+            return
+        fit = self.fit_scale()
+        new = step_scale(self.zoom_scale if self.zoomed else fit, fit, up)
+        if new is None:
+            return
+        if new == 0.0:
+            self._leave_zoom()
+        else:
+            self._enter_zoom(new, True)
+
+    def zoom_in(self) -> None:
+        self.zoom_step(True)
+
+    def zoom_out(self) -> None:
+        self.zoom_step(False)
 
     def _wanted_variant(self, path: str) -> str:
         """"frame" (the camera's frame), "sensor" (the whole sensor) or "?" (the preference is on and no worker
@@ -545,8 +658,8 @@ class Viewer(QGraphicsView):
         self.hud.adjustSize()
         # a failure stays up while zoomed; so does "full sensor", so it is never mistaken for the camera's frame
         bad_jpg = self.pic is not None and str(self.pic.primary) in self._jpg_bad and self._shown_native
-        self.hud.setVisible(self.zoomed and (self._full.get(self.index) in ("pending", "error") or self._shown_sensor
-                                             or bad_jpg))
+        self.hud.setVisible(self.zoomed and (self._pct_mode or self._full.get(self.index) in ("pending", "error")
+                                             or self._shown_sensor or bad_jpg))
         self._place()
 
     # -- right-click: reveal the picture in the file manager ----------------------------------------

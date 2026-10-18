@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
@@ -53,6 +54,39 @@ def exif_lines(info) -> list[str]:
     return out
 
 
+def taken_line(pic, info=None) -> str:
+    """One line: "Taken: 2026-10-18  21:43:05" (camera clock as written), or the file's local mtime
+    with " (file date)". Scan time first (no file read here), then the preview's EXIF, then mtime."""
+    for iso in (getattr(pic, "taken", ""), getattr(getattr(info, "exif", None), "taken", None)):
+        try:  # an unset camera clock ("0000-00-00...") or any odd value is absent: try the next source
+            if isinstance(iso, str) and len(iso) == 19:
+                datetime.fromisoformat(iso)
+                return f"Taken: {iso[:10]}  {iso[11:]}"
+        except ValueError:
+            pass
+    try:
+        mt = float(getattr(pic, "mtime", 0) or 0)
+        if mt > 0:
+            return "Taken: " + datetime.fromtimestamp(mt).strftime("%Y-%m-%d  %H:%M:%S") + " (file date)"
+    except (OverflowError, OSError, ValueError):
+        pass
+    return ""
+
+
+def edit_line(crop=None, story=None) -> str:
+    """One row for a picture's crop ("Crop: 62% x 48% of the picture") or story fit ("Story fit: 9:16, zoom 1.4x");
+    "" when it has neither. Pure arithmetic on two small values: no file is read."""
+    try:
+        if crop is not None:
+            left, top, right, bottom = crop
+            return f"Crop: {round((right - left) * 100)}% x {round((bottom - top) * 100)}% of the picture"
+        if story is not None:
+            return f"Story fit: 9:16, zoom {story.zoom:.1f}x"
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return ""
+
+
 class Inspector(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,7 +103,7 @@ class Inspector(QWidget):
         self.amber = False
         self._args = None
 
-    def set_picture(self, pic, info=None, marked=False, reason: str | None = None) -> None:
+    def set_picture(self, pic, info=None, marked=False, reason: str | None = None, edit: str = "") -> None:
         self._args = (pic, info, marked, reason)
         if pic is None:
             self.lines, self.amber = [], False
@@ -100,9 +134,14 @@ class Inspector(QWidget):
         else:
             lines.append("Preview: loading...")
         lines.extend(exif_lines(info if not reason else None))
+        taken = taken_line(pic, info if not reason else None)
+        if taken:
+            lines.append(taken)
         focus = getattr(info, "focus", None) if not reason else None
         if focus is not None:
             lines.append(focus.describe())
+        if edit:  # friend round 5: what a copy will do to this picture
+            lines.append(edit)
         lines.append("Marked" if marked else "Not marked")
         self.lines, self.amber = lines, amber
         self._render()

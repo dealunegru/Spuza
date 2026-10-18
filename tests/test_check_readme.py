@@ -14,7 +14,7 @@ cr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cr)
 
 _KEY_TOKEN = {"right": "→", "left": "←", "up": "↑", "down": "↓", "esc": "Esc", "enter": "Enter",
-              "space": "Space", "ctrl+,": "Cmd-,"}
+              "space": "Space", "ctrl+,": "Cmd-,", "plus": "+", "equal": "=", "minus": "-"}
 
 
 @pytest.fixture
@@ -188,3 +188,24 @@ def test_prefs_key_spellings(root):
     assert cr.check(t, root) == []
     t = good_readme(root).replace("`Cmd-,`", "`Alt-,`")
     _one(root, t, "`Cmd-,`, `Ctrl-,` or `⌘,`")
+
+
+def test_zoom_key_spellings_map_to_the_qt_names():
+    assert [cr._qt_key(f"Key_{n}") for n in ("Plus", "Equal", "Minus")] == ["plus", "equal", "minus"]
+    assert [cr._readme_key(t) for t in ("+", "=", "-")] == ["plus", "equal", "minus"]
+    required, _, _ = cr.code_keys(ROOT)
+    assert {"plus", "equal", "minus"} <= required
+
+
+def test_missing_zoom_key_is_drift(root):
+    t = good_readme(root).replace("| `+` | does a thing |\n", "")
+    _one(root, t, "key 'plus' is handled")
+
+
+def test_crop_and_story_keys_are_required_and_spelled_alike():
+    assert cr._qt_key("Key_Backspace") == cr._readme_key("Backspace") == "backspace"
+    assert cr._qt_key("Key_0") == cr._readme_key("0") == "0"
+    required, allowed, _ = cr.code_keys(ROOT)
+    assert {"x", "s", "backspace"} <= required and "0" in allowed
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert {"x", "s", "backspace", "0", "enter"} <= cr.readme_keys(text)

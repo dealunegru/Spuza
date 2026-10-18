@@ -2,6 +2,17 @@
 
 Plain Python, no widgets (it imports spuza.catalog for the extension sets, which loads Qt core): the UI calls ``plan_copy`` to show what will happen, then ``run_copy`` on a
 worker thread. The only file this module ever removes is its own half-written ``.spuza-part`` temp.
+
+Crops: ``plan_copy(crops=[CropJob, ...])`` adds, per cropped picture, one JPEG at ``<dest>/ed/<stem>.jpg`` (organised
+or flat layout alike, so it never shares a folder with an original). The originals' plan is untouched: crops live in
+``plan.crop_items``, and ``plan.total_bytes`` adds an ESTIMATE for them (``estimate_crop_bytes``). A name taken in ed
+(by a file already there or by an earlier crop of this plan) gets the usual ``-N`` suffix; an existing result is never
+recognised as identical, so a repeated copy always writes a new suffixed file (identity of a re-encoded JPEG cannot be
+proven cheaply). Each crop is rendered on the worker, written to a ``.spuza-part`` temp and published without replacing.
+
+Stories: ``plan_copy(stories=[StoryJob, ...])`` adds, per picture, one 1080x1920 JPEG at ``<dest>/ed/<stem>_story.jpg``
+(``plan.story_items``, action "story"), under the same rules as crops (same name-clash and publish path, run after
+the originals and the crops, turns always baked in). Its size is a fixed estimate, ``STORY_BYTES``.
 """
 
 import os
@@ -11,7 +22,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from spuza import rotation
+from spuza import crop as crop_mod
+from spuza import preview, rotation
+from spuza import story as story_mod
 from spuza.catalog import KNOWN_EXTS, RAW_EXTS
 
 CHUNK = 1024 * 1024
@@ -27,6 +40,8 @@ class CopyItem:
     size: int
     action: str  # "copy" | "skip" | "rename"
     turns: int = 0  # clockwise quarter turns to write into this copy as EXIF orientation (0: none)
+    crop_job: crop_mod.CropJob | None = None  # set on a crop item (action "crop"): src is the primary, dst is in ed
+    story_job: story_mod.StoryJob | None = None  # set on a story item (action "story"), likewise
 
 
 @dataclass
@@ -36,6 +51,8 @@ class CopyPlan:
     total_bytes: int = 0  # bytes that will actually be written
     pictures: int = 0
     organise: bool = False  # raw/soc/ed folders in dest (see plan_copy)
+    crop_items: list[CopyItem] = field(default_factory=list)  # one per cropped picture; size is an estimate
+    story_items: list[CopyItem] = field(default_factory=list)  # one per story picture; size is an estimate
 
 
 @dataclass
@@ -48,6 +65,8 @@ class CopyResult:
     cancelled: bool = False
     rotated: list[Path] = field(default_factory=list)  # source paths whose copy got a new EXIF orientation
     rotation_kept: list[tuple[Path, str]] = field(default_factory=list)  # source path, why the copy kept its own
+    cropped: list[Path] = field(default_factory=list)  # source primaries whose crop was written into ed
+    stories: list[Path] = field(default_factory=list)  # source primaries whose story fit was written into ed
 
 
 def human_size(n: int) -> str:
@@ -123,14 +142,38 @@ def _subdir(f: Path, has_raw: bool) -> str:
     return RAW_DIR if has_raw else SOC_DIR
 
 
+CROP_RAW_BYTES = 12_000_000  # estimate of a full-frame JPEG made from a raw (its own size says nothing about a JPEG)
+
+
+def estimate_crop_bytes(job: crop_mod.CropJob) -> int:
+    """Rough size of a crop's JPEG: the cropped area's share of the pixel source's size (the sidecar or a non-raw
+    primary, a JPEG-ish file), or of CROP_RAW_BYTES for a raw; at least 100 kB. Only used for the space check."""
+    crop = crop_mod.normalise(job.crop) or (0.0, 0.0, 1.0, 1.0)
+    area = (crop[2] - crop[0]) * (crop[3] - crop[1])
+    primary = Path(job.primary)
+    if job.sidecar is not None and preview.is_jpeg_sidecar(job.sidecar):
+        whole = _size(Path(job.sidecar))
+    elif primary.suffix.lower() in RAW_EXTS:
+        whole = CROP_RAW_BYTES
+    else:
+        whole = _size(primary)
+    return max(100_000, int(whole * area))
+
+
+STORY_BYTES = 1_500_000  # fixed estimate of one 1080x1920 q92 JPEG (photographic content; not measured per picture)
+
+
 def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = False,
-              turns: Mapping[Path, int] | None = None) -> CopyPlan:
+              turns: Mapping[Path, int] | None = None, crops: Sequence[crop_mod.CropJob] | None = None,
+              stories: Sequence[story_mod.StoryJob] | None = None) -> CopyPlan:
     """Decide, per file, copy / skip / rename. Creates nothing.
 
     With ``organise`` each file targets ``dest/raw`` or ``dest/soc`` (companions follow the group's picture:
     raw if the group has a raw file, else soc); a RAF+JPG pair splits. Names are checked per target folder.
     ``turns`` maps a source file to the clockwise quarter turns to write into its copy as EXIF orientation; a copy
     already there counts as identical when it equals the source plus that patch.
+    ``crops`` adds one ``plan.crop_items`` entry per job (see the module docstring); ``items`` is not affected.
+    ``stories`` likewise adds ``plan.story_items`` (see the module docstring).
     """
     dest = Path(dest)
     plan = CopyPlan(dest=dest, organise=bool(organise))
@@ -174,6 +217,28 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
             plan.items.append(CopyItem(f, folder / name, size, act, int((turns or {}).get(f, 0)) % 4))
             if act != "skip":
                 plan.total_bytes += size
+    ed = dest / ED_DIR
+
+    def ed_name(stem: str, tail: str) -> str:
+        n = 0
+        while n < MAX_SUFFIX and (
+            (ED_DIR, _suffixed(f"{stem}{tail}", n).casefold()) in taken
+            or os.path.lexists(ed / _suffixed(f"{stem}{tail}", n))
+        ):
+            n += 1
+        name = _suffixed(f"{stem}{tail}", n)
+        taken.add((ED_DIR, name.casefold()))
+        return name
+
+    for job in crops or ():
+        name = ed_name(Path(job.primary).stem, ".jpg")
+        est = estimate_crop_bytes(job)
+        plan.crop_items.append(CopyItem(Path(job.primary), ed / name, est, "crop", crop_job=job))
+        plan.total_bytes += est
+    for sjob in stories or ():
+        name = ed_name(Path(sjob.primary).stem, "_story.jpg")
+        plan.story_items.append(CopyItem(Path(sjob.primary), ed / name, STORY_BYTES, "story", story_job=sjob))
+        plan.total_bytes += STORY_BYTES
     return plan
 
 
@@ -318,6 +383,78 @@ def run_copy(
             res.rotation_kept.append((item.src, outcome.reason))
             notes.append(f"KEPT   {final}: original orientation kept ({outcome.reason})")
 
+    def ed_one(item: CopyItem, render: Callable[[], object], write: Callable[[object, Path], None]) -> tuple[Path, int]:
+        """Render (seconds for a raw: this is the worker), write a temp, publish without replacing."""
+        if cancel and cancel():
+            raise _Cancelled
+        made = render()
+        if cancel and cancel():
+            raise _Cancelled
+        item.dst.parent.mkdir(parents=True, exist_ok=True)  # flat layout: ed is made on first use
+        tmp = item.dst.with_name(f".{item.dst.name}.spuza-part")
+        try:
+            write(made, tmp)
+            size = tmp.stat().st_size
+            try:  # the result keeps the original's file times (not its mode: a read-only card file would stick)
+                st = item.src.stat()
+                os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+            except OSError:
+                pass
+            dst = item.dst
+            while True:
+                try:
+                    _publish(tmp, dst)
+                    break
+                except FileExistsError:
+                    dst = _free_name(item.dst)
+            return dst, size
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def crop_one(item: CopyItem) -> tuple[Path, int]:
+        job = item.crop_job
+        if job is None:
+            raise crop_mod.CropError("no crop to render")
+        return ed_one(item, lambda: crop_mod.render(job.primary, job.sidecar, job.crop, job.turns),
+                      lambda im, tmp: crop_mod.write_jpeg(im, tmp))
+
+    def story_one(item: CopyItem) -> tuple[Path, int]:
+        job = item.story_job
+        if job is None:
+            raise crop_mod.CropError("no story to render")
+        return ed_one(item, lambda: story_mod.export(job), lambda made, tmp: story_mod.save(made[0], tmp, made[1]))
+
+    def run_ed(items: list[CopyItem], one, word: str, tag: str, out: list[Path]) -> None:
+        nonlocal done
+        for item in () if res.cancelled else items:
+            if cancel and cancel():
+                res.cancelled = True
+                break
+            try:
+                final, size = one(item)
+            except _Cancelled:
+                res.cancelled = True
+                notes.append(f"CANCEL {word} of {item.src}")
+                break
+            except Exception as e:  # one bad crop or story must not stop the rest
+                done += item.size
+                report(item.src)
+                res.failed.append((item.src, f"{word.capitalize()} failed: {type(e).__name__}: {e}"))
+                notes.append(f"FAIL   {word} of {item.src}: {type(e).__name__}: {e}")
+                continue
+            done += item.size
+            res.bytes_copied += size
+            report(item.src)
+            out.append(item.src)
+            notes.append(f"{tag} {item.src} -> {final}")
+
+    run_ed(plan.crop_items, crop_one, "crop", "CROP  ", res.cropped)
+    run_ed(plan.story_items, story_one, "story", "STORY ", res.stories)
+
     if log_path is None:
         log_path = logs_dir() / f"spuza-copy-{datetime.now():%Y%m%d-%H%M%S}.log"
     lines = [f"Spuza copy to {plan.dest}", *notes]
@@ -327,6 +464,10 @@ def run_copy(
     )
     if res.rotated or res.rotation_kept:
         lines.append(f"Rotation: {len(res.rotated)} written, {len(res.rotation_kept)} kept their original orientation")
+    if res.cropped:
+        lines.append(f"cropped: {len(res.cropped)} into {ED_DIR}")
+    if res.stories:
+        lines.append(f"story: {len(res.stories)} into {ED_DIR}")
     try:
         res.log_path = _write_log(Path(log_path), "\n".join(lines) + "\n")
     except OSError:

@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PRUNE_DAYS = 30
-VERSION = 2  # 2 adds "rotations" beside the marks; a version 1 session (no rotations) still loads
+VERSION = 2  # 2 adds "rotations" beside the marks; a version 1 session (no rotations) still loads.
+# Friend round 5 adds "crops" and "stories" rows beside them WITHOUT a bump: a reader that does not know them ignores
+# them and keeps the marks, and a session without them loads as before.
 READ_VERSIONS = (1, 2)
 MAX_BYTES = 8 * 1024 * 1024  # a session bigger than this is not ours (or not sane): ignored
 MTIME_TOLERANCE = 2.0  # seconds; FAT stores mtime in 2 s steps
@@ -32,6 +34,8 @@ class Restored:
     saved_at: float  # epoch seconds of the save
     dropped: int  # marked pictures that no longer match (gone, resized, re-dated)
     rotations: dict[int, int] = field(default_factory=dict, hash=False)  # catalog index -> clockwise quarter turns 1..3
+    crops: dict[int, tuple] = field(default_factory=dict, hash=False)  # catalog index -> (left, top, right, bottom)
+    stories: dict[int, tuple] = field(default_factory=dict, hash=False)  # catalog index -> (zoom, dx, dy)
 
 
 def default_dir() -> Path:
@@ -75,6 +79,34 @@ def _number(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v
 
 
+def _finite(v) -> bool:
+    return _number(v) and abs(v) != float("inf")
+
+
+def _crop_rect(v):
+    """(l, t, r, b) as floats when `v` is four finite fractions in 0..1 with a side of at least 1 %, else None."""
+    try:
+        if len(v) != 4 or not all(_finite(x) for x in v):
+            return None
+        left, top, right, bottom = (float(x) for x in v)
+    except TypeError:
+        return None
+    if not (0.0 <= left < right <= 1.0 and 0.0 <= top < bottom <= 1.0):
+        return None
+    if right - left < 0.01 or bottom - top < 0.01:
+        return None
+    return (left, top, right, bottom)
+
+
+def _story_triple(zoom, dx, dy):
+    """(zoom, dx, dy) as floats when finite with zoom >= 1 (the fit) and the offsets within a few frames, else None."""
+    if not all(_finite(x) for x in (zoom, dx, dy)):
+        return None
+    if not (1.0 <= zoom <= 1000.0 and abs(dx) <= 10.0 and abs(dy) <= 10.0):
+        return None
+    return (float(zoom), float(dx), float(dy))
+
+
 class SessionStore:
     def __init__(self, folder: Path | None = None):
         """`folder` defaults to default_dir(); it is created on the first save, never on read."""
@@ -84,7 +116,7 @@ class SessionStore:
         return self.folder / f"{key}.json" if _valid_key(key) else None
 
     def save(self, key: str, root, pictures, marks, index: int, now: float | None = None,
-             rotations=None) -> None:
+             rotations=None, crops=None, stories=None) -> None:
         """Write this card's session atomically. Never raises on I/O (a full disk must not stop a cull)."""
         path = self._path(key)
         if path is None:
@@ -103,10 +135,27 @@ class SessionStore:
                 if isinstance(i, int) and 0 <= i < n and isinstance(t, int) and not isinstance(t, bool) and 1 <= t <= 3:
                     p = pictures[i]
                     turned.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime), "turns": t})
+            cropped = []
+            for i in sorted(i for i in (crops or {}) if isinstance(i, int) and not isinstance(i, bool)):
+                rect = _crop_rect(crops[i]) if 0 <= i < n else None
+                if rect is not None:
+                    p = pictures[i]
+                    cropped.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime),
+                                    "rect": list(rect)})
+            storied = []
+            for i in sorted(i for i in (stories or {}) if isinstance(i, int) and not isinstance(i, bool)):
+                if not 0 <= i < n:
+                    continue
+                st = stories[i]
+                tri = _story_triple(getattr(st, "zoom", None), getattr(st, "dx", None), getattr(st, "dy", None))
+                if tri is not None:
+                    p = pictures[i]
+                    storied.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime),
+                                    "zoom": tri[0], "dx": tri[1], "dy": tri[2]})
             idx = max(0, min(int(index), n - 1)) if n else 0
             doc = {"version": VERSION, "root": str(root), "saved_at": time.time() if now is None else float(now),
                    "index": idx, "index_name": _rel(root, pictures[idx]) if n else "", "marks": rows,
-                   "rotations": turned}
+                   "rotations": turned, "crops": cropped, "stories": storied}
             data = json.dumps(doc, separators=(",", ":")).encode("utf-8", "replace")
             self.folder.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(prefix=key + ".", suffix=".tmp", dir=self.folder)
@@ -168,6 +217,28 @@ class SessionStore:
                     turned[i] = t
             except (KeyError, TypeError):
                 pass
+        def matches(r) -> int | None:  # the row's picture index when name, size and mtime still match
+            i = by_name.get(r["name"])
+            if (i is not None and _number(r["size"]) and r["size"] == pictures[i].size_bytes
+                    and _number(r["mtime"]) and abs(r["mtime"] - pictures[i].mtime) <= MTIME_TOLERANCE):
+                return i
+            return None
+
+        cropped, storied = {}, {}
+        for r in doc.get("crops") if isinstance(doc.get("crops"), list) else ():
+            try:
+                i, rect = matches(r), _crop_rect(r["rect"])
+                if i is not None and rect is not None:
+                    cropped[i] = rect
+            except (KeyError, TypeError):
+                pass
+        for r in doc.get("stories") if isinstance(doc.get("stories"), list) else ():
+            try:
+                i, tri = matches(r), _story_triple(r["zoom"], r["dx"], r["dy"])
+                if i is not None and tri is not None and i not in cropped:  # a picture has a crop or a story, not both
+                    storied[i] = tri
+            except (KeyError, TypeError):
+                pass
         n = len(pictures)
         name, num = doc.get("index_name"), doc.get("index")
         if isinstance(name, str) and name in by_name:
@@ -176,9 +247,9 @@ class SessionStore:
             index = max(0, min(num, n - 1)) if n else 0
         else:
             index = 0
-        if not marks and not turned and index == 0:
+        if not marks and not turned and not cropped and not storied and index == 0:
             return None  # nothing worth restoring
-        return Restored(frozenset(marks), index, float(saved_at), dropped, turned)
+        return Restored(frozenset(marks), index, float(saved_at), dropped, turned, cropped, storied)
 
     def forget(self, key: str) -> None:
         path = self._path(key)
