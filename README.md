@@ -1,8 +1,8 @@
 <h1 align="center">Spuza</h1>
 
 <p align="center">
-  Photo culling for camera cards: step through a card, mark the keepers, copy them off.<br>
-  One key per decision, and the next pictures are already decoded.
+  <b>A fast photo-culling app for camera cards.</b><br>
+  Step through a card, mark the keepers, copy them off. One key per decision, and the next pictures are already decoded.
 </p>
 
 <p align="center">
@@ -38,13 +38,25 @@ uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
 Then run `spuza` with a card in.
 Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the release page.
 
+## In this README
+
+[What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
+
 ## What's new
+
+### Next release
+
+- **Zoom in steps.** `+` and `-` zoom in 25% steps of the picture's own pixels, from the fitted view up to 400%.
+- **Capture date.** The inspector has a `Taken:` line with the date and time the camera wrote. A file without one shows the file date, marked `(file date)`.
+- **Crop (`X`).** Drag a rectangle on the picture. The copy gets the result in `ed` as `<name>.jpg`.
+- **Story fit (`S`).** Place the picture under a fixed 9:16 frame. The copy gets a 1080 x 1920 `<name>_story.jpg` in `ed`.
+
+### Earlier releases
 
 - **0.7.0**: Fourth feedback round. The inspector shows the picture's own size (the JPG beside a raw, else the camera's frame) on one line and the preview's source and size on another. On a raw with a JPG beside it, Z shows the JPG's pixels at 100% in about a quarter of a second instead of decoding the raw. The control bar is one row again: Mark all, Unmark all, undo and the two turns are keys only.
 - **0.6.0**: Third feedback round. The filmstrip loads thumbnails wherever you scroll. Z shows the picture's own pixels, one per screen pixel, framed as the camera cropped it; a Preferences row shows the full sensor on cropped shots instead. `[` and `]` rotate a picture in quarter turns; the turn is written as EXIF orientation into the copy only, never into the original. Mark all / Unmark all, with one Ctrl+Z undo.
 - **0.5.1**: Spuza has an icon: a slide on a light table. It shows in the Dock, the Mac app, the Windows exe and taskbar, and the window itself.
-- **0.5.0**: Second feedback round. With Move on mark on, unmarking moves on too. **Crop and story fit.** `X` crops and `S` fits a picture into a 9:16 story frame; both are only marked on the picture until you copy. The filmstrip shows a small `crop` or `9:16` tag on such a picture and the inspector names it. In the copy the `ed` folder gets the result: `<name>.jpg` is the crop, `<name>_story.jpg` is the 1080 x 1920 story picture, with your turns baked in. The original always goes to `raw` / `soc` unchanged, and a picture has a crop or a story fit, not both (applying one removes the other). With Resume in advanced mode both are saved in the session file beside the marks and turns.
-Full-bleed shows only the picture; the strip appears for a second when the mouse moves. Copying sorts into `raw`, `soc` and an empty `ed` folder, then ejects the card and quits, each an option in Preferences, all on by default. The copy log lives in Spuza's app-data folder, never in the destination.
+- **0.5.0**: Second feedback round. With Move on mark on, unmarking moves on too. Full-bleed shows only the picture; the strip appears for a second when the mouse moves. Copying sorts into `raw`, `soc` and an empty `ed` folder, then ejects the card and quits, each an option in Preferences, all on by default. The copy log lives in Spuza's app-data folder, never in the destination.
 - **0.4.1**: Nothing is left behind on copy: a HIF, XMP, THM or Live Photo MOV travels with its picture, and files that are not pictures are counted. Bursts are listed in the order the camera shot them. HIF, ARW, NEF, NRW, PEF, 3FR, CR2, ORF, RW2 and CR3 open. With two cards in, Spuza says so and `--card` picks one. Releases now include a Windows build.
 - **0.4.0**: four features in advanced mode: Compare (`N`), Focus peaking (`P`), AF point (`O`), and Resume, with Start fresh (`U`).
 - **0.3.3**: classic and advanced mode. Advanced mode is a switch in Preferences, and its first setting is the number of decode threads.
@@ -58,48 +70,31 @@ Full-bleed shows only the picture; the strip appears for a second when the mouse
 - **0.2.0**: move on mark (`A`). Marking a picture shows the next one.
 - **0.1.3**: a wheel and an unsigned Mac app on every release, and `spuza --version` prints the right version.
 
-## Culling a card
+## The flow
 
 Spuza is built for the first pass over a shoot: hundreds of frames and a handful of keepers.
-When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows) and opens it. To open a folder instead, give its path: `spuza ~/Pictures/trip`. With two cards in (a camera with two slots, say), Spuza lists both, opens the first, and the status bar names the other and how many of its pictures are copies of this card's; `spuza --card 2` opens the second. Pictures are listed in the order the camera took them: by capture time, then by the camera's shot counter on Ricoh, Fujifilm and Nikon bodies, then by name; files without capture data follow, by file date.
+
+1. **Open a card.** Run `spuza`. It looks for a card with a `DCIM` folder (`/Volumes` on a Mac, every drive except the system drive on Windows). To open a folder instead, give its path: `spuza ~/Pictures/trip`.
+2. **Step.** `→` and `←` move through the card. Pictures are in the order the camera took them: by capture time, then by the camera's shot counter on Ricoh, Fujifilm and Nikon bodies, then by name; files without capture data follow, by file date.
+3. **Mark.** `Space` marks a keeper. The filmstrip and the status line show the count.
+4. **Review.** `R` puts every marked picture on one contact sheet for a second look.
+5. **Copy.** `C` copies the marked pictures to a folder, sorted into `raw`, `soc` and `ed`. Then Spuza can eject the card and quit.
+
+With two cards in (a camera with two slots, say), Spuza lists both and opens the first. The status bar names the other and how many of its pictures are copies of this card's. `spuza --card 2` opens the second.
 
 <p align="center">
   <img src="docs/img/workbench.png" alt="The workbench: the picture, the filmstrip, the inspector and the marked count" width="900">
 </p>
 
-| Key | Does |
-|---|---|
-| `→` or `J` | next picture |
-| `←` or `K` | previous picture |
-| `Space` or `M` | mark or unmark the picture |
-| `Ctrl+A` | **Mark all** (`Cmd+A` on a Mac). Keys only: there is no toolbar button |
-| `Ctrl+Shift+A` | **Unmark all** (`Cmd+Shift+A` on a Mac) |
-| `Ctrl+Z` | undo the last Mark all or Unmark all (`Cmd+Z` on a Mac): one level, and nothing asks first |
-| `[` or `]` | rotate the picture left or right by a quarter turn (in the review, every selected picture; in compare, the focused one) |
-| `X` | crop: drag a rectangle on the picture (it works on the fitted view; a zoomed picture goes back to fit). `Enter` applies it, `Esc` cancels, `X` again or `Backspace` removes this picture's crop. Not in the review or compare |
-| `S` | story fit, 9:16: the photo moves and zooms under a fixed vertical frame (drag, mouse wheel, `+` `-`). `Enter` applies, `Esc` cancels, `S` again or `Backspace` removes it. Not in the review or compare |
-| `0` | in story fit, back to the whole picture inside the frame |
-| `Backspace` | remove the crop or story fit of the picture on screen |
-| `Enter` | apply the crop or story fit you are editing |
-| `A` | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
-| `Z` | 100% zoom. A raw shot with a JPG beside it shows the JPG's own pixels; a raw alone is decoded in full in the background |
-| `+` or `=` | zoom in by 25% of the picture's own pixels (up to 400%); from the fitted view the first step is the one above the fit. The keypad `+` works too |
-| `-` | zoom out by 25%; the last step back is the fitted view |
-| `F` | full screen, picture only |
-| `Esc` | leave full screen or the review |
-| `R` | review the marked pictures |
-| `C` | copy the marked pictures to a folder |
-| `Cmd-,` (`Ctrl-,` on Windows) | Preferences |
+The inspector on the right shows:
 
-With Move on mark (A) on, unmarking also moves on to the next picture.
+- the file names and sizes;
+- a `Taken:` line, the date and time the camera wrote (for a file without one, the file date, marked `(file date)`);
+- the picture's own size (for a raw, that of the JPG beside it, else the camera's frame);
+- the preview's source, size and decode time;
+- aperture, shutter, ISO, focal length and camera;
+- a `Crop:` or `Story fit:` line when the picture has one.
 
-Mark all and Unmark all say how many pictures changed in the status line ("Marked 312 (Ctrl+Z undoes)", "Unmarked 312 (Ctrl+Z undoes)") and never ask first. A stray Unmark all costs nothing: `Ctrl+Z` puts back exactly the marks you had before it; if you marked or unmarked pictures by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, and the undo stays until the next Mark all or Unmark all, `U` (start fresh) or closing Spuza. The same keys work in the review.
-
-Rotate (`[` and `]`) turns the picture on screen, the filmstrip and the review in quarter turns. Your original is never changed: the turn is written, as the EXIF orientation only, into the copy (see Copying and Preferences).
-Full-bleed shows only the picture; move the mouse to see the strip for a second.
-
-Most keys also have a toolbar button with its shortcut printed on it; Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only, to keep the toolbar on one row.
-The inspector on the right shows the file names and sizes, the picture's own size (for a raw, that of the JPG beside it, else the camera's frame), the preview's source, size and decode time, aperture, shutter, ISO, focal length and camera.
 Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 
 **Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only four things: the copies you ask for (and the `raw`, `soc` and `ed` folders they go in), a log of each copy in its own app-data folder (never in your destination), its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
@@ -108,49 +103,109 @@ Right-click a picture in the filmstrip, the viewer or the review to show it in F
   <img src="docs/img/bleed.png" alt="Full screen: the picture alone, with a one-line status strip" width="900">
 </p>
 
+## Keys
+
+Every key in one table. Most also have a toolbar button with the shortcut printed on it. Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only, to keep the toolbar on one row.
+
+| Key | Where | Does |
+|---|---|---|
+| `→` or `J` | viewer, compare | next picture (compare: the frame moves right) |
+| `←` or `K` | viewer, compare | previous picture (compare: the frame moves left) |
+| `↑` `↓` | review | move through the sheet with `←` `→` |
+| `Space` or `M` | viewer, review, compare | mark or unmark the picture (review: unmark the selected one; compare: the one with the frame) |
+| `Ctrl+A` | viewer, review | **Mark all** (`Cmd+A` on a Mac). Keys only, and nothing asks first |
+| `Ctrl+Shift+A` | viewer, review | **Unmark all** (`Cmd+Shift+A` on a Mac) |
+| `Ctrl+Z` | viewer, review | undo the last Mark all or Unmark all (`Cmd+Z` on a Mac): one level |
+| `[` or `]` | viewer, review, compare | rotate left or right by a quarter turn (review: every selected picture; compare: the framed one) |
+| `A` | viewer | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
+| `Z` | viewer, review, compare | 100% zoom. A raw with a JPG beside it shows the JPG's own pixels; a raw alone is decoded in full in the background. Compare zooms the framed picture and its neighbour together. Does nothing while you crop or fit a story |
+| `+` or `=` | viewer, review, story | zoom in by 25% of the picture's own pixels, up to 400%; from the fitted view the first step is the one above the fit. The keypad `+` works too. In story fit it scales the picture under the frame. Does nothing while you crop |
+| `-` | viewer, review, story | zoom out by 25%; the last step back is the fitted view. In story fit it scales the picture down |
+| `F` | viewer | full screen, picture only |
+| `R` | viewer | review the marked pictures |
+| `C` | viewer | copy the marked pictures to a folder |
+| `Cmd-,` or `Ctrl-,` | anywhere | Preferences (`Cmd` on a Mac, `Ctrl` on Windows) |
+| `X` | viewer | **crop**: drag a rectangle on the picture. `X` again clears this picture's crop |
+| `S` | viewer | **story fit** 9:16: drag and zoom the picture under a fixed vertical frame. `S` again clears it |
+| `0` | story fit | back to the whole picture inside the frame |
+| `Enter` | crop, story fit, review | apply the crop or story fit; in the review, open the selected picture in the workbench |
+| `Backspace` | viewer | remove the crop or story fit of the picture on screen (also while editing one) |
+| `Esc` | everywhere | cancel a crop or story fit; else leave full screen, the review or compare |
+| `N` | viewer, review (advanced) | **Compare.** Shows this picture and the next side by side; `N` again adds the next one, up to four |
+| `P` | viewer (advanced) | **Focus peaking.** Paints the sharp edges red. Remembered between runs |
+| `O` | viewer (advanced) | **AF point.** Draws a ring where the camera focused; `Z` then opens the 100% view on that spot |
+| `U` | viewer (advanced) | **Start fresh.** Clears this card's marks and its saved session. `U` again within 10 seconds undoes it |
+
+Notes on the keys:
+
+- With Move on mark (`A`) on, unmarking also moves on to the next picture.
+- Mark all and Unmark all say how many pictures changed in the status line and never ask first. `Ctrl+Z` puts back exactly the marks you had before. If you marked by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, until the next one, `U` or closing Spuza.
+- A turn (`[` `]`) shows on the screen, the filmstrip and the review. The original is never changed (see [Copying](#copying)).
+- In full screen, move the mouse to see the strip for a second.
+- Moving to another picture (`→` `←` `J` `K`) while you crop or fit a story cancels the edit.
+
 ## Review
 
-`R` shows every marked picture on one contact sheet, so you can take a second look.
+`R` shows every marked picture on one contact sheet.
 
 <p align="center">
   <img src="docs/img/review.png" alt="Review: the marked pictures on one contact sheet" width="900">
 </p>
 
-| Key | Does in the review |
-|---|---|
-| `↑` `↓` `←` `→` | move through the sheet |
-| `Space` or `M` | unmark the selected picture |
-| `Z` | 100% view of the selected picture (`Esc` returns to the sheet) |
-| `+` `=` `-` | zoom in or out by 25% on that view |
-| `Enter` | open the selected picture in the workbench |
-| `Esc` | back to the card |
+`↑` `↓` `←` `→` move, `Space` unmarks the selected picture, `Z` opens it at 100% (`Esc` returns to the sheet), `+` and `-` zoom that view, `Enter` opens it in the workbench and `Esc` goes back to the card. Unmarking takes a picture off the list. Spuza never deletes anything.
 
-Unmarking takes a picture off the list. Spuza never deletes anything.
+## Crop and story fit
+
+Two ways to make a ready-to-post picture. Both are only marked on the picture until you copy: the original is never touched.
+
+- **Crop (`X`).** Drag a rectangle on the fitted picture (a zoomed picture goes back to fit first). `Enter` applies, `Esc` cancels, `X` or `Backspace` removes it. The copy gets the cropped picture as `ed/<name>.jpg`.
+- **Story fit (`S`).** A fixed 9:16 frame sits over the picture. Drag to move the picture, zoom with the mouse wheel or `+` `-`, `0` shows the whole picture inside the frame. `Enter` applies, `Esc` cancels, `S` or `Backspace` removes it. The copy gets a 1080 x 1920 picture as `ed/<name>_story.jpg`.
+
+Rules:
+
+- A picture has a crop or a story fit, not both. Applying one removes the other.
+- Neither works in the review or in compare.
+- A picture with one shows a small `crop` or `9:16` tag in the filmstrip, and the inspector names it.
+- Only marked pictures are exported. The pixels come from the best source: a JPG beside the raw, else the full decode when the embedded preview is too small, else the preview.
+- Your quarter turns are baked into the `ed` files.
+- With Resume in advanced mode, crops and story fits are saved in the session file beside the marks and turns.
 
 ## Copying
 
 `C` opens the copy sheet. It starts at `~/Pictures/Spuza`, and you can pick any other folder.
-The sheet shows the plan before anything is copied: how many files, how many bytes, and what is already in that folder.
+The sheet shows the plan before anything is copied: how many files, how many bytes (crop and story sizes are estimates), and what is already in that folder.
 
 <p align="center">
   <img src="docs/img/copy.png" alt="The copy sheet: destination, the plan, and the Copy button" width="900">
 </p>
 
-- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture. They get one mark, and both files are copied together. The same goes for a `HIF` beside a raw, and for any other file with the picture's name (an `XMP`, a `THM`, a Live Photo's `MOV`).
-- If a file is already in the folder with identical content, it is skipped.
-- If a different file has the same name, the copy gets a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten.
-- With **Copy into raw / soc / ed folders** on (the default), the destination gets a `raw` folder for raw files and a `soc` folder for JPEGs and other picture formats (HIF, HEIF, PNG...). A raw+JPEG pair is split between them, and a picture's XMP or MOV goes with its raw (or with its JPEG when there is no raw). An empty `ed` folder is made too, for your Lightroom exports. The result line says how many files went to `raw` and to `soc`.
+**What lands where.** With **Copy into raw / soc / ed folders** on (the default):
+
+| Folder | Holds |
+|---|---|
+| `raw` | raw files. A picture's XMP or MOV goes with its raw |
+| `soc` | JPEGs and other picture formats (HIF, HEIF, PNG...). A raw+JPEG pair is split between `raw` and `soc` |
+| `ed` | empty unless you cropped or fitted a story: `<name>.jpg` for a crop, `<name>_story.jpg` (1080 x 1920) for a story fit |
+
+- **Originals are always untouched** in `raw` and `soc`: byte-for-byte copies.
+- **Quarter turns** (`[` `]`) are written into the copies in `raw` and `soc` as EXIF orientation only (the **Write rotation to copies (EXIF)** preference, on by default). They are baked into the `ed` files.
+- With the folders option off, the originals go flat into the destination; crops and story fits still go into `ed`.
+
+Other rules:
+
+- A raw file and a JPEG with the same name (`DSCF0412.RAF` and `DSCF0412.JPG`) are one picture: one mark, copied together. So is a `HIF` beside a raw, and any other file with the picture's name (an `XMP`, a `THM`, a Live Photo's `MOV`).
+- A file already in the folder with identical content is skipped.
+- A different file with the same name makes the copy get a suffix (`DSCF0412-1.JPG`). Nothing in the destination is ever overwritten. A repeated copy of a crop or story writes a new suffixed file.
 - After a successful copy, **Eject the card after copying** and **Quit Spuza after copying** (both on by default) eject the card you opened and then close Spuza, after a 3 second countdown with a **Stay** button. A failed eject is reported and does not stop the quit. If anything failed or you cancelled, nothing is ejected and Spuza stays open.
-- With **Write rotation to copies (EXIF)** on (the default), a picture you turned with `[` or `]` is copied with its EXIF orientation set to match; only the copy is changed, never the original on the card. Turn it off and the copies keep the camera's orientation.
-- Each copy writes a log, `spuza-copy-<date>-<time>.log`, with every file copied, skipped or renamed, and the totals. The log is kept in Spuza's own app-data folder (`logs`), never in the destination, which receives only your pictures and the three folders.
+- Each copy writes a log, `spuza-copy-<date>-<time>.log`, with every file copied, skipped or renamed, and the totals. It is kept in Spuza's app-data folder (`logs`), never in the destination.
 
 ## Preferences
 
 `Cmd-,` (`Ctrl-,` on Windows) or the toolbar button opens Preferences:
 
 - **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
-- **Copy into raw / soc / ed folders**, **Eject the card after copying**, **Quit Spuza after copying** and **Write rotation to copies (EXIF)** (all default on): see Copying.
-- **Zoom shows the full sensor on cropped shots** (default off). Some cameras can crop a shot as they take it. With the row off, `Z` on such a shot shows the camera's own frame at 100%. With it on, `Z` shows the whole sensor at 100% instead, so you see what was outside the crop, and the label says `100% · full sensor`. The fitted view, the review sheet and compare always show the camera's frame; shots that were not cropped and JPEGs are the same either way.
+- **Copy into raw / soc / ed folders**, **Eject the card after copying**, **Quit Spuza after copying** and **Write rotation to copies (EXIF)** (all default on): see [Copying](#copying).
+- **Zoom shows the full sensor on cropped shots** (default off). Some cameras can crop a shot as they take it. With the row off, `Z` on such a shot shows the camera's own frame at 100%. With it on, `Z` shows the whole sensor at 100% instead, and the label says `100% · full sensor`. The fitted view, the review sheet and compare always show the camera's frame; uncropped shots and JPEGs are the same either way.
 - **Advanced mode**: see below.
 - Advanced mode only:
   - **Decode threads** (1-8, default 3, applied at the next launch).
@@ -164,7 +219,7 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 
 ## Classic and advanced mode
 
-Spuza opens in classic mode, which has every feature that has shipped. Advanced mode adds the features that are still being tried out.
+Spuza opens in classic mode, which has every feature that has shipped. Advanced mode adds the features that are still being tried out. They are marked "advanced" in the [key table](#keys).
 
 - To switch for good, tick "Advanced mode" in Preferences. The setting is saved, and the mode changes at once; decode threads follow at the next launch.
 - To switch for one run, use `spuza --advanced` or `spuza --classic`. The saved preference is not touched.
@@ -172,12 +227,13 @@ Spuza opens in classic mode, which has every feature that has shipped. Advanced 
 In advanced mode the window title reads `Spuza (advanced)` and the status strip shows an `ADVANCED` tag.
 A feature that proves itself moves to classic. How flags are added and promoted is in [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
 
-| Key | Does (advanced mode) | Flag |
-|---|---|---|
-| `N` | **Compare.** Shows this picture and the next side by side; `N` again adds the next one, up to four. | `compare_view` |
-| `P` | **Focus peaking.** Paints the sharp edges red on the big picture and on each compare cell. Remembered between runs. | `focus_peaking` |
-| `O` | **AF point.** Draws a ring where the camera focused, and `Z` then opens the 100% view on that spot. | `focus_point` |
-| `U` | **Start fresh.** Clears this card's marks and its saved session. `U` again within 10 seconds undoes it. | `resume_session` |
+The advanced features, by flag:
+
+- `compare_view` (`N`): **Compare.**
+- `focus_peaking` (`P`): **Focus peaking.**
+- `focus_point` (`O`): **AF point.**
+- `resume_session` (`U`): **Resume** and Start fresh.
+- `decode_threads`: **Decode threads.**
 
 <p align="center">
   <img src="docs/img/compare.png" alt="Compare: two pictures side by side" width="900">
@@ -197,7 +253,7 @@ A feature that proves itself moves to classic. How flags are added and promoted 
 
 **Resume** puts back each card's marks and your place the next time you open the same card, and a banner says what it restored. The session file is in Spuza's app-data folder, never on the card. Sessions older than 30 days are deleted at start. To turn Resume off, untick "Remember marks between runs".
 
-**Decode threads** (`decode_threads`) sets how many pictures are decoded at once, from 1 to 8. Classic always uses 3.
+**Decode threads** sets how many pictures are decoded at once, from 1 to 8. Classic always uses 3.
 
 ## Formats
 
