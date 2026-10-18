@@ -77,6 +77,8 @@ When you run `spuza`, it looks for a card with a `DCIM` folder (`/Volumes` on a 
 | `[` or `]` | rotate the picture left or right by a quarter turn (in the review, every selected picture; in compare, the focused one) |
 | `A` | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
 | `Z` | 100% zoom. A raw shot with a JPG beside it shows the JPG's own pixels; a raw alone is decoded in full in the background |
+| `+` or `=` | zoom in by 25% of the picture's own pixels (up to 400%); from the fitted view the first step is the one above the fit. The keypad `+` works too |
+| `-` | zoom out by 25%; the last step back is the fitted view |
 | `F` | full screen, picture only |
 | `Esc` | leave full screen or the review |
 | `R` | review the marked pictures |
@@ -113,6 +115,7 @@ Right-click a picture in the filmstrip, the viewer or the review to show it in F
 | `↑` `↓` `←` `→` | move through the sheet |
 | `Space` or `M` | unmark the selected picture |
 | `Z` | 100% view of the selected picture (`Esc` returns to the sheet) |
+| `+` `=` `-` | zoom in or out by 25% on that view |
 | `Enter` | open the selected picture in the workbench |
 | `Esc` | back to the card |
 

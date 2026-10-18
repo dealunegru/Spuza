@@ -64,7 +64,7 @@ def default_copy_dest() -> Path:
 
 _NOT_IN_REVIEW = object()
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
-                       Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Escape})
+                       Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus, Qt.Key_Escape})
 # (name, label, key cap shown on the button, checkable). Mark all and the turns have no buttons (round 4: they
 # did not fit the one classic row at 1280 px); Ctrl+A, Ctrl+Shift+A, Ctrl+Z, [ and ] are window shortcuts only.
 PREFS_CAP = "⌘," if sys.platform == "darwin" else "Ctrl+,"
@@ -1213,6 +1213,10 @@ class MainWindow(QMainWindow):
             self.step(-1)
         elif k == Qt.Key_Z:
             self.viewer.toggle_zoom()
+        elif k in (Qt.Key_Plus, Qt.Key_Equal):  # + (Shift+= on US keyboards, or the keypad), and =
+            self.viewer.zoom_in()
+        elif k == Qt.Key_Minus:
+            self.viewer.zoom_out()
         elif k == Qt.Key_F:
             self.set_bleed(not self.is_bleed)
         elif k == Qt.Key_R:
