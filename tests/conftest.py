@@ -29,6 +29,18 @@ RAF_NAME = "20250704_X-Pro2_9268.RAF"
 DNG_NAMES = [f"R00451{n}.DNG" for n in range(46, 51)]
 
 
+@pytest.fixture(scope="session", autouse=True)
+def warm_exiftool_lookup():
+    """Pay the exiftool PATH search once, here on the main thread (bug-420).
+
+    On Windows shutil.which on a copy worker, with the UI thread spinning, took seconds and timed out
+    the sheet tests' wait_for. The real result is cached, so tests that want exiftool still get it.
+    """
+    from spuza import rotation
+
+    rotation._which_exiftool()
+
+
 @pytest.fixture(autouse=True)
 def isolated_prefs(tmp_path, monkeypatch):
     """Every test gets its own preferences file: nothing reaches the registry / plist, nothing leaks."""
