@@ -4,6 +4,10 @@ Design: 02-bench, with 01-bleed as its full-screen mode. Most keys have a toolba
 The review grid and the copy sheet are built lazily through `review_factory` / `copy_sheet_factory`
 so they are only imported when used (and tests can inject fakes).
 
+Classic also has crop (X) and story fit (S): a rectangle or a 9:16 frame drawn over the big picture, kept per
+picture in `crops` / `stories` (catalog index -> value, like `rotations`), marked on the filmstrip, named in the
+inspector, saved with the session and handed to the copy sheet. The two overlays are built on first use.
+
 Advanced mode wires four more features, each behind its flag and each a no-op (key falls through, widget
 hidden, nothing written) in classic: N compare (compare_view), P peaking (focus_peaking), O AF point and Z
 landing on it (focus_point), and resume (resume_session; U starts fresh). Their objects are built on first use.
@@ -26,8 +30,8 @@ from spuza.cards import catalog_note
 from spuza.copy import human_size
 from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
-from spuza.ui.inspector import Inspector
-from spuza.ui.viewer import Viewer
+from spuza.ui.inspector import Inspector, edit_line
+from spuza.ui.viewer import Viewer, info_native_size
 
 DOT = "·"
 
@@ -204,6 +208,12 @@ class MainWindow(QMainWindow):
         self._prefs_seed = False
         self.last_message = ""
         self.rotations: dict[int, int] = {}  # friend round 3: catalog index -> clockwise quarter turns 1..3 (0 omitted)
+        self.crops: dict[int, tuple] = {}  # friend round 5: catalog index -> spuza.crop.Crop (fractions l, t, r, b)
+        self.stories: dict[int, object] = {}  # friend round 5: catalog index -> spuza.story.Story
+        self._crop_overlay = None  # CropOverlay, built on first X (or the first picture that has a crop)
+        self._story_editor = None  # StoryEditor, built on first S
+        self._story_native = (1, 1)  # the open story edit's un-turned native size
+        self._edit: str | None = None  # None | "crop" | "story": the mode the viewer is in
         self._markall_undo: frozenset[int] | None = None  # the marks before the last Mark all / Unmark all
         self._markall_after: frozenset[int] = frozenset()  # the marks right after it (to count later changes)
         self.is_bleed = False
@@ -219,6 +229,7 @@ class MainWindow(QMainWindow):
         self.inspector = Inspector()
         self.filmstrip = Filmstrip(catalog, prefetcher)
         self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
+        self.filmstrip.edit_tag_of = self._edit_tag
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -360,6 +371,7 @@ class MainWindow(QMainWindow):
                 self._focus_review()
 
     def _moved(self) -> None:
+        self._end_edit()  # a crop or story edit in progress is cancelled by moving on
         self._t_key = time.perf_counter()
         self.prefetcher.update(self.catalog.index)
         self._render_current()
@@ -473,6 +485,7 @@ class MainWindow(QMainWindow):
             else:
                 self.rotations.pop(i, None)
         for i in targets:
+            self._story_follows_turn(i)
             for v in self._views():
                 v.rotation_changed(i)
         side = "right" if delta > 0 else "left"
@@ -485,9 +498,181 @@ class MainWindow(QMainWindow):
 
     def _copy_rotations(self, pictures) -> dict:
         """Picture.primary -> quarter turns, for the pictures being copied that have a turn."""
+        return self._copy_table(pictures, self.rotations)
+
+    def _copy_table(self, pictures, table: dict) -> dict:
+        """Picture.primary -> the table's value, for the pictures being copied that have one."""
         want = {id(p) for p in pictures}
-        return {p.primary: self.rotations[i] for i, p in enumerate(self.catalog.pictures)
-                if self.rotations.get(i) and id(p) in want}
+        return {p.primary: table[i] for i, p in enumerate(self.catalog.pictures) if table.get(i) and id(p) in want}
+
+    # -- crop (X) and story fit (S): per picture, applied only to the copy -------------------------------------
+    def _edit_tag(self, i: int) -> str:
+        """The filmstrip's small tag: "crop", "9:16" or nothing."""
+        return "crop" if i in self.crops else ("9:16" if i in self.stories else "")
+
+    def _edit_line(self, i: int) -> str:
+        return edit_line(self.crops.get(i), self.stories.get(i))
+
+    def _can_edit(self) -> bool:
+        return (self.stack.currentIndex() == 0 and not self._compare_shown() and len(self.catalog) > 0
+                and self.viewer.has_image)
+
+    def _ensure_crop_overlay(self):
+        if self._crop_overlay is None:
+            from spuza.ui.crop_overlay import CropOverlay  # lazy: nothing is built until a crop is made or shown
+
+            ov = CropOverlay(self.viewer.image_item())
+            self.viewer.pixmap_changed.connect(lambda *_a: ov.sync())
+            self._crop_overlay = ov
+        return self._crop_overlay
+
+    def _ensure_story_editor(self):
+        if self._story_editor is None:
+            from spuza.ui.story_overlay import StoryEditor
+
+            ed = StoryEditor(self.viewer.viewport())
+            ed.applied.connect(self._apply_story)
+            ed.cancelled.connect(lambda: self._end_edit(announce=True))
+            self._story_editor = ed
+        return self._story_editor
+
+    def _show_applied_crop(self) -> None:
+        """The passive outline of the shown picture's crop (none for a picture without one). O(1): a dict lookup."""
+        rect = self.crops.get(self.catalog.index)
+        if rect is None and self._crop_overlay is None:
+            return
+        self._ensure_crop_overlay().show_applied(rect)
+
+    def _prepare_edit(self) -> None:
+        if self.viewer.zoomed:
+            self.viewer.toggle_zoom()  # both editors work on the fitted picture
+
+    def start_crop(self) -> None:
+        if self._edit is not None:
+            return
+        if not self._can_edit():
+            self.say("Crop needs a picture on screen")
+            return
+        self._prepare_edit()
+        self._ensure_crop_overlay().begin(self.crops.get(self.catalog.index))
+        self._edit = "crop"
+        self.say("Crop: drag on the picture. Enter applies, Esc cancels, X or Backspace clears")
+
+    def start_story(self) -> None:
+        if self._edit is not None:
+            return
+        if not self._can_edit():
+            self.say("Story fit needs a picture on screen")
+            return
+        self._prepare_edit()
+        i = self.catalog.index
+        pm = self.viewer.image_item().pixmap()
+        shown = (pm.width(), pm.height())
+        native = info_native_size(self.prefetcher.info(i), shown) or shown
+        self._story_native = native
+        self._ensure_story_editor().begin(pm, self._rotation_of(i), self.stories.get(i), native)
+        self._edit = "story"
+        self.say("Story fit 9:16: drag to move, wheel or + - to zoom, 0 resets. Enter applies, Esc cancels, S clears")
+
+    def _story_follows_turn(self, i: int) -> None:
+        """A story is placed in the TURNED frame, so a new turn re-fits it: an open story edit is re-begun with the
+        new turns (its Story re-clamped for the new frame), and a stored Story is re-clamped for it. A crop needs
+        nothing: its overlay is a child of the item and turns with it."""
+        from spuza import story as st
+
+        if self._edit == "story" and i == self.catalog.index:
+            ed = self._story_editor
+            ed.begin(self.viewer.image_item().pixmap(), self._rotation_of(i), ed.story(), self._story_native)
+        stored = self.stories.get(i)
+        native = info_native_size(self.prefetcher.info(i), None)
+        if stored is not None and native:
+            w, h = native if self._rotation_of(i) % 2 == 0 else (native[1], native[0])
+            self.stories[i] = st.clamp(stored, w, h)
+
+    def _end_edit(self, announce: bool = False) -> None:
+        """Leave the edit mode without applying anything (the dicts were never touched): the old state is back."""
+        kind, self._edit = self._edit, None
+        if kind == "crop":
+            self._crop_overlay.end()
+            self._show_applied_crop()
+        elif kind == "story":
+            self._story_editor.end()
+        if kind and announce:
+            self.say("Cancelled: nothing changed")
+
+    def _edited(self, i: int, text: str) -> None:
+        self.filmstrip.item_changed(i)
+        self._show_applied_crop()
+        self.refresh_marks()
+        self.say(text)
+
+    def _apply_crop(self) -> None:
+        from spuza.crop import normalise
+
+        i = self.catalog.index
+        rect = normalise(self._crop_overlay.rect_frac())
+        self._end_edit()
+        name = self.catalog.pictures[i].stem
+        if rect is None:
+            self.crops.pop(i, None)
+            self._edited(i, f"No crop on {name}")
+        else:
+            self.crops[i] = rect
+            self.stories.pop(i, None)  # a picture has a crop or a story fit, not both
+            self._edited(i, f"Cropped {name}: {self._edit_line(i)[6:]}. The original stays as it is; the copy gets it")
+
+    def _apply_story(self) -> None:
+        if self._edit != "story":
+            return
+        i = self.catalog.index
+        story = self._story_editor.story()
+        self._end_edit()
+        self.stories[i] = story
+        self.crops.pop(i, None)
+        self._edited(i, f"Story fit on {self.catalog.pictures[i].stem}: 9:16. The original stays as it is; the copy gets it")
+
+    def clear_edits(self, crop: bool = True, story: bool = True) -> None:
+        """X / S again, or Backspace: drop this picture's crop and/or story fit, and leave the edit mode."""
+        i = self.catalog.index
+        self._end_edit()
+        had = (crop and self.crops.pop(i, None) is not None) | (story and self.stories.pop(i, None) is not None)
+        if had:
+            self._edited(i, f"Cleared the crop or story fit on {self.catalog.pictures[i].stem}")
+        else:
+            self._show_applied_crop()
+
+    def _edit_key(self, e) -> bool:
+        """While a crop or story edit is open: True when the key was taken here. Moving keys cancel the edit and
+        then fall through (False) so the move happens; marks, F, C... fall through untouched."""
+        k, auto = e.key(), e.isAutoRepeat()
+        crop = self._edit == "crop"
+        if k in (Qt.Key_Return, Qt.Key_Enter):
+            if not auto:
+                self._apply_crop() if crop else self._story_editor.apply()
+        elif k == Qt.Key_Escape:
+            if not auto:
+                self._end_edit(announce=True)  # never also leaves full-bleed or the review
+        elif k == Qt.Key_Backspace:
+            if not auto:
+                self.clear_edits()
+        elif k == (Qt.Key_X if crop else Qt.Key_S):
+            if not auto:
+                self.clear_edits(crop=crop, story=not crop)
+        elif k == (Qt.Key_S if crop else Qt.Key_X) or k == Qt.Key_Z:
+            pass  # the other editor's key, and Z: nothing while editing
+        elif crop and k in (Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus):
+            pass
+        elif not crop and k in (Qt.Key_Plus, Qt.Key_Equal):
+            self._story_editor.zoom_step(1)
+        elif not crop and k == Qt.Key_Minus:
+            self._story_editor.zoom_step(-1)
+        elif not crop and k == Qt.Key_0:
+            self._story_editor.reset()
+        else:
+            if k in (Qt.Key_Right, Qt.Key_J, Qt.Key_Left, Qt.Key_K):
+                self._end_edit()
+            return False
+        return True
 
     # -- rendering --------------------------------------------------------------------------------
     def _render_current(self) -> None:
@@ -504,6 +689,7 @@ class MainWindow(QMainWindow):
             else:
                 self.viewer.show_placeholder(i, pic)
             self._overlays_for(i, img)
+            self._show_applied_crop()
             if img is not None or reason:
                 self._say_banner()
         self.filmstrip.set_current(i)
@@ -540,7 +726,8 @@ class MainWindow(QMainWindow):
         self.sidebar.set_counts(len(cat), cat.marked_count)
         if pic is not None:
             self.viewer.strip.set_state(cat.position_text(), marked, pic.stem, pic.kind, cat.marked_count)
-            self.inspector.set_picture(pic, self.prefetcher.info(i), marked, self.prefetcher.failed_reason(i))
+            self.inspector.set_picture(pic, self.prefetcher.info(i), marked, self.prefetcher.failed_reason(i),
+                                       edit=self._edit_line(i))
         else:
             self.inspector.set_picture(None)
         self.refresh_status()
@@ -561,7 +748,8 @@ class MainWindow(QMainWindow):
         """The picture's own size came in late (Prefetcher.sized): refresh the inspector, nothing else."""
         cat = self.catalog
         if i == cat.index and 0 <= i < len(cat):
-            self.inspector.set_picture(cat.pictures[i], info, cat.is_marked(i), self.prefetcher.failed_reason(i))
+            self.inspector.set_picture(cat.pictures[i], info, cat.is_marked(i), self.prefetcher.failed_reason(i),
+                                       edit=self._edit_line(i))
 
     def _on_failed(self, i: int, _reason: str) -> None:
         self.filmstrip.item_changed(i)
@@ -608,6 +796,7 @@ class MainWindow(QMainWindow):
     def toggle_review(self) -> None:
         if self._compare_shown():
             return  # leave compare first (Esc); the Review button is disabled meanwhile
+        self._end_edit()
         if self.stack.currentIndex() == 1:
             self.close_review()
         else:
@@ -684,6 +873,8 @@ class MainWindow(QMainWindow):
             if self._compare_shown():
                 self.buttons["zoom"].setChecked(self.compare.is_zoomed())
             self.refresh_marks()
+        elif self._edit is not None and key == Qt.Key_Z:
+            self.buttons["zoom"].setChecked(self.viewer.zoomed)  # no zoom while a crop or story edit is open
         elif self.stack.currentIndex() == 1:
             self.forward_to_review(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
             self.buttons["zoom"].setChecked(self.viewer.zoomed)  # the viewer did not move
@@ -727,6 +918,7 @@ class MainWindow(QMainWindow):
                          organise=settings.read_organise(self.prefs), eject_after=settings.read_eject_after(self.prefs),
                          quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount,
                          rotations=self._copy_rotations(pictures),
+                         crops=self._copy_table(pictures, self.crops), stories=self._copy_table(pictures, self.stories),
                          write_rotation=settings.read_write_rotation(self.prefs))
 
     def open_copy(self) -> None:
@@ -985,7 +1177,8 @@ class MainWindow(QMainWindow):
             from spuza.ui.resume import ResumeController
 
             store = SessionStore()  # builds a path only; the folder is made on the first save
-            self.resume = ResumeController(self.catalog, self.root, store, parent=self, rotations=self.rotations)
+            self.resume = ResumeController(self.catalog, self.root, store, parent=self, rotations=self.rotations,
+                                           crops=self.crops, stories=self.stories)
             remember = settings.read_resume_on(self.prefs)
             self.resume.set_enabled(remember)
             if remember and not self._pruned:
@@ -1057,6 +1250,7 @@ class MainWindow(QMainWindow):
     def open_compare(self) -> None:
         if not features.enabled("compare_view") or not len(self.catalog) or self._compare_shown():
             return
+        self._end_edit()
         if self.stack.currentIndex() == 1:  # review: the grid's selection, up to four
             picks = self._review_picks()[:4]
             if len(picks) < 2:
@@ -1204,6 +1398,9 @@ class MainWindow(QMainWindow):
                 return
             if k in GRID_KEYS and k != Qt.Key_Escape or k in (Qt.Key_J, Qt.Key_K):
                 return  # the grid ignored it (or a fake review did): never drive the hidden viewer
+        if self._edit is not None and self.stack.currentIndex() == 0 and self._edit_key(e):
+            e.accept()
+            return
         if k in (Qt.Key_Space, Qt.Key_M):
             if not e.isAutoRepeat():  # a held key marks one picture, never a run (move on mark would)
                 self.toggle_mark()
@@ -1232,6 +1429,15 @@ class MainWindow(QMainWindow):
         elif k == Qt.Key_O and features.enabled("focus_point"):
             if not e.isAutoRepeat():
                 self.toggle_marker()
+        elif k == Qt.Key_X and self.stack.currentIndex() == 0:
+            if not e.isAutoRepeat():
+                self.start_crop()
+        elif k == Qt.Key_S and self.stack.currentIndex() == 0:
+            if not e.isAutoRepeat():
+                self.start_story()
+        elif k == Qt.Key_Backspace and self.stack.currentIndex() == 0:
+            if not e.isAutoRepeat():
+                self.clear_edits()
         elif k == Qt.Key_U and features.enabled("resume_session") and self.stack.currentIndex() == 0:
             if not e.isAutoRepeat():
                 self.start_fresh()
