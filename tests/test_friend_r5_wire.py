@@ -467,3 +467,30 @@ def test_window_shares_its_dicts_with_the_resume_controller(tmp_path, monkeypatc
         assert ctl.crops is win.crops and ctl.stories is win.stories
     finally:
         win.close()
+
+
+# -- turning during an edit ---------------------------------------------------------------------------------
+def test_turning_during_a_story_edit_rebegins_the_editor_with_the_new_turns(w):
+    key(w, Qt.Key_S)
+    assert w._story_editor._src == (64, 48)
+    QTest.keyClick(w, Qt.Key_BracketRight)
+    assert w.rotations == {0: 1} and w._edit == "story" and w._story_editor.active
+    assert w._story_editor._src == (48, 64)  # the editor works in the new turned frame
+    w._story_editor._story = Story(1.3, 0.0, 0.0)
+    key(w, Qt.Key_Return)
+    assert w.stories[0].zoom == pytest.approx(1.3)
+
+
+def test_turning_clamps_a_stored_story_for_the_new_frame(w):
+    w.stories[0] = Story(2.0, 0.0, 0.0)  # fine for 64x48 (zoom limit 2.25), above the 1.33 limit once turned
+    QTest.keyClick(w, Qt.Key_BracketRight)
+    assert w.stories[0].zoom <= 1.34
+
+
+def test_turning_during_a_crop_edit_keeps_the_rectangle(w):
+    key(w, Qt.Key_X)
+    draw(w)
+    QTest.keyClick(w, Qt.Key_BracketLeft)
+    assert w._edit == "crop" and w._crop_overlay.editing and w._crop_overlay.rect_frac() == CROP
+    key(w, Qt.Key_Return)
+    assert w.crops == {0: CROP}

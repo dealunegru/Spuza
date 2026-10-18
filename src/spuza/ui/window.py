@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
         self.stories: dict[int, object] = {}  # friend round 5: catalog index -> spuza.story.Story
         self._crop_overlay = None  # CropOverlay, built on first X (or the first picture that has a crop)
         self._story_editor = None  # StoryEditor, built on first S
+        self._story_native = (1, 1)  # the open story edit's un-turned native size
         self._edit: str | None = None  # None | "crop" | "story": the mode the viewer is in
         self._markall_undo: frozenset[int] | None = None  # the marks before the last Mark all / Unmark all
         self._markall_after: frozenset[int] = frozenset()  # the marks right after it (to count later changes)
@@ -484,6 +485,7 @@ class MainWindow(QMainWindow):
             else:
                 self.rotations.pop(i, None)
         for i in targets:
+            self._story_follows_turn(i)
             for v in self._views():
                 v.rotation_changed(i)
         side = "right" if delta > 0 else "left"
@@ -567,9 +569,25 @@ class MainWindow(QMainWindow):
         pm = self.viewer.image_item().pixmap()
         shown = (pm.width(), pm.height())
         native = info_native_size(self.prefetcher.info(i), shown) or shown
+        self._story_native = native
         self._ensure_story_editor().begin(pm, self._rotation_of(i), self.stories.get(i), native)
         self._edit = "story"
         self.say("Story fit 9:16: drag to move, wheel or + - to zoom, 0 resets. Enter applies, Esc cancels, S clears")
+
+    def _story_follows_turn(self, i: int) -> None:
+        """A story is placed in the TURNED frame, so a new turn re-fits it: an open story edit is re-begun with the
+        new turns (its Story re-clamped for the new frame), and a stored Story is re-clamped for it. A crop needs
+        nothing: its overlay is a child of the item and turns with it."""
+        from spuza import story as st
+
+        if self._edit == "story" and i == self.catalog.index:
+            ed = self._story_editor
+            ed.begin(self.viewer.image_item().pixmap(), self._rotation_of(i), ed.story(), self._story_native)
+        stored = self.stories.get(i)
+        native = info_native_size(self.prefetcher.info(i), None)
+        if stored is not None and native:
+            w, h = native if self._rotation_of(i) % 2 == 0 else (native[1], native[0])
+            self.stories[i] = st.clamp(stored, w, h)
 
     def _end_edit(self, announce: bool = False) -> None:
         """Leave the edit mode without applying anything (the dicts were never touched): the old state is back."""
