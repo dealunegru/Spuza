@@ -107,3 +107,15 @@ def test_line_sits_with_the_exif_rows(tmp_path):
 def test_single_picture_card_still_reads_its_key(tmp_path):
     _jpg(tmp_path / "only.jpg", ORIG)
     assert _scan_one(tmp_path).taken == "2026-10-18T21:43:05"
+
+
+def test_unset_camera_clock_is_absent(tmp_path):
+    (tmp_path / "z.dng").write_bytes(tiff(b"0000:00:00 00:00:00"))
+    pic = _scan_one(tmp_path)
+    w = Inspector()
+    w.set_picture(pic, None)
+    assert _taken_lines(w)[0].endswith("(file date)") and "0000" not in _taken_lines(w)[0]
+    from spuza.preview import PreviewInfo
+    good = ex.Exif(taken="2026-10-18T21:43:05")
+    w.set_picture(pic, PreviewInfo(pic.primary, "pillow", 8, 6, 100, 1.0, good))
+    assert _taken_lines(w) == ["Taken: 2026-10-18  21:43:05"]
