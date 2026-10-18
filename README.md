@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.8.0-informational" alt="Version 0.8.0">
+  <img src="https://img.shields.io/badge/version-0.8.1-informational" alt="Version 0.8.1">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -44,6 +44,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## What's new
 
+- **0.8.1**: Copying from a read-only card leaves ordinary files you can delete, with the card's dates, and no hidden `.spuza-part` file beside them.
 - **0.8.0**: Fifth feedback round. `+` and `-` zoom in 25% steps of the picture's own pixels, from the fitted view up to 400%. The inspector has a `Taken:` line with the date and time the camera wrote, or the file date, marked `(file date)`. Crop (`X`): drag a rectangle on the picture, and the copy gets the result in `ed` as `<name>.jpg` beside the untouched original. Story fit (`S`): place the picture under a fixed 9:16 frame with the wheel and the mouse, and the copy gets a 1080 x 1920 `<name>_story.jpg` in `ed`.
 - **0.7.0**: Fourth feedback round. The inspector shows the picture's own size (the JPG beside a raw, else the camera's frame) on one line and the preview's source and size on another. On a raw with a JPG beside it, Z shows the JPG's pixels at 100% in about a quarter of a second instead of decoding the raw. The control bar is one row again: Mark all, Unmark all, undo and the two turns are keys only.
 - **0.6.0**: Third feedback round. The filmstrip loads thumbnails wherever you scroll. Z shows the picture's own pixels, one per screen pixel, framed as the camera cropped it; a Preferences row shows the full sensor on cropped shots instead. `[` and `]` rotate a picture in quarter turns; the turn is written as EXIF orientation into the copy only, never into the original. Mark all / Unmark all, with one Ctrl+Z undo.
