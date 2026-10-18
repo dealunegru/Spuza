@@ -117,7 +117,8 @@ class CopySheet(QDialog):
 
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
-                 eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None):
+                 eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
+                 stories=None):
         super().__init__(parent)
         self.rotations = dict(rotations or {})  # contract fr3: Picture.primary -> clockwise quarter turns
         self.write_rotation = bool(write_rotation)
@@ -128,6 +129,7 @@ class CopySheet(QDialog):
             c = crop_mod.normalise(v)
             if c is not None:
                 self.crops[k] = c
+        self.stories = dict(stories or {})  # contract fr5: Picture.primary -> spuza.story.Story (export: fr5-storycopy)
         self.organise = bool(organise)
         self.eject_after = bool(eject_after)
         self.quit_after = bool(quit_after)
