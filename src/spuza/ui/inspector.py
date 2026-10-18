@@ -57,9 +57,13 @@ def exif_lines(info) -> list[str]:
 def taken_line(pic, info=None) -> str:
     """One line: "Taken: 2026-10-18  21:43:05" (camera clock as written), or the file's local mtime
     with " (file date)". Scan time first (no file read here), then the preview's EXIF, then mtime."""
-    iso = getattr(pic, "taken", "") or getattr(getattr(info, "exif", None), "taken", None)
-    if iso and len(iso) == 19:
-        return f"Taken: {iso[:10]}  {iso[11:]}"
+    for iso in (getattr(pic, "taken", ""), getattr(getattr(info, "exif", None), "taken", None)):
+        try:  # an unset camera clock ("0000-00-00...") or any odd value is absent: try the next source
+            if isinstance(iso, str) and len(iso) == 19:
+                datetime.fromisoformat(iso)
+                return f"Taken: {iso[:10]}  {iso[11:]}"
+        except ValueError:
+            pass
     try:
         mt = float(getattr(pic, "mtime", 0) or 0)
         if mt > 0:
