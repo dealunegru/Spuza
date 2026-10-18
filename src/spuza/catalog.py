@@ -20,7 +20,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
@@ -52,6 +52,7 @@ class Picture:
     mtime: float
     companions: tuple[Path, ...] = ()  # non-picture files on the same stem (XMP, THM, Live Photo MOV, ...); also in `files`
     twins: tuple[Path, ...] = ()  # the same files on a second card (dual-slot backup); never copied, only reported
+    taken: str = field(default="", compare=False)  # camera DateTimeOriginal "YYYY-MM-DDTHH:MM:SS" read by the scan; "" = none
 
 
 @dataclass(frozen=True)
@@ -94,11 +95,12 @@ def _order(pictures: list[Picture], order: str) -> None:
     kind instead of weaving file-copy times into camera times. "mtime": the old order."""
     def by_mtime(p):
         return (p.mtime, p.primary.name.lower(), str(p.primary.parent))
-    if order == "mtime" or len(pictures) < 2:
+    if order == "mtime" or not pictures:
         pictures.sort(key=by_mtime)
         return
     with ThreadPoolExecutor(max_workers=KEY_WORKERS) as pool:
         keys = list(pool.map(_read_key, [p.primary for p in pictures]))
+    pictures[:] = [replace(p, taken=k.taken) if k else p for p, k in zip(pictures, keys)]  # keep what the scan read
     final = {}
     for p, k in zip(pictures, keys):
         t = sort_key(k, p.primary.name.lower())

@@ -2,6 +2,7 @@
 
 import io
 import struct
+from dataclasses import replace
 
 import pytest
 from PIL import Image
@@ -86,9 +87,11 @@ def test_wrong_typed_tag_values():
 def test_real_dng_values(real_set):
     for name in DNG_NAMES:
         _im, info = pv.load(real_set / name)
-        assert info.exif == ex.Exif("f/2.8", "1/640 s", "ISO 200", "18.3 mm", "RICOH GR III"), name
+        assert info.exif.taken, name  # each file carries its own date; the rest is the same
+        assert replace(info.exif, taken=None) == ex.Exif("f/2.8", "1/640 s", "ISO 200", "18.3 mm", "RICOH GR III"), name
 
 
 def test_real_raf_values(real_set):
     _im, info = pv.load(real_set / RAF_NAME)
-    assert info.exif == ex.Exif("f/8", "1/850 s", "ISO 400", "35 mm", "X-Pro2")
+    assert info.exif.taken
+    assert replace(info.exif, taken=None) == ex.Exif("f/8", "1/850 s", "ISO 400", "35 mm", "X-Pro2")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from PIL import Image
 
 EXIF_IFD = 0x8769
 T_MODEL, T_EXPOSURE, T_FNUMBER, T_ISO, T_FOCAL = 0x0110, 0x829A, 0x829D, 0x8827, 0x920A
+T_ORIGINAL, T_DIGITIZED = 0x9003, 0x9004
+_DATE = re.compile(r"(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)")
 
 
 @dataclass(frozen=True)
@@ -26,9 +29,10 @@ class Exif:
     iso: str | None = None  # "ISO 200"
     focal: str | None = None  # "18 mm"
     model: str | None = None  # "RICOH GR III"
+    taken: str | None = None  # "2026-10-18T21:43:05", the camera's clock as written (original, else digitized)
 
     def empty(self) -> bool:
-        return not any((self.aperture, self.shutter, self.iso, self.focal, self.model))
+        return not any((self.aperture, self.shutter, self.iso, self.focal, self.model, self.taken))
 
 
 def _num(v) -> float | None:
@@ -80,6 +84,19 @@ def format_model(v) -> str | None:
     return v[:60] or None
 
 
+def format_taken(v) -> str | None:
+    """EXIF "YYYY:MM:DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SS", or None when it is not that shape."""
+    if isinstance(v, bytes):
+        v = v.decode("ascii", "ignore")
+    if not isinstance(v, str):
+        return None
+    m = _DATE.fullmatch(v.replace("\x00", "").strip())
+    if not m or m.group(1) == "0000":
+        return None
+    y, mo, d, h, mi, s = m.groups()
+    return f"{y}-{mo}-{d}T{h}:{mi}:{s}"
+
+
 def _from_exif(ex) -> Exif:
     try:
         sub = ex.get_ifd(EXIF_IFD)
@@ -99,6 +116,7 @@ def _from_exif(ex) -> Exif:
         iso=format_iso(iso),
         focal=format_focal(pick(T_FOCAL)),
         model=format_model(ex.get(T_MODEL)),
+        taken=format_taken(pick(T_ORIGINAL)) or format_taken(pick(T_DIGITIZED)),
     )
 
 
