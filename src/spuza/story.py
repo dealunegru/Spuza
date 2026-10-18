@@ -15,7 +15,7 @@ Limits (all in EXPORT space, so they do not depend on the screen): the smallest 
 1080-wide export (a tiny picture therefore tops out at fill). On an axis where the scaled picture covers the
 frame, |offset| <= (W*s - Fw)/2; on an axis where it does not cover, that axis is centred (offset 0).
 
-API: FRAME_W, FRAME_H, EXPORT_SIZE, Story, fit_scale, cover_scale, max_scale, fill_story, clamp,
+API: StoryJob, export(job), FRAME_W, FRAME_H, EXPORT_SIZE, Story, fit_scale, cover_scale, max_scale, fill_story, clamp,
 zoom_about, pan, zoom_step, visible_rect, render, save. Offsets taken in pixels (`p`, `pan`) are relative to
 the frame centre, in pixels of the frame size given as `frame_size` (default: the export frame).
 """
@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image
+
+from spuza import crop as crop_mod
 
 FRAME_W, FRAME_H = 1080, 1920
 EXPORT_SIZE = (FRAME_W, FRAME_H)
@@ -41,6 +43,16 @@ class Story:
     zoom: float = 1.0
     dx: float = 0.0
     dy: float = 0.0
+
+
+@dataclass(frozen=True)
+class StoryJob:
+    """One picture to export as a story fit: ``turns`` clockwise quarter turns are always baked in."""
+
+    primary: Path
+    sidecar: Path | None
+    story: Story
+    turns: int = 0
 
 
 def fit_scale(w: float, h: float, fw: float = FRAME_W, fh: float = FRAME_H) -> float:
@@ -204,3 +216,10 @@ def save(img: Image.Image, dst, exif=None) -> None:
             pass
         kwargs["exif"] = ex.tobytes()
     img.save(Path(dst), "JPEG", **kwargs)
+
+
+def export(job: StoryJob) -> tuple[Image.Image, bytes]:
+    """(the 1080x1920 story picture, the source EXIF bytes with Orientation 1) for ``job``; raises crop.CropError
+    when the pixels cannot be read. The same best pixels as a crop (``crop.best_pixels``)."""
+    im = crop_mod.best_pixels(job.primary, job.sidecar)
+    return render(im, job.turns, job.story), im.info["exif"]

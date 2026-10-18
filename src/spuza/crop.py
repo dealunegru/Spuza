@@ -12,6 +12,8 @@ API
     render(primary, sidecar, crop, turns) -> PIL.Image   best pixels, cropped, then ``turns`` clockwise quarter turns
                                          baked in; ``im.info`` carries the "exif" bytes (Orientation 1) and the
                                          "icc_profile" when the source had them. Raises CropError, nothing else.
+    best_pixels(primary, sidecar) -> PIL.Image   the best-pixels step alone (RGB, EXIF-oriented, not turned, same
+                                         ``info``); shared with the story export. Raises CropError, nothing else.
     write_jpeg(im, dst)                  save at JPEG quality 95 with that EXIF and profile; Orientation is 1
     CropError                            the one error render/write_jpeg raise
 
@@ -137,19 +139,14 @@ def _carry_exif(src: Path) -> tuple[bytes | None, bytes | None]:
         return None, None
 
 
-def render(primary, sidecar, crop, turns: int = 0) -> Image.Image:
-    """The cropped picture, ``turns`` clockwise quarter turns baked in (see the module docstring)."""
+def best_pixels(primary, sidecar=None) -> Image.Image:
+    """The picture's best pixels as RGB, EXIF-oriented and not turned (see the module docstring); ``info`` carries
+    "exif" (Orientation 1) and, when the source had one, "icc_profile". Raises CropError, nothing else."""
     try:
-        norm = normalise(crop)
-        if norm is None:
-            raise CropError(f"not a usable crop: {crop!r}")
         primary = Path(primary)
         sidecar = Path(sidecar) if sidecar is not None else None
         im, origin = _pixels(primary, sidecar)
-        out = im.convert("RGB").crop(crop_box(im.size, norm))
-        op = _TURN_OPS.get(int(turns) % 4)
-        if op is not None:
-            out = out.transpose(op)
+        im = im.convert("RGB")
         exif, icc = _carry_exif(origin)
         if exif is None and origin != primary:
             exif, _ = _carry_exif(primary)
@@ -157,9 +154,30 @@ def render(primary, sidecar, crop, turns: int = 0) -> Image.Image:
             bare = Image.Exif()
             bare[_ORIENTATION] = 1
             exif = bare.tobytes()
-        out.info["exif"] = exif
+        im.info["exif"] = exif
         if icc:
-            out.info["icc_profile"] = icc
+            im.info["icc_profile"] = icc
+        return im
+    except CropError:
+        raise
+    except Exception as e:  # noqa: BLE001 - one clean error for the copy to report
+        raise CropError(f"{type(e).__name__}: {e}") from e
+
+
+def render(primary, sidecar, crop, turns: int = 0) -> Image.Image:
+    """The cropped picture, ``turns`` clockwise quarter turns baked in (see the module docstring)."""
+    try:
+        norm = normalise(crop)
+        if norm is None:
+            raise CropError(f"not a usable crop: {crop!r}")
+        im = best_pixels(primary, sidecar)
+        out = im.crop(crop_box(im.size, norm))
+        op = _TURN_OPS.get(int(turns) % 4)
+        if op is not None:
+            out = out.transpose(op)
+        out.info["exif"] = im.info["exif"]
+        if im.info.get("icc_profile"):
+            out.info["icc_profile"] = im.info["icc_profile"]
         return out
     except CropError:
         raise
