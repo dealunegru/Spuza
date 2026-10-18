@@ -345,3 +345,45 @@ def test_editor_paints_frame_and_darkens_outside(editor):
     centre = img.pixelColor(300, 400)
     assert centre.red() > 200 and centre.green() < 60  # the red photo inside the frame
     assert img.pixelColor(2, 2).red() < 200  # darkened outside
+
+
+def test_editor_uses_source_size_for_limits_and_steps(editor):
+    # a 1920x1280 preview of a 6000x4000 source: limits and the step grid are the source's
+    editor.begin(pm(1920, 1280), 0, None, source_size=(6000, 4000))
+    fit = st.fit_scale(6000, 4000)
+    for _ in range(300):
+        editor.zoom_step(1)
+    assert editor.story().zoom * fit == pytest.approx(1.0)
+    assert editor.story().zoom == pytest.approx(st.clamp(st.Story(1e9, 0, 0), 6000, 4000).zoom)
+    editor.reset()
+    editor.zoom_step(1)
+    assert editor.story().zoom * fit == pytest.approx(0.25)
+    editor.zoom_step(1)
+    assert editor.story().zoom * fit == pytest.approx(0.5)
+
+
+def test_editor_source_size_follows_turns(editor):
+    editor.begin(pm(300, 200), 1, st.fill_story(4000, 6000), source_size=(6000, 4000))
+    assert editor.story().zoom == pytest.approx(st.fill_story(4000, 6000).zoom)
+
+
+def test_editor_paint_matches_render(editor):
+    from PySide6.QtGui import QImage
+
+    src = quad(300, 200)
+    story = st.clamp(st.Story(2.6, 0.12, -0.05), 200, 300)  # turned size is 200x300
+    qi = QImage(src.tobytes(), 300, 200, 900, QImage.Format.Format_RGB888)
+    editor.begin(QPixmap.fromImage(qi), 1, story, source_size=(300, 200))
+    assert editor.story() == story
+    grab = editor.grab().toImage()
+    fr = editor._frame()
+    x0, y0, fw, fh = round(fr.x()), round(fr.y()), round(fr.width()), round(fr.height())
+    ref = st.render(src, 1, story).resize((fw, fh), Image.Resampling.BILINEAR)
+    bad = total = 0
+    for yy in range(4, fh - 4, 9):
+        for xx in range(4, fw - 4, 9):
+            c = grab.pixelColor(x0 + xx, y0 + yy)
+            r = ref.getpixel((xx, yy))
+            total += 1
+            bad += max(abs(c.red() - r[0]), abs(c.green() - r[1]), abs(c.blue() - r[2])) > 80
+    assert bad / total < 0.04

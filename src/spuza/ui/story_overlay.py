@@ -36,6 +36,7 @@ class StoryEditor(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self._pm: QPixmap | None = None
+        self._src = (0, 0)
         self._story = st.Story()
         self._active = False
         self._last: QPointF | None = None  # drag anchor while the left button is down
@@ -51,9 +52,14 @@ class StoryEditor(QWidget):
     def story(self) -> st.Story:
         return self._story
 
-    def begin(self, pixmap: QPixmap, turns: int, story: st.Story | None) -> None:
+    def begin(
+        self, pixmap: QPixmap, turns: int, story: st.Story | None, source_size: tuple[int, int] | None = None
+    ) -> None:
+        """`source_size` is the EXIF-oriented, un-turned native size; the pixmap may be a smaller preview."""
         t = int(turns) % 4
         self._pm = pixmap if t == 0 else pixmap.transformed(QTransform().rotate(90 * t))
+        sw, sh = source_size if source_size else (pixmap.width(), pixmap.height())
+        self._src = (sh, sw) if t % 2 else (sw, sh)  # the turned source size: every model call uses it
         self._story = self._clamped(story if story is not None else st.Story())
         self._active = True
         self._last = None
@@ -76,7 +82,7 @@ class StoryEditor(QWidget):
     # -- model helpers -------------------------------------------------------------------------------------
 
     def _size(self) -> tuple[int, int]:
-        return (self._pm.width(), self._pm.height()) if self._pm is not None else (0, 0)
+        return self._src if self._pm is not None else (0, 0)
 
     def _clamped(self, s: st.Story) -> st.Story:
         w, h = self._size()
@@ -195,7 +201,7 @@ class StoryEditor(QWidget):
             cx = fr.center().x() + self._story.dx * fr.width()
             cy = fr.center().y() + self._story.dy * fr.height()
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-            p.drawPixmap(QRectF(cx - w * s / 2, cy - h * s / 2, w * s, h * s), self._pm, QRectF(0, 0, w, h))
+            p.drawPixmap(QRectF(cx - w * s / 2, cy - h * s / 2, w * s, h * s), self._pm, QRectF(self._pm.rect()))
         outside = QPainterPath()
         outside.addRect(QRectF(self.rect()))
         inner = QPainterPath()
