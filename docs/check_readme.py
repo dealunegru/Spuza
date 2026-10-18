@@ -39,10 +39,11 @@ DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 
 # Qt key names (after "Key_") -> the canonical token; anything else is lowercased as is.
 _QT_NAMES = {"right": "right", "left": "left", "up": "up", "down": "down", "escape": "esc",
-             "return": "enter", "enter": "enter", "space": "space"}
+             "return": "enter", "enter": "enter", "space": "space",
+             "plus": "plus", "equal": "equal", "minus": "minus"}
 # README spellings -> canonical.
 _README_NAMES = {"→": "right", "←": "left", "↑": "up", "↓": "down", "esc": "esc", "escape": "esc",
-                 "enter": "enter", "return": "enter", "space": "space",
+                 "enter": "enter", "return": "enter", "space": "space", "+": "plus", "=": "equal", "-": "minus",
                  "⌘,": "ctrl+,", "cmd-,": "ctrl+,", "ctrl-,": "ctrl+,", "ctrl+,": "ctrl+,", "cmd+,": "ctrl+,"}
 
 
