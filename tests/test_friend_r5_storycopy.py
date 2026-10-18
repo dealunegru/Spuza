@@ -9,7 +9,7 @@ from PIL import Image
 from PySide6.QtWidgets import QApplication
 
 from spuza import crop as crop_mod
-from spuza import preview, story
+from spuza import preview, rotation, story
 from spuza.catalog import scan
 from spuza.copy import STORY_BYTES, plan_copy, run_copy
 from spuza.crop import CropJob
@@ -243,7 +243,10 @@ def test_cancel_between_items(tmp_path):
 
 # ---- sheet ------------------------------------------------------------------------------------
 
-def test_sheet_passes_stories_with_turns_and_reports(tmp_path):
+def test_sheet_passes_stories_with_turns_and_reports(tmp_path, monkeypatch):
+    # The turn also gets written into the ORIGINAL's copy; its first exiftool lookup (shutil.which, cached per process)
+    # was seen taking seconds on the worker while this thread spins in wait_for. Not what this test is about.
+    monkeypatch.setattr(rotation, "_which_exiftool", lambda: None)
     src, pics = card(tmp_path, ("A", "B"))
     sheet = CopySheet(pics, tmp_path / "out", stories={pics[0].primary: Story(), pics[1].primary: "garbage"},
                       rotations={pics[0].primary: 1})
@@ -252,7 +255,7 @@ def test_sheet_passes_stories_with_turns_and_reports(tmp_path):
     done = []
     sheet.finished.connect(done.append)
     sheet.copy_button.click()
-    assert wait_for(lambda: done)
+    assert wait_for(lambda: done), (sheet.running, sheet.copy_button.isEnabled(), sheet.free_label.text(), sheet.plan_label.text())
     sheet.wait_idle()
     out = tmp_path / "out" / "ed"
     assert (out / "A_story.jpg").is_file() and not (out / "B_story.jpg").exists()
