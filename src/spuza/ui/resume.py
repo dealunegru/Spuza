@@ -32,8 +32,9 @@ IO_WAIT_SECONDS = 1.0  # the longest start_fresh() waits for the store lock (a s
 class ResumeController(QObject):
     def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None,
                  rotations: dict | None = None, crops: dict | None = None, stories: dict | None = None,
-                 crop_ratios: dict | None = None):
+                 crop_ratios: dict | None = None, band=None):
         super().__init__(parent)
+        self.band = band  # friend round 7: the window's derived.Band, shared by reference (None: no derived pictures)
         self.crop_ratios = crop_ratios if crop_ratios is not None else {}  # friend round 6: index -> Ratio, shared
         self.rotations = rotations if rotations is not None else {}  # contract fr3: the window's dict, shared
         self.crops = crops if crops is not None else {}  # friend round 5: index -> (l, t, r, b), shared the same way
@@ -68,7 +69,8 @@ class ResumeController(QObject):
         cropped = frozenset((i, tuple(r)) for i, r in dict(self.crops).items() if isinstance(i, int) and r)
         storied = frozenset((i, (s.zoom, s.dx, s.dy)) for i, s in dict(self.stories).items() if isinstance(i, int))
         ratioed = frozenset((i, r) for i, r in dict(self.crop_ratios).items() if isinstance(i, int) and isinstance(r, Ratio))
-        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned, cropped, storied, ratioed
+        made = self.band.snapshot() if self.band is not None else ()
+        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned, cropped, storied, ratioed, made
 
     def _get_store(self) -> SessionStore:
         if self._store is None:
@@ -88,6 +90,8 @@ class ResumeController(QObject):
             extra["stories"] = {i: Story(*t) for i, t in snap[4]}
         if snap[5]:
             extra["crop_ratios"] = dict(snap[5])
+        if self.band is not None:
+            extra["derived"] = snap[6]
         self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1], **extra)
 
     def _write(self, snap) -> None:
@@ -171,12 +175,17 @@ class ResumeController(QObject):
         self.crop_ratios.update(r.crop_ratios)
         self.stories.clear()
         self.stories.update({i: Story(*t) for i, t in r.stories.items()})
+        if self.band is not None:
+            self.band.reset(r.derived)
         self._last = self._snapshot()
         n = len(r.marks)
         k = len(r.rotations)
         parts = ([f"{n} mark{'s' if n != 1 else ''}"] if n else []) + ([f"{k} rotation{'s' if k != 1 else ''}"] if k else [])
         parts += [f"{len(d)} {word}{'s' if len(d) != 1 else ''}" for d, word in ((r.crops, "crop"), (r.stories, "story fit"))
                   if d]
+        k = len(r.derived)
+        if k and not r.crops and not r.stories:
+            parts.append(f"{k} cropped picture{'s' if k != 1 else ''}")
         what = " and ".join(parts + ["your place"])
         when = datetime.fromtimestamp(r.saved_at).strftime("%d %b %H:%M")
         extra = f" ({r.dropped} changed or missing skipped)" if r.dropped else ""
@@ -212,7 +221,7 @@ class ResumeController(QObject):
             finally:
                 self._io.release()
             # rotations, crops and story fits outlive U (only the marks go): the next tick saves them
-            self._last = self._snapshot() if not (self.rotations or self.crops or self.stories) else None
+            self._last = self._snapshot() if not (self.rotations or self.crops or self.stories or self.band) else None
             busy = ""
         else:  # a write is stuck: do not freeze the GUI behind it; the next tick saves the cleared state instead
             busy = " (the saved session is busy; it is replaced when it frees)"

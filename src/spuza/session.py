@@ -17,14 +17,18 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from spuza import derived as derived_mod
 from spuza import ratio as ratio_mod
 from spuza.ratio import Ratio
+from spuza.story import Story
 
 PRUNE_DAYS = 30
 VERSION = 2  # 2 adds "rotations" beside the marks; a version 1 session (no rotations) still loads.
 # Friend round 5 adds "crops" and "stories" rows beside them WITHOUT a bump: a reader that does not know them ignores
 # them and keeps the marks, and a session without them loads as before. Friend round 6 adds an optional "ratio" string
 # to a crop row (ratio.encode; absent for Free), again without a bump; a crop and a story may now both be kept.
+# Friend round 7 adds a top-level "derived" list (derived.to_row plus the source picture's name/size/mtime), again
+# without a bump. A session without that key (0.9.0) is read as derived pictures made from its crop and story rows.
 READ_VERSIONS = (1, 2)
 MAX_BYTES = 8 * 1024 * 1024  # a session bigger than this is not ours (or not sane): ignored
 MTIME_TOLERANCE = 2.0  # seconds; FAT stores mtime in 2 s steps
@@ -41,6 +45,7 @@ class Restored:
     crops: dict[int, tuple] = field(default_factory=dict, hash=False)  # catalog index -> (left, top, right, bottom)
     stories: dict[int, tuple] = field(default_factory=dict, hash=False)  # catalog index -> (zoom, dx, dy)
     crop_ratios: dict[int, Ratio] = field(default_factory=dict, hash=False)  # crop's index -> its Ratio (Free: absent)
+    derived: tuple = ()  # derived.Derived items in saved order (a 0.9.0 session: its crops and stories, converted)
 
 
 def default_dir() -> Path:
@@ -121,7 +126,7 @@ class SessionStore:
         return self.folder / f"{key}.json" if _valid_key(key) else None
 
     def save(self, key: str, root, pictures, marks, index: int, now: float | None = None,
-             rotations=None, crops=None, stories=None, crop_ratios=None) -> None:
+             rotations=None, crops=None, stories=None, crop_ratios=None, derived=None) -> None:
         """Write this card's session atomically. Never raises on I/O (a full disk must not stop a cull)."""
         path = self._path(key)
         if path is None:
@@ -161,10 +166,20 @@ class SessionStore:
                     p = pictures[i]
                     storied.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime),
                                     "zoom": tri[0], "dx": tri[1], "dy": tri[2]})
+            made = []
+            for d in derived or ():
+                i = getattr(d, "source", None)
+                if (isinstance(d, derived_mod.Derived) and isinstance(i, int) and not isinstance(i, bool)
+                        and 0 <= i < n and derived_mod.from_row(derived_mod.to_row(d), i) is not None):
+                    p = pictures[i]
+                    made.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime),
+                                 **derived_mod.to_row(d)})
             idx = max(0, min(int(index), n - 1)) if n else 0
             doc = {"version": VERSION, "root": str(root), "saved_at": time.time() if now is None else float(now),
                    "index": idx, "index_name": _rel(root, pictures[idx]) if n else "", "marks": rows,
                    "rotations": turned, "crops": cropped, "stories": storied}
+            if derived is not None:  # absent keeps a legacy-kwarg save readable as 0.9.0 wrote it
+                doc["derived"] = made
             data = json.dumps(doc, separators=(",", ":")).encode("utf-8", "replace")
             self.folder.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(prefix=key + ".", suffix=".tmp", dir=self.folder)
@@ -251,6 +266,29 @@ class SessionStore:
                     storied[i] = tri
             except (KeyError, TypeError):
                 pass
+        if isinstance(doc.get("derived"), list):
+            made = []
+            for r in doc["derived"]:
+                try:
+                    i = matches(r)
+                except (KeyError, TypeError, AttributeError):
+                    i = None
+                d = derived_mod.from_row(r, i) if i is not None else None
+                if d is None:
+                    dropped += 1
+                else:
+                    made.append(d)
+        elif "derived" in doc:
+            made = []
+        else:  # a 0.9.0 session: one derived picture per crop, then per story fit, marked as their original is
+            made = []
+            for i in sorted(set(cropped) | set(storied)):
+                if i in cropped:
+                    made.append(derived_mod.Derived(len(made) + 1, i, derived_mod.CROP, crop=cropped[i],
+                                                    ratio=ratios.get(i), marked=i in marks))
+                if i in storied:
+                    made.append(derived_mod.Derived(len(made) + 1, i, derived_mod.STORY, story=Story(*storied[i]),
+                                                    marked=i in marks))
         n = len(pictures)
         name, num = doc.get("index_name"), doc.get("index")
         if isinstance(name, str) and name in by_name:
@@ -259,9 +297,9 @@ class SessionStore:
             index = max(0, min(num, n - 1)) if n else 0
         else:
             index = 0
-        if not marks and not turned and not cropped and not storied and index == 0:
+        if not marks and not turned and not cropped and not storied and not made and index == 0:
             return None  # nothing worth restoring
-        return Restored(frozenset(marks), index, float(saved_at), dropped, turned, cropped, storied, ratios)
+        return Restored(frozenset(marks), index, float(saved_at), dropped, turned, cropped, storied, ratios, tuple(made))
 
     def forget(self, key: str) -> None:
         path = self._path(key)
