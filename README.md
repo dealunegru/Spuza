@@ -132,7 +132,7 @@ Every key in one table. Most also have a toolbar button with the shortcut printe
 | `N` | viewer, review (advanced) | **Compare.** Shows this picture and the next side by side; `N` again adds the next one, up to four |
 | `P` | viewer (advanced) | **Focus peaking.** Paints the sharp edges red. Remembered between runs |
 | `O` | viewer (advanced) | **AF point.** Draws a ring where the camera focused; `Z` then opens the 100% view on that spot |
-| `U` | viewer (advanced) | **Start fresh.** Clears this card's marks and its saved session. `U` again within 10 seconds undoes it |
+| `U` | viewer (advanced) | **Start fresh.** Clears this card's marks, crop pictures' marks included (the crop pictures stay), and its saved session. `U` again within 10 seconds undoes it |
 
 Notes on the keys:
 
@@ -159,7 +159,7 @@ Two ways to make a ready-to-post picture. Each makes a new picture on the filmst
 - **Crop (`X`).** Drag a rectangle on the fitted picture (a zoomed picture goes back to fit first). A ratio strip shows above the picture while the crop is open. `Enter` makes the crop picture, `Esc` cancels, `Backspace` clears the rectangle.
 - **Story fit (`S`).** A fixed 9:16 frame sits over the picture. Drag to move the picture, zoom with the mouse wheel or `+` `-`, `0` shows the whole picture inside the frame. `Enter` makes the story picture, `Esc` cancels. The copy gets a 1080 x 1920 picture as `ed/<name>_story.jpg`.
 
-The new picture has its own thumbnail and a tag: the ratio (`4:5`, or `crop` for Free or Original), or an outlined `9:16` for a story fit. The selection moves onto it. Press `X` or `S` on the original again for another one: one original, any number of crops and story fits.
+The new picture has its own thumbnail and a tag: the ratio (`4:5`, `Original` for Original, `crop` for Free), or an outlined `9:16` for a story fit. The selection moves onto it. Press `X` or `S` on the original again for another one: one original, any number of crops and story fits.
 
 **A crop picture is a picture.** View it fitted; `+` `-` and `Z` work on its own pixels (on a story picture they zoom the 9:16 view, and `Z` does not go to the original's pixels). `Space` marks or unmarks it; a new one starts marked. `→` `←` `J` `K` step through it. Right-click shows the original in Finder or Explorer.
 
