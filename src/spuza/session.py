@@ -17,10 +17,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from spuza import ratio as ratio_mod
+from spuza.ratio import Ratio
+
 PRUNE_DAYS = 30
 VERSION = 2  # 2 adds "rotations" beside the marks; a version 1 session (no rotations) still loads.
 # Friend round 5 adds "crops" and "stories" rows beside them WITHOUT a bump: a reader that does not know them ignores
-# them and keeps the marks, and a session without them loads as before.
+# them and keeps the marks, and a session without them loads as before. Friend round 6 adds an optional "ratio" string
+# to a crop row (ratio.encode; absent for Free), again without a bump; a crop and a story may now both be kept.
 READ_VERSIONS = (1, 2)
 MAX_BYTES = 8 * 1024 * 1024  # a session bigger than this is not ours (or not sane): ignored
 MTIME_TOLERANCE = 2.0  # seconds; FAT stores mtime in 2 s steps
@@ -36,6 +40,7 @@ class Restored:
     rotations: dict[int, int] = field(default_factory=dict, hash=False)  # catalog index -> clockwise quarter turns 1..3
     crops: dict[int, tuple] = field(default_factory=dict, hash=False)  # catalog index -> (left, top, right, bottom)
     stories: dict[int, tuple] = field(default_factory=dict, hash=False)  # catalog index -> (zoom, dx, dy)
+    crop_ratios: dict[int, Ratio] = field(default_factory=dict, hash=False)  # crop's index -> its Ratio (Free: absent)
 
 
 def default_dir() -> Path:
@@ -116,7 +121,7 @@ class SessionStore:
         return self.folder / f"{key}.json" if _valid_key(key) else None
 
     def save(self, key: str, root, pictures, marks, index: int, now: float | None = None,
-             rotations=None, crops=None, stories=None) -> None:
+             rotations=None, crops=None, stories=None, crop_ratios=None) -> None:
         """Write this card's session atomically. Never raises on I/O (a full disk must not stop a cull)."""
         path = self._path(key)
         if path is None:
@@ -140,8 +145,12 @@ class SessionStore:
                 rect = _crop_rect(crops[i]) if 0 <= i < n else None
                 if rect is not None:
                     p = pictures[i]
-                    cropped.append({"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime),
-                                    "rect": list(rect)})
+                    row = {"name": _rel(root, p), "size": int(p.size_bytes), "mtime": float(p.mtime),
+                           "rect": list(rect)}
+                    r = (crop_ratios or {}).get(i)
+                    if isinstance(r, Ratio) and r != ratio_mod.FREE:
+                        row["ratio"] = ratio_mod.encode(r)
+                    cropped.append(row)
             storied = []
             for i in sorted(i for i in (stories or {}) if isinstance(i, int) and not isinstance(i, bool)):
                 if not 0 <= i < n:
@@ -224,18 +233,21 @@ class SessionStore:
                 return i
             return None
 
-        cropped, storied = {}, {}
+        cropped, storied, ratios = {}, {}, {}
         for r in doc.get("crops") if isinstance(doc.get("crops"), list) else ():
             try:
                 i, rect = matches(r), _crop_rect(r["rect"])
                 if i is not None and rect is not None:
                     cropped[i] = rect
-            except (KeyError, TypeError):
+                    dec = ratio_mod.decode(r.get("ratio"))  # missing or garbage: the crop stays, as Free
+                    if dec is not None and dec != ratio_mod.FREE:
+                        ratios[i] = dec
+            except (KeyError, TypeError, AttributeError):
                 pass
         for r in doc.get("stories") if isinstance(doc.get("stories"), list) else ():
             try:
                 i, tri = matches(r), _story_triple(r["zoom"], r["dx"], r["dy"])
-                if i is not None and tri is not None and i not in cropped:  # a picture has a crop or a story, not both
+                if i is not None and tri is not None:
                     storied[i] = tri
             except (KeyError, TypeError):
                 pass
@@ -249,7 +261,7 @@ class SessionStore:
             index = 0
         if not marks and not turned and not cropped and not storied and index == 0:
             return None  # nothing worth restoring
-        return Restored(frozenset(marks), index, float(saved_at), dropped, turned, cropped, storied)
+        return Restored(frozenset(marks), index, float(saved_at), dropped, turned, cropped, storied, ratios)
 
     def forget(self, key: str) -> None:
         path = self._path(key)
