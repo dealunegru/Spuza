@@ -276,7 +276,8 @@ def _publish(tmp: Path, dst: Path) -> None:
                 except OSError:
                     pass
                 raise
-        shutil.copystat(tmp, dst)
+        st = tmp.stat()  # times only: the temp is ordinary, but never carry a mode over
+        os.utime(dst, ns=(st.st_atime_ns, st.st_mtime_ns))
     try:
         os.unlink(tmp)  # published already: a failure to tidy our temp is not a failed copy
     except OSError:
@@ -333,7 +334,10 @@ def run_copy(
                     res.bytes_copied += len(chunk)
                     report(item.src)
             outcome = rotation.apply_rotation(item.src, tmp, item.turns) if item.turns else None
-            shutil.copystat(item.src, tmp)
+            # Times only, never the mode: a read-only card file would make the temp (and, hard-linked, the copy)
+            # read-only too, and the temp could then not be removed. The copy stays an ordinary owner-writable file.
+            st = item.src.stat()
+            os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
             dst = item.dst
             while True:
                 try:
