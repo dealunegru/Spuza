@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from spuza import copy as copy_mod
 from spuza import crop as crop_mod
 from spuza import eject as eject_mod
+from spuza import ratio as ratio_mod
 from spuza import story as story_mod
 from spuza.catalog import KNOWN_EXTS
 from spuza.copy import human_size
@@ -119,8 +120,11 @@ class CopySheet(QDialog):
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
                  eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
-                 stories=None):
+                 stories=None, crop_ratios=None):
         super().__init__(parent)
+        # contract fr6: Picture.primary -> spuza.ratio.Ratio of that picture's crop (names its ed file); a value that is
+        # not a Ratio is dropped, which exports the crop as Free.
+        self.crop_ratios = {k: v for k, v in dict(crop_ratios or {}).items() if isinstance(v, ratio_mod.Ratio)}
         self.rotations = dict(rotations or {})  # contract fr3: Picture.primary -> clockwise quarter turns
         self.write_rotation = bool(write_rotation)
         # contract fr5: Picture.primary -> Crop (fractions of the EXIF-oriented picture, before the user's turns);
@@ -374,7 +378,7 @@ class CopySheet(QDialog):
                 continue
             t = self.rotations.get(p.primary, 0)
             t = t % 4 if isinstance(t, int) and not isinstance(t, bool) else 0
-            jobs.append(crop_mod.CropJob(p.primary, getattr(p, "sidecar", None), c, t))
+            jobs.append(crop_mod.CropJob(p.primary, getattr(p, "sidecar", None), c, t, self.crop_ratios.get(p.primary)))
         return jobs
 
     def _story_jobs(self) -> list:
