@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.9.0-informational" alt="Version 0.9.0">
+  <img src="https://img.shields.io/badge/version-0.10.0-informational" alt="Version 0.10.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -43,6 +43,8 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 [What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
 
 ## What's new
+
+- **0.10.0**: Seventh feedback round. A crop or a story fit is now a picture of its own on the filmstrip. `Enter` in a crop (`X`) or a story fit (`S`) adds a new picture right after the original, with its own thumbnail and a tag (the ratio, `crop` for Free, an outlined `9:16` for a story). The original is not touched, so `X` on it again cuts another crop: one original, any number of crops and story fits. A crop picture can be viewed, zoomed, marked and stepped through like any other, and `Backspace` removes it. Mark all counts them. Copy writes each marked one to `ed`. A session from 0.9.0 turns its crops and story fits into these pictures.
 
 - **0.9.0**: Sixth feedback round. Crop (`X`) has a ratio strip above the picture. `1` to `8` pick Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16 or 1.91:1, `V` turns the ratio (4:5 becomes 5:4) and `0` resets the rectangle. A locked ratio has four corner handles and a label with the ratio and pixels. The copy names the file after the ratio, `<name>_4x5.jpg`. A picture can now have a crop and a story fit together. The inspector shows the crop in pixels, and the filmstrip tag shows the ratio.
 - **0.8.1**: Copying from a read-only card leaves ordinary files you can delete, with the card's dates, and no hidden `.spuza-part` file beside them.
@@ -87,7 +89,7 @@ The inspector on the right shows:
 - the picture's own size (for a raw, that of the JPG beside it, else the camera's frame);
 - the preview's source, size and decode time;
 - aperture, shutter, ISO, focal length and camera;
-- a `Crop:` line (the ratio and the size in pixels) and a `Story fit:` line when the picture has them.
+- on a crop picture, `Crop of <file>`, the ratio (`Free` for none) and the size in pixels; on a story picture, `Story fit of <file>`, `9:16` and `1080 x 1920 px`.
 
 Right-click a picture in the filmstrip, the viewer or the review to show it in Finder or Explorer.
 
@@ -112,25 +114,25 @@ Every key in one table. Most also have a toolbar button with the shortcut printe
 | `Ctrl+Z` | viewer, review | undo the last Mark all or Unmark all (`Cmd+Z` on a Mac): one level |
 | `[` or `]` | viewer, review, compare | rotate left or right by a quarter turn (review: every selected picture; compare: the framed one) |
 | `A` | viewer | move on mark, on or off: marking a picture then shows the next one (remembered between runs) |
-| `Z` | viewer, review, compare | 100% zoom. A raw with a JPG beside it shows the JPG's own pixels; a raw alone is decoded in full in the background. Compare zooms the framed picture and its neighbour together. Does nothing while you crop or fit a story |
+| `Z` | viewer, review, compare | 100% zoom. A raw with a JPG beside it shows the JPG's own pixels; a raw alone is decoded in full in the background. Compare zooms the framed picture and its neighbour together. On a crop picture it shows that picture's own pixels; on a story picture it zooms the 9:16 view and does not load the original's pixels. Does nothing while you crop or fit a story |
 | `+` or `=` | viewer, review, story | zoom in by 25% of the picture's own pixels, up to 400%; from the fitted view the first step is the one above the fit. The keypad `+` works too. In story fit it scales the picture under the frame. Does nothing while you crop |
 | `-` | viewer, review, story | zoom out by 25%; the last step back is the fitted view. In story fit it scales the picture down |
 | `F` | viewer | full screen, picture only |
 | `R` | viewer | review the marked pictures |
 | `C` | viewer | copy the marked pictures to a folder |
 | `Cmd-,` or `Ctrl-,` | anywhere | Preferences (`Cmd` on a Mac, `Ctrl` on Windows) |
-| `X` | viewer | **crop**: drag a rectangle on the picture, with a ratio strip above it. `X` again clears this picture's crop |
+| `X` | viewer | **crop**: drag a rectangle on the picture, with a ratio strip above it. `Enter` adds the result as a new picture after the original. On a crop picture, `X` re-crops it from the original |
 | `1` to `8` | crop | pick the ratio: Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16, 1.91:1. Clicking a chip on the strip does the same. Nothing outside the crop |
 | `V` | crop | turn the ratio: 4:5 becomes 5:4, 1.91:1 becomes 1:1.91. Free and 1:1 do not change. Nothing outside the crop |
-| `S` | viewer | **story fit** 9:16: drag and zoom the picture under a fixed vertical frame. `S` again clears it |
+| `S` | viewer | **story fit** 9:16: drag and zoom the picture under a fixed vertical frame. `Enter` adds it as a new picture after the original. On a story picture, `S` re-fits it |
 | `0` | crop, story fit | crop: the largest centred rectangle of the ratio. Story fit: back to the whole picture inside the frame |
-| `Enter` | crop, story fit, review | apply the crop or story fit that is open; in the review, open the selected picture in the workbench |
-| `Backspace` | viewer, crop, story fit | on the viewer, remove both the crop and the story fit of the picture on screen; while one is open, remove only that one |
-| `Esc` | everywhere | cancel the crop or story fit that is open; else leave full screen, the review or compare |
+| `Enter` | crop, story fit, review | make the crop or story fit that is open into a picture (or replace the one being redone); in the review, open the selected picture in the workbench |
+| `Backspace` | viewer, crop, story fit | on a crop or story picture, remove it (the original stays); on an original it does nothing. While a crop is open it clears the rectangle; while a story fit is open it puts the picture back whole in the frame |
+| `Esc` | everywhere | cancel the crop or story fit that is open (nothing is made); else leave full screen, the review or compare |
 | `N` | viewer, review (advanced) | **Compare.** Shows this picture and the next side by side; `N` again adds the next one, up to four |
 | `P` | viewer (advanced) | **Focus peaking.** Paints the sharp edges red. Remembered between runs |
 | `O` | viewer (advanced) | **AF point.** Draws a ring where the camera focused; `Z` then opens the 100% view on that spot |
-| `U` | viewer (advanced) | **Start fresh.** Clears this card's marks and its saved session. `U` again within 10 seconds undoes it |
+| `U` | viewer (advanced) | **Start fresh.** Clears this card's marks, crop pictures' marks included (the crop pictures stay), and its saved session. `U` again within 10 seconds undoes it |
 
 Notes on the keys:
 
@@ -152,10 +154,18 @@ Notes on the keys:
 
 ## Crop and story fit
 
-Two ways to make a ready-to-post picture. Both are only marked on the picture until you copy: the original is never touched.
+Two ways to make a ready-to-post picture. Each makes a new picture on the filmstrip, right after the original. The original is never touched, and nothing is written to disk until you copy.
 
-- **Crop (`X`).** Drag a rectangle on the fitted picture (a zoomed picture goes back to fit first). A ratio strip shows above the picture while the crop is open. `Enter` applies, `Esc` cancels, `X` or `Backspace` removes it.
-- **Story fit (`S`).** A fixed 9:16 frame sits over the picture. Drag to move the picture, zoom with the mouse wheel or `+` `-`, `0` shows the whole picture inside the frame. `Enter` applies, `Esc` cancels, `S` or `Backspace` removes it. The copy gets a 1080 x 1920 picture as `ed/<name>_story.jpg`.
+- **Crop (`X`).** Drag a rectangle on the fitted picture (a zoomed picture goes back to fit first). A ratio strip shows above the picture while the crop is open. `Enter` makes the crop picture, `Esc` cancels, `Backspace` clears the rectangle.
+- **Story fit (`S`).** A fixed 9:16 frame sits over the picture. Drag to move the picture, zoom with the mouse wheel or `+` `-`, `0` shows the whole picture inside the frame. `Enter` makes the story picture, `Esc` cancels. The copy gets a 1080 x 1920 picture as `ed/<name>_story.jpg`.
+
+The new picture has its own thumbnail and a tag: the ratio (`4:5`, `Original` for Original, `crop` for Free), or an outlined `9:16` for a story fit. The selection moves onto it. Press `X` or `S` on the original again for another one: one original, any number of crops and story fits.
+
+**A crop picture is a picture.** View it fitted; `+` `-` and `Z` work on its own pixels (on a story picture they zoom the 9:16 view, and `Z` does not go to the original's pixels). `Space` marks or unmarks it; a new one starts marked. `→` `←` `J` `K` step through it. Right-click shows the original in Finder or Explorer.
+
+- **Redo.** `X` on a crop picture opens the crop on the original with its rectangle and ratio selected; `Enter` replaces that picture in place. `S` on a story picture does the same for a story fit.
+- **Remove.** `Backspace` on a crop or story picture takes it off the filmstrip. On an original it does nothing and says "Nothing to remove here".
+- Mark all and Unmark all include these pictures, and the sidebar counts them. The review and compare show originals only.
 
 **The ratio strip.** Press `1` to `8`, or click a chip, to pick Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16 or 1.91:1. The top-row digits work on a Mac; no keypad is needed. 4:5, 3:4, 2:3 and 9:16 open portrait and 1.91:1 opens landscape, whichever way the picture lies. Free and Original follow the picture. `V` turns the ratio, so 4:5 becomes 5:4. `0` resets the rectangle to the largest centred one of the ratio.
 
@@ -166,13 +176,11 @@ Two ways to make a ready-to-post picture. Both are only marked on the picture un
 
 Rules:
 
-- A picture can have a crop and a story fit at the same time. Applying one leaves the other. `Backspace` while one is open removes that one; on the viewer it removes both.
 - Neither works in the review or in compare.
-- A picture with a crop shows its ratio in the filmstrip (`crop` for Free or Original); a story fit shows an outlined `9:16`, and a picture with both shows both. The inspector names them, as `Crop: 4:5, 3200 x 4000 px`.
-- The copy names a ratio crop after the ratio, as the picture is turned in the copy: `<name>_4x5.jpg`, `_1x1`, `_3x4`, `_2x3`, `_9x16`, `_191x100`, and turned `_5x4`, `_4x3`, `_3x2`, `_16x9`, `_100x191`. A Free or Original crop is `<name>.jpg`.
+- The copy names a ratio crop after the ratio, as the picture is turned in the copy: `<name>_4x5.jpg`, `_1x1`, `_3x4`, `_2x3`, `_9x16`, `_191x100`, and turned `_5x4`, `_4x3`, `_3x2`, `_16x9`, `_100x191`. A Free or Original crop is `<name>.jpg`. Two crops that would get the same name get `-1`, `-2`.
 - Only marked pictures are exported. The pixels come from the best source: a JPG beside the raw, else the full decode when the embedded preview is too small, else the preview.
 - Your quarter turns are baked into the `ed` files.
-- With Resume in advanced mode, crops (with their ratio) and story fits are saved in the session file beside the marks and turns.
+- With Resume in advanced mode, these pictures (with their ratio) are saved in the session file beside the marks and turns. A session saved by 0.9.0 comes back as crop and story pictures, marked if their original was.
 
 ## Copying
 
@@ -189,11 +197,12 @@ The sheet shows the plan before anything is copied: how many files, how many byt
 |---|---|
 | `raw` | raw files. A picture's XMP or MOV goes with its raw |
 | `soc` | JPEGs and other picture formats (HIF, HEIF, PNG...). A raw+JPEG pair is split between `raw` and `soc` |
-| `ed` | empty unless you cropped or fitted a story: `<name>.jpg` for a Free or Original crop, `<name>_4x5.jpg` (and the other ratio names) for a ratio crop, `<name>_story.jpg` (1080 x 1920) for a story fit |
+| `ed` | empty unless you marked a crop or story picture: `<name>.jpg` for a Free or Original crop, `<name>_4x5.jpg` (and the other ratio names) for a ratio crop, `<name>_story.jpg` (1080 x 1920) for a story fit |
 
 - **Originals are always untouched** in `raw` and `soc`: byte-for-byte copies.
+- **A marked crop or story picture is written to `ed`**, whether or not its original is marked. A copy with only crop pictures marked is allowed.
 - **Quarter turns** (`[` `]`) are written into the copies in `raw` and `soc` as EXIF orientation only (the **Write rotation to copies (EXIF)** preference, on by default). They are baked into the `ed` files.
-- With the folders option off, the originals go flat into the destination; crops and story fits still go into `ed`.
+- With the folders option off, the originals go flat into the destination; marked crop and story pictures still go into `ed`.
 
 Other rules:
 
