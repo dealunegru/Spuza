@@ -166,6 +166,7 @@ def test_the_crop_follows_the_row_not_an_outline(w):
     pm = w.viewer.image_item().pixmap()
     assert (pm.width(), pm.height()) != (64, 48)  # the derived row shows the crop
     w.step(1)
+    shown(w)  # picture 1 is decoded off-thread; CI's Linux runner read an empty pixmap mid-swap
     pm = w.viewer.image_item().pixmap()
     assert w.catalog.index == 1 and (pm.width(), pm.height()) == (64, 48)  # picture 1 has none
     w.step(-1)
