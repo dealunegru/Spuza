@@ -39,3 +39,14 @@ def test_missing_and_loading_show_dashes():
         assert "Aperture: --" in w.label.text()
     w.set_picture(_pic(), _info(Exif(aperture="f/4")))
     assert "Aperture: f/4" in w.plain() and "Shutter: --" in w.plain()
+
+
+def test_edit_rows_are_listed_crop_first_before_marked():
+    w = Inspector()
+    w.set_picture(_pic(), _info(None), edit=["Crop: 4:5, 3200 x 4000 px", "Story fit: 9:16, zoom 1.4x"])
+    t = w.plain().splitlines()
+    assert t.index("Crop: 4:5, 3200 x 4000 px") + 1 == t.index("Story fit: 9:16, zoom 1.4x") < t.index("Not marked")
+    w.set_picture(_pic(), _info(None), edit="Crop: free, 1 x 1 px")  # a bare string is still one row
+    assert "Crop: free, 1 x 1 px" in w.plain()
+    w.set_picture(_pic(), _info(None))
+    assert not any(r.startswith(("Crop", "Story")) for r in w.plain().splitlines())

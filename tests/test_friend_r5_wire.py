@@ -14,7 +14,7 @@ from spuza import features
 from spuza.session import SessionStore, card_key
 from spuza.story import Story
 from spuza.ui.resume import ResumeController
-from test_friend_r3_window import make_window
+from test_friend_r3_window import make_window, pump
 from test_ui_resume import make_card, open_card
 
 CROP = (0.1, 0.2, 0.6, 0.7)
@@ -31,18 +31,25 @@ def key(win, k):
     QTest.keyClick(win, k)
 
 
+def shown(win):
+    """Wait until the current picture is decoded and on screen: X and S refuse without one (slow machines)."""
+    pump(lambda: win.prefetcher.cached(win.catalog.index) is not None and win.viewer.has_image)
+
+
 def draw(win, rect=CROP):
     """What a drag does: the overlay's rectangle (its mouse handling is covered with the overlay itself)."""
     win._crop_overlay.set_rect_frac(rect)
 
 
 def crop_with(win, rect=CROP, i=None):
+    shown(win)
     key(win, Qt.Key_X)
     draw(win, rect)
     key(win, Qt.Key_Return)
 
 
 def story_with(win, story=Story(2.0, 0.0, 0.0)):
+    shown(win)
     key(win, Qt.Key_S)
     win._story_editor._story = story
     key(win, Qt.Key_Return)
@@ -139,6 +146,7 @@ def test_navigation_cancels_the_edit_then_moves(w, nav, expect):
 
 def test_navigation_back_cancels_a_story_edit(w):
     w.step(1)
+    shown(w)
     key(w, Qt.Key_S)
     key(w, Qt.Key_K)
     assert w.catalog.index == 0 and not w._story_editor.active and w.stories == {}
@@ -260,24 +268,25 @@ def test_plus_minus_zoom_the_viewer_outside_story_mode(w):
     assert w._story_editor is None
 
 
-def test_applying_a_crop_clears_the_story_and_vice_versa(w):
+def test_a_crop_and_a_story_coexist(w):
+    # round 6 (D6) lifts round 5's "one or the other": applying one no longer drops the other
     story_with(w)
     crop_with(w)
-    assert w.crops == {0: CROP} and w.stories == {}
-    story_with(w)
-    assert w.stories == {0: Story(2.0, 0.0, 0.0)} and w.crops == {}
-    assert w._crop_overlay._applied is None
+    assert w.crops == {0: CROP} and w.stories == {0: Story(2.0, 0.0, 0.0)}
+    story_with(w, Story(1.5, 0.0, 0.0))
+    assert w.stories == {0: Story(1.5, 0.0, 0.0)} and w.crops == {0: CROP}
+    assert w._crop_overlay._applied == CROP
 
 
 # -- indicators ---------------------------------------------------------------------------------------------
 def test_filmstrip_tags_distinguish_crop_and_story(w):
-    assert [w.filmstrip.edit_tag_of(i) for i in range(3)] == ["", "", ""]
+    assert [w.filmstrip.edit_tag_of(i) for i in range(3)] == [[], [], []]
     crop_with(w)
     w.step(1)
     story_with(w)
-    tags = [w.filmstrip.edit_tag_of(i) for i in range(3)]
-    assert tags[0] and tags[1] and tags[2] == "" and tags[0] != tags[1]
-    assert tags[1] == "9:16"
+    tags = [w.filmstrip.edit_tag_of(i) for i in range(3)]  # round 6: a list of (text, kind) per picture
+    assert tags[0] and tags[1] and tags[2] == [] and tags[0] != tags[1]
+    assert tags[0] == [("crop", "crop")] and tags[1] == [("9:16", "story")]
     cell = w.filmstrip.visualRect(w.filmstrip.model().index(0))
     assert w.filmstrip.viewport().grab(cell).toImage().width() > 0  # paints without raising
 
@@ -285,10 +294,11 @@ def test_filmstrip_tags_distinguish_crop_and_story(w):
 def test_inspector_line(w):
     assert not any(t.startswith(("Crop", "Story")) for t in w.inspector.lines)
     crop_with(w)
-    assert "Crop: 50% x 50% of the picture" in w.inspector.lines
+    assert "Crop: free, 32 x 24 px" in w.inspector.lines  # round 6: pixels of the 64 x 48 stand-in, not percentages
     story_with(w)
     assert "Story fit: 9:16, zoom 2.0x" in w.inspector.lines
-    assert not any(t.startswith("Crop") for t in w.inspector.lines)
+    lines = [t for t in w.inspector.lines if t.startswith(("Crop", "Story"))]
+    assert lines == ["Crop: free, 32 x 24 px", "Story fit: 9:16, zoom 2.0x"]  # both, crop first
     w.step(1)
     assert not any(t.startswith(("Crop", "Story")) for t in w.inspector.lines)
     # after the date row, before Marked

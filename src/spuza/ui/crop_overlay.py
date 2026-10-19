@@ -6,10 +6,13 @@ as fractions (left, top, right, bottom) of the parent pixmap's own, unrotated fr
 the pixmap size (call it from the viewer's `pixmap_changed`). Handles, border and hit sizes are in device
 pixels (cosmetic pens, size from the item-to-viewport scale), so they look alike at any fit scale and under
 90/180/270 degree rotation. Not editing and nothing applied: invisible and transparent to the mouse.
-Never takes keyboard focus. Aspect is free.
+Never takes keyboard focus. Aspect is free until `set_aspect` locks it (round 6): then 4 corner handles, a corner
+drag keeps the ratio with the opposite corner fixed, a drag on empty space draws a new rectangle at the ratio. While
+editing, a label inside the rectangle ("4:5 · 3200 × 4000 px"; "Free · 3720 × 2480 px") is drawn upright on screen
+whatever the picture's turn.
 
-API: begin(rect=None) / end() / editing / rect_frac() / set_rect_frac(rect) / show_applied(rect) / sync(),
-signal `changed`.
+API: begin(rect=None) / end() / editing / rect_frac() / set_rect_frac(rect) / show_applied(rect) / sync() /
+set_aspect(aspect_px_or_None, native_size, label="Free") / label_text(), signal `changed`.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsObject, QGraphicsPixmapItem
 
 MIN_SIDE = 0.01  # a side under 1 % of the picture is no crop
@@ -61,6 +64,9 @@ class CropOverlay(QGraphicsObject):
         self._anchor = QPointF()
         self._start: tuple[float, float, float, float] = (0, 0, 0, 0)  # the rectangle at press
         self._dragging = False
+        self._aspect: float | None = None  # locked: crop width / height in picture pixels; None = free
+        self._native = (0, 0)  # the picture's own un-turned size, for the label's pixels and the fraction aspect
+        self._label = "Free"
         self.setZValue(9)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setVisible(False)
@@ -102,6 +108,39 @@ class CropOverlay(QGraphicsObject):
         self._applied = None if rect is None else _clean(rect)
         self._refresh()
 
+    def set_aspect(self, aspect, native, label: str = "Free") -> None:
+        """Lock the rectangle to `aspect` (width / height in native pixels; None or not a positive number = free).
+        `native` is the picture's un-turned (w, h); `label` is the ratio's on-screen name for the inside label."""
+        ok = isinstance(aspect, (int, float)) and not isinstance(aspect, bool) and math.isfinite(aspect) and aspect > 0
+        try:
+            nw, nh = int(native[0]), int(native[1])
+        except (TypeError, ValueError, IndexError, OverflowError):
+            nw = nh = 0
+        self._native = (nw, nh) if nw > 0 and nh > 0 else (0, 0)
+        self._aspect = float(aspect) if ok and self._native != (0, 0) else None
+        self._label = str(label) if label else "Free"
+        self.update()
+
+    @property
+    def aspect(self) -> float | None:
+        return self._aspect
+
+    def _frac_aspect(self) -> float | None:
+        """The locked aspect as a ratio of the rectangle's FRACTIONS (pixel aspect * h / w)."""
+        if self._aspect is None:
+            return None
+        return self._aspect * self._native[1] / self._native[0]
+
+    def label_text(self) -> str:
+        """The text inside the rectangle: "<ratio label> · W × H px" (pixels of the native picture)."""
+        r = self.rect_frac()
+        if r is None or self._native == (0, 0):
+            return self._label
+        from spuza.ratio import pixel_size
+
+        pw, ph = pixel_size(r, self._native[0], self._native[1])
+        return f"{self._label} · {pw} × {ph} px"
+
     def sync(self) -> None:
         """Follow the parent pixmap's current size (after a pixmap swap)."""
         pm = self._parent.pixmap()
@@ -133,11 +172,25 @@ class CropOverlay(QGraphicsObject):
             if det > 0:
                 self._scale = math.sqrt(det)
 
-    @staticmethod
-    def _handles(r: QRectF) -> dict[tuple[int, int], QPointF]:
+    def _handles(self, r: QRectF) -> dict[tuple[int, int], QPointF]:
         xs = {-1: r.left(), 0: r.center().x(), 1: r.right()}
         ys = {-1: r.top(), 0: r.center().y(), 1: r.bottom()}
-        return {(sx, sy): QPointF(xs[sx], ys[sy]) for sx in (-1, 0, 1) for sy in (-1, 0, 1) if (sx, sy) != (0, 0)}
+        locked = self._aspect is not None  # a locked ratio has the 4 corners only
+        return {(sx, sy): QPointF(xs[sx], ys[sy]) for sx in (-1, 0, 1) for sy in (-1, 0, 1)
+                if (sx, sy) != (0, 0) and not (locked and 0 in (sx, sy))}
+
+    @staticmethod
+    def _locked_rect(fixed: tuple[float, float], px: float, py: float, fa: float, sx: int = 1, sy: int = 1):
+        """The rectangle of fraction aspect `fa` with corner `fixed` kept and the opposite corner as near the pointer
+        as the ratio and the picture allow (the pointer picks the quadrant; (sx, sy) breaks a tie)."""
+        fx, fy = fixed
+        dirx = 1 if px > fx else (-1 if px < fx else (sx or 1))
+        diry = 1 if py > fy else (-1 if py < fy else (sy or 1))
+        w = max(abs(px - fx), abs(py - fy) * fa)
+        w = min(w, (1.0 - fx) if dirx > 0 else fx, ((1.0 - fy) if diry > 0 else fy) * fa)
+        h = w / fa
+        x2, y2 = fx + dirx * w, fy + diry * h
+        return (min(fx, x2), min(fy, y2), max(fx, x2), max(fy, y2))
 
     def _hit(self, pos: QPointF):
         """A handle key (sx, sy), "move", or None for a point (item coordinates)."""
@@ -197,6 +250,30 @@ class CropOverlay(QGraphicsObject):
         painter.setBrush(QColor(20, 20, 20, 220))
         for pt in self._handles(rect).values():
             painter.drawRect(QRectF(pt.x() - half, pt.y() - half, 2 * half, 2 * half))
+        self._paint_label(painter, rect)
+
+    def _paint_label(self, painter: QPainter, rect: QRectF) -> None:
+        """The label as a pill at the rectangle's centre, upright on screen: the item's turn and scale are undone by
+        painting in device coordinates at the mapped centre."""
+        text = self.label_text()
+        if not text or rect.width() <= 0 or rect.height() <= 0:
+            return
+        centre = painter.worldTransform().map(rect.center())
+        painter.save()
+        painter.resetTransform()
+        f = QFont(painter.font())
+        f.setPixelSize(13)
+        f.setBold(True)
+        painter.setFont(f)
+        fm = painter.fontMetrics()
+        tw, th = fm.horizontalAdvance(text) + 18, fm.height() + 8
+        pill = QRectF(centre.x() - tw / 2, centre.y() - th / 2, tw, th)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(20, 20, 20, 184))
+        painter.drawRoundedRect(pill, th / 2, th / 2)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, text)
+        painter.restore()
 
     # ----- mouse -----
     def _clamp_pt(self, pos: QPointF) -> tuple[float, float]:
@@ -234,14 +311,23 @@ class CropOverlay(QGraphicsObject):
             event.ignore()
             return
         px, py = self._clamp_pt(event.pos())
+        fa = self._frac_aspect()
         if self._mode == "new":
             ax, ay = self._anchor.x(), self._anchor.y()
-            self._rect = (min(ax, px), min(ay, py), max(ax, px), max(ay, py))
+            if fa is None:
+                self._rect = (min(ax, px), min(ay, py), max(ax, px), max(ay, py))
+            else:
+                self._rect = self._locked_rect((ax, ay), px, py, fa)
         elif self._mode == "move":
             left, top, right, bottom = self._start
             dx = min(1.0 - right, max(-left, px - self._anchor.x()))
             dy = min(1.0 - bottom, max(-top, py - self._anchor.y()))
             self._rect = (left + dx, top + dy, right + dx, bottom + dy)
+        elif fa is not None:
+            sx, sy = self._mode
+            left, top, right, bottom = self._start
+            # the opposite corner stays; the dragged corner follows the pointer at the ratio
+            self._rect = self._locked_rect((right if sx < 0 else left, bottom if sy < 0 else top), px, py, fa, sx, sy)
         else:
             sx, sy = self._mode
             left, top, right, bottom = self._start

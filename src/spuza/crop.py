@@ -8,7 +8,8 @@ API
     normalise(rect) -> Crop | None       clamp to [0, 1], order the corners; None for garbage (not a 4-sequence of
                                          finite real numbers, bools included) or when a side is under MIN_SIDE (1 %)
     crop_box(size, crop) -> (x0, y0, x1, y1)   the crop in pixels of a picture of ``size``; never empty
-    CropJob(primary, sidecar, crop, turns)     one picture to crop (frozen); ``sidecar`` may be None
+    CropJob(primary, sidecar, crop, turns, ratio=None)   one picture to crop (frozen); ``sidecar`` may be None;
+                                         ``ratio`` (a spuza.ratio.Ratio, None = Free) only names the export file
     render(primary, sidecar, crop, turns) -> PIL.Image   best pixels, cropped, then ``turns`` clockwise quarter turns
                                          baked in; ``im.info`` carries the "exif" bytes (Orientation 1) and the
                                          "icc_profile" when the source had them. Raises CropError, nothing else.
@@ -34,11 +35,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image
 
 from spuza import preview
 from spuza.catalog import RAW_EXTS
+
+if TYPE_CHECKING:  # spuza.ratio imports this module; the name is only an annotation here
+    from spuza.ratio import Ratio
 
 Crop = tuple[float, float, float, float]
 
@@ -66,6 +71,7 @@ class CropJob:
     sidecar: Path | None
     crop: Crop
     turns: int = 0
+    ratio: Ratio | None = None  # the aspect ratio the crop was made at; None is Free (names the export, nothing else)
 
 
 def _number(v) -> float | None:

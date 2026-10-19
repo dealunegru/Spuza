@@ -184,3 +184,128 @@ def test_paints_without_error(rig):
     rig.ov.end()
     rig.ov.show_applied((0.2, 0.2, 0.8, 0.8))
     assert not rig.view.grab().isNull()
+
+
+# -- round 6: the ratio lock ---------------------------------------------------------------------------------
+NATIVE = (6000, 4000)  # the 400 x 300 stand-in pixmap is 4:3, the "picture" 3:2: the fraction aspect must use NATIVE
+
+
+def _locked(rig, aspect=0.8, label="4:5"):
+    rig.ov.begin()
+    rig.ov.set_aspect(aspect, NATIVE, label)
+
+
+def _px_aspect(rect):
+    return (rect[2] - rect[0]) * NATIVE[0] / ((rect[3] - rect[1]) * NATIVE[1])
+
+
+def test_locked_has_only_four_corner_handles_and_free_keeps_eight(rig):
+    rig.ov.begin((0.25, 0.25, 0.75, 0.75))
+    rect = rig.ov._px(rig.ov._rect)
+    assert len(rig.ov._handles(rect)) == 8
+    rig.ov.set_aspect(0.8, NATIVE, "4:5")
+    assert sorted(rig.ov._handles(rect)) == [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+    rig.ov.set_aspect(None, NATIVE)
+    assert len(rig.ov._handles(rect)) == 8 and rig.ov.aspect is None
+
+
+def test_locked_corner_drag_keeps_the_ratio_and_the_opposite_corner(rig):
+    _locked(rig)
+    h = 0.3 * NATIVE[0] / 0.8 / NATIVE[1]
+    start = (0.2, 0.2, 0.5, 0.2 + h)
+    rig.ov.set_rect_frac(start)
+    assert _px_aspect(rig.ov.rect_frac()) == pytest.approx(0.8, rel=1e-6)
+    right, bottom = 0.5 * 400, (0.2 + h) * 300
+    rig.drag((right, bottom), (right + 60, bottom + 5))  # the bottom-right corner, pulled out
+    r = rig.ov.rect_frac()
+    assert (r[0], r[1]) == pytest.approx((0.2, 0.2))  # the opposite corner is fixed
+    assert _px_aspect(r) == pytest.approx(0.8, rel=1e-3)
+    assert r[2] > 0.5 and r[3] > 0.2 + h
+    left, top = 0.2 * 400, 0.2 * 300
+    rig.drag((left, top), (left - 30, top - 20))  # the top-left corner of the new rectangle is not at the edge
+    assert _px_aspect(rig.ov.rect_frac()) == pytest.approx(0.8, rel=1e-3)
+
+
+def test_locked_corner_drag_is_clamped_inside_the_picture(rig):
+    _locked(rig)
+    h = 0.3 * NATIVE[0] / 0.8 / NATIVE[1]
+    rig.ov.set_rect_frac((0.2, 0.2, 0.5, 0.2 + h))
+    rig.drag((0.5 * 400, (0.2 + h) * 300), (5000, 5000))
+    r = rig.ov.rect_frac()
+    assert 0.0 <= r[0] and r[2] <= 1.0 + 1e-9 and r[3] <= 1.0 + 1e-9
+    assert _px_aspect(r) == pytest.approx(0.8, rel=1e-3) and (r[0], r[1]) == pytest.approx((0.2, 0.2))
+    assert r[3] == pytest.approx(1.0, abs=1e-6) or r[2] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_locked_drag_on_empty_space_draws_a_new_rectangle_at_the_ratio(rig):
+    _locked(rig, 1.0, "1:1")
+    rig.drag((100, 60), (300, 100))
+    r = rig.ov.rect_frac()
+    assert _px_aspect(r) == pytest.approx(1.0, rel=1e-3) and (r[0], r[1]) == pytest.approx((0.25, 0.2))
+    rig.drag((300, 240), (100, 60))  # backwards works too
+    assert _px_aspect(rig.ov.rect_frac()) == pytest.approx(1.0, rel=1e-3)
+
+
+def test_locked_inside_drag_moves(rig):
+    _locked(rig)
+    h = 0.3 * NATIVE[0] / 0.8 / NATIVE[1]
+    rig.ov.set_rect_frac((0.2, 0.2, 0.5, 0.2 + h))
+    before = rig.ov.rect_frac()
+    rig.drag((0.35 * 400, (0.2 + h / 2) * 300), (0.45 * 400, (0.2 + h / 2) * 300))
+    after = rig.ov.rect_frac()
+    assert after[2] - after[0] == pytest.approx(before[2] - before[0]) and after[0] == pytest.approx(0.3, abs=0.01)
+
+
+def test_free_drag_still_unconstrained_after_unlocking(rig):
+    _locked(rig)
+    rig.ov.set_aspect(None, NATIVE)
+    rig.ov.begin()
+    rig.drag((100, 60), (300, 240))
+    _approx(rig.ov.rect_frac(), (0.25, 0.2, 0.75, 0.8))
+
+
+def test_set_aspect_rejects_junk_and_falls_back_to_free(rig):
+    for bad in (None, 0, -1, float("nan"), float("inf"), "x", True):
+        rig.ov.set_aspect(bad, NATIVE, "4:5")
+        assert rig.ov.aspect is None
+    for bad in (None, (0, 0), (1,), "ab", (float("nan"), 1)):
+        rig.ov.set_aspect(0.8, bad, "4:5")
+        assert rig.ov.aspect is None
+
+
+def test_label_text_has_the_ratio_and_the_pixels(rig):
+    rig.ov.begin()
+    rig.ov.set_aspect(0.8, NATIVE, "4:5")
+    rig.ov.set_rect_frac(ratio_largest(0.8))
+    assert rig.ov.label_text() == "4:5 · 3200 × 4000 px"
+    rig.ov.set_aspect(None, NATIVE, "Free")
+    rig.ov.set_rect_frac((0.0, 0.0, 0.62, 0.62))
+    assert rig.ov.label_text() == "Free · 3720 × 2480 px"
+
+
+def ratio_largest(a):
+    from spuza import ratio
+
+    return ratio.largest_centred(a, *NATIVE)
+
+
+@pytest.mark.parametrize("turn", [0, 90, 180, 270])
+def test_label_is_upright_on_screen_whatever_the_turn(rig, turn):
+    from PySide6.QtGui import QColor
+
+    rig.item.setTransformOriginPoint(200, 150)
+    rig.item.setRotation(turn)
+    rig.ov.begin()
+    rig.ov.set_aspect(None, NATIVE, "Free")
+    rig.ov.set_rect_frac((0.1, 0.1, 0.9, 0.9))
+    img = rig.view.viewport().grab().toImage()
+    c = rig.view.mapFromScene(rig.item.mapToScene(QPointF(200, 150)))
+    xs, ys = [], []
+    for y in range(max(0, c.y() - 60), min(img.height(), c.y() + 60)):
+        for x in range(max(0, c.x() - 150), min(img.width(), c.x() + 150)):
+            col = QColor(img.pixel(x, y))
+            if col.red() < 75 and col.green() < 75 and col.blue() < 75 and abs(x - c.x()) < 140:
+                xs.append(x)
+                ys.append(y)
+    assert xs, "no label pill found"
+    assert max(xs) - min(xs) > 2 * (max(ys) - min(ys))  # wider than tall: the text is not turned with the picture

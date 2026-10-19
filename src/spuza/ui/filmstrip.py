@@ -82,15 +82,22 @@ class _Delegate(QStyledItemDelegate):
         p.setOpacity(1.0)
         p.setPen(QColor("#1a1000" if amber else "#ffffff"))
         p.drawText(badge, Qt.AlignmentFlag.AlignCenter, pic.kind)
-        tag = s.edit_tag(i)  # friend round 5: "crop" or "9:16", top left, in the kind badge's style
-        if tag:
-            tw = p.fontMetrics().horizontalAdvance(tag) + 8
-            tb = QRect(box.x() + 2, box.y() + 3, tw, 13)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(c.accent))
-            p.drawRoundedRect(tb, 3, 3)
-            p.setPen(QColor("#ffffff"))
-            p.drawText(tb, Qt.AlignmentFlag.AlignCenter, tag)
+        tx = box.x() + 2  # friend round 5/6: the edit tags, top left, in the kind badge's style, side by side
+        for text, kind in s.edit_tags(i):
+            tw = p.fontMetrics().horizontalAdvance(text) + 8
+            tb = QRect(tx, box.y() + 3, tw, 13)
+            if kind == "story":  # an outline: the story fit is a different edit from the crop
+                p.setPen(QPen(QColor(c.accent), 1))
+                p.setBrush(QColor(c.panel))
+                p.drawRoundedRect(tb.adjusted(0, 0, -1, -1), 3, 3)
+                p.setPen(QColor(c.accent))
+            else:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(c.accent))
+                p.drawRoundedRect(tb, 3, 3)
+                p.setPen(QColor("#ffffff"))
+            p.drawText(tb, Qt.AlignmentFlag.AlignCenter, text)
+            tx += tw + 3
         # mark check
         if s.catalog.is_marked(i):
             dot = QRect(box.right() - 17, box.y() + 3, 14, 14)
@@ -110,7 +117,9 @@ class Filmstrip(QListView):
         super().__init__(parent)
         self.catalog, self.prefetcher, self.current = catalog, prefetcher, 0
         self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
-        self.edit_tag_of = lambda i: ""  # friend round 5: "crop" / "9:16" / "" per index; the window assigns it
+        # friend round 5/6: per index a list of (text, kind) tags, kind "crop" (accent fill) or "story" (accent
+        # outline); [] for none. A bare string is one crop tag. The window assigns it.
+        self.edit_tag_of = lambda i: []
         self._memo: dict[tuple[int, int], QPixmap] = {}  # (index, quarter turns) -> scaled, rotated pixmap
         self._loader = ThumbLoader(lambda i: self.catalog.pictures[i].primary, self)
         self._loader.loaded.connect(self._on_loaded)
@@ -142,11 +151,14 @@ class Filmstrip(QListView):
         except Exception:
             return 0
 
-    def edit_tag(self, i: int) -> str:
+    def edit_tags(self, i: int) -> list[tuple[str, str]]:
         try:
-            return str(self.edit_tag_of(i) or "")
+            got = self.edit_tag_of(i) or []
+            if isinstance(got, str):
+                got = [(got, "crop")]
+            return [(str(t), "story" if k == "story" else "crop") for t, k in got if t]
         except Exception:  # noqa: BLE001 - a bad provider shows no tag
-            return ""
+            return []
 
     def thumb(self, i: int) -> QPixmap | None:
         turns = self._turns(i)

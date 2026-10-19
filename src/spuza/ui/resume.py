@@ -20,6 +20,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, QTimer
 
 from spuza import features
+from spuza.ratio import Ratio
 from spuza.session import SessionStore, card_key
 from spuza.story import Story
 
@@ -30,8 +31,10 @@ IO_WAIT_SECONDS = 1.0  # the longest start_fresh() waits for the store lock (a s
 
 class ResumeController(QObject):
     def __init__(self, catalog, root, store=None, interval_ms: int = 1000, clock=None, parent=None,
-                 rotations: dict | None = None, crops: dict | None = None, stories: dict | None = None):
+                 rotations: dict | None = None, crops: dict | None = None, stories: dict | None = None,
+                 crop_ratios: dict | None = None):
         super().__init__(parent)
+        self.crop_ratios = crop_ratios if crop_ratios is not None else {}  # friend round 6: index -> Ratio, shared
         self.rotations = rotations if rotations is not None else {}  # contract fr3: the window's dict, shared
         self.crops = crops if crops is not None else {}  # friend round 5: index -> (l, t, r, b), shared the same way
         self.stories = stories if stories is not None else {}  # friend round 5: index -> spuza.story.Story
@@ -64,7 +67,8 @@ class ResumeController(QObject):
                            if isinstance(t, int) and not isinstance(t, bool) and t % 4)
         cropped = frozenset((i, tuple(r)) for i, r in dict(self.crops).items() if isinstance(i, int) and r)
         storied = frozenset((i, (s.zoom, s.dx, s.dy)) for i, s in dict(self.stories).items() if isinstance(i, int))
-        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned, cropped, storied
+        ratioed = frozenset((i, r) for i, r in dict(self.crop_ratios).items() if isinstance(i, int) and isinstance(r, Ratio))
+        return frozenset(i for i in range(len(c)) if c.is_marked(i)), c.index, turned, cropped, storied, ratioed
 
     def _get_store(self) -> SessionStore:
         if self._store is None:
@@ -82,6 +86,8 @@ class ResumeController(QObject):
             extra["crops"] = dict(snap[3])
         if snap[4]:
             extra["stories"] = {i: Story(*t) for i, t in snap[4]}
+        if snap[5]:
+            extra["crop_ratios"] = dict(snap[5])
         self._get_store().save(self._get_key(), self._root, self._catalog.pictures, snap[0], snap[1], **extra)
 
     def _write(self, snap) -> None:
@@ -161,6 +167,8 @@ class ResumeController(QObject):
         self.rotations.update(r.rotations)
         self.crops.clear()
         self.crops.update(r.crops)
+        self.crop_ratios.clear()
+        self.crop_ratios.update(r.crop_ratios)
         self.stories.clear()
         self.stories.update({i: Story(*t) for i, t in r.stories.items()})
         self._last = self._snapshot()

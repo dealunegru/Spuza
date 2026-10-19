@@ -3,8 +3,12 @@
 Plain Python, no widgets (it imports spuza.catalog for the extension sets, which loads Qt core): the UI calls ``plan_copy`` to show what will happen, then ``run_copy`` on a
 worker thread. The only file this module ever removes is its own half-written ``.spuza-part`` temp.
 
-Crops: ``plan_copy(crops=[CropJob, ...])`` adds, per cropped picture, one JPEG at ``<dest>/ed/<stem>.jpg`` (organised
-or flat layout alike, so it never shares a folder with an original). The originals' plan is untouched: crops live in
+Crops: ``plan_copy(crops=[CropJob, ...])`` adds, per cropped picture, one JPEG at ``<dest>/ed/<stem><suffix>.jpg``
+(organised or flat layout alike, so it never shares a folder with an original). The suffix is
+``ratio.export_suffix(job.ratio or FREE, job.turns)``: none for Free and Original (``<stem>.jpg``), else the ratio as
+seen on screen, ``_4x5``, ``_5x4`` (turned or an odd number of user turns), ``_1x1``, ``_3x4``, ``_2x3``, ``_9x16``,
+``_191x100`` / ``_100x191``. A picture may have a crop AND a story: both are written, as two files in ed
+(``<stem>[_4x5].jpg`` and ``<stem>_story.jpg``). The originals' plan is untouched: crops live in
 ``plan.crop_items``, and ``plan.total_bytes`` adds an ESTIMATE for them (``estimate_crop_bytes``). A name taken in ed
 (by a file already there or by an earlier crop of this plan) gets the usual ``-N`` suffix; an existing result is never
 recognised as identical, so a repeated copy always writes a new suffixed file (identity of a re-encoded JPEG cannot be
@@ -24,6 +28,7 @@ from pathlib import Path
 
 from spuza import crop as crop_mod
 from spuza import preview, rotation
+from spuza import ratio as ratio_mod
 from spuza import story as story_mod
 from spuza.catalog import KNOWN_EXTS, RAW_EXTS
 
@@ -231,7 +236,7 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
         return name
 
     for job in crops or ():
-        name = ed_name(Path(job.primary).stem, ".jpg")
+        name = ed_name(Path(job.primary).stem, f"{ratio_mod.export_suffix(job.ratio or ratio_mod.FREE, job.turns)}.jpg")
         est = estimate_crop_bytes(job)
         plan.crop_items.append(CopyItem(Path(job.primary), ed / name, est, "crop", crop_job=job))
         plan.total_bytes += est
