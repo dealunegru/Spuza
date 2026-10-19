@@ -12,12 +12,45 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
-from PySide6.QtGui import QImage
+from PySide6.QtCore import QObject, QRectF, QRunnable, QThread, QThreadPool, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QTransform
 
 THUMB_CACHE_MAX = 400  # decoded thumbnails kept; least recently used dropped first
 MAX_INFLIGHT = 4  # tasks submitted to the pool at once; the rest wait here and can still be dropped
 DECODE_SIDE = 320  # long side asked of the JPEG draft decoder before the final downscale
+
+
+def cut_crop(img: QImage, crop) -> QImage:
+    """The crop (l, t, r, b fractions of the UN-turned `img`) cut out of it, in memory; a null image for a null input."""
+    from spuza.crop import crop_box
+
+    if img is None or img.isNull():
+        return QImage()
+    x0, y0, x1, y1 = crop_box((img.width(), img.height()), crop)
+    return img.copy(x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+
+
+def story_frame(img: QImage, turns: int, story, fw: int, fh: int) -> QImage:
+    """A story fit drawn at fw x fh from `img` (EXIF-oriented, not yet turned): the user's quarter turns first, then
+    the picture placed in the 9:16 frame by `story` (the geometry of story.render, at any frame size), black around it."""
+    from spuza import story as st
+
+    out = QImage(max(1, int(fw)), max(1, int(fh)), QImage.Format.Format_RGB32)
+    out.fill(QColor("#000000"))
+    if img is None or img.isNull():
+        return out
+    t = int(turns) % 4
+    turned = img.transformed(QTransform().rotate(90 * t)) if t else img
+    w, h = turned.width(), turned.height()
+    s = story.zoom * st.fit_scale(w, h, out.width(), out.height())
+    cx, cy = out.width() / 2 + story.dx * out.width(), out.height() / 2 + story.dy * out.height()
+    p = QPainter(out)
+    try:
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        p.drawImage(QRectF(cx - w * s / 2, cy - h * s / 2, w * s, h * s), turned)
+    finally:
+        p.end()
+    return out
 
 
 def _decode_thumb(path, w: int, h: int) -> QImage | None:

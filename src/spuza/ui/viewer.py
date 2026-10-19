@@ -7,6 +7,10 @@ size (a raw whose embedded preview is much smaller than the frame of the camera,
 cropped to that frame; any other picture is decoded again at the native size of its preview, uncapped). The
 result replaces the preview only if that picture is still on screen. The picture is shown turned by
 rotation_of(index) quarter turns, applied to the item at display time; the caches hold the unrotated pixels.
+
+Friend round 7: show_image(..., derived=) shows a derived picture of that index: a crop is cut, in memory, from the
+source's image (the preview, or the full decode once Z asked for it), a story is drawn as the 9:16 frame from it. The
+caches stay the source's; the cut is made when a pixmap is put, so Z and + / - work on the crop's own pixels.
 """
 
 from __future__ import annotations
@@ -19,13 +23,16 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout,
                                QLabel, QWidget)
 
+from spuza import derived as dv
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
+from spuza.ui.thumbs import cut_crop, story_frame
 
 REVEAL_MS = 1000  # full-bleed: how long the strip stays after the last pointer move
 FULL_CACHE = 3 # full-resolution decodes kept (a 24 MP image is ~70 MB as a pixmap)
 ZOOM_STEPS = tuple(n / 4 for n in range(1, 17))  # + / - levels above fit: 25% .. 400% of the picture's own pixels
 _EPS = 1e-6
+STORY_VIEW = (540, 960)  # the size a derived story is drawn at on screen (9:16)
 
 
 def step_scale(cur: float, fit: float, up: bool):
@@ -248,6 +255,7 @@ class Viewer(QGraphicsView):
         self.index = -1
         self.pic = None
         self.info = None
+        self._derived = None  # the derived.Derived of `index` on screen, else None (the picture itself)
         self.zoomed = False
         self.zoom_scale = 1.0  # while zoomed: picture pixels per device pixel (1.0 = Z's 100%)
         self._pct_mode = False  # the level was chosen with + / -: the HUD shows its percentage
@@ -336,11 +344,28 @@ class Viewer(QGraphicsView):
             return None
         return (pm.height(), pm.width()) if self._quarters() % 2 else (pm.width(), pm.height())
 
-    def _quarters(self) -> int:
+    def _source_quarters(self) -> int:
         try:
             return int(self.rotation_of(self.index)) % 4
         except Exception:  # noqa: BLE001 - a bad rotation provider shows the picture unrotated
             return 0
+
+    def _quarters(self) -> int:
+        """The turns of the item: a derived story is drawn already turned, so it has none."""
+        return 0 if self._is_story() else self._source_quarters()
+
+    def _is_story(self) -> bool:
+        return self._derived is not None and self._derived.kind == dv.STORY
+
+    def _cut(self, qimg: QImage) -> QImage:
+        """What goes on screen for `qimg`, the source's pixels (preview or full decode): itself, or the derived cut."""
+        d = self._derived
+        if d is None:
+            return qimg
+        if d.kind == dv.STORY:
+            return story_frame(qimg, self._source_quarters(), d.story, *STORY_VIEW)
+        cut = cut_crop(qimg, d.crop)
+        return cut if not cut.isNull() else qimg
 
     def zoom_label(self) -> str:
         """"100%" for Z; the level's own percentage once + or - chose it."""
@@ -384,6 +409,7 @@ class Viewer(QGraphicsView):
 
     def _clear(self, index: int, pic) -> None:
         self.index, self.pic, self.info, self._preview = index, pic, None, None
+        self._derived = None
         self._shown_native = False
         self._shown_sensor = False
         self._item.setPixmap(QPixmap())
@@ -406,8 +432,9 @@ class Viewer(QGraphicsView):
         self.error_text = text
         self._set_message(text)
 
-    def show_image(self, index: int, pic, qimg: QImage, info) -> None:
+    def show_image(self, index: int, pic, qimg: QImage, info, derived=None) -> None:
         self.index, self.pic, self.info, self._preview = index, pic, info, qimg
+        self._derived = derived
         self.error_text = ""
         self._set_message("")
         hit = self._cached_full(str(pic.primary)) if self.zoomed else None
@@ -442,6 +469,7 @@ class Viewer(QGraphicsView):
                 min(1.0, max(0.0, (frac[1] * h - top) / max(1, ch))))
 
     def _put(self, qimg: QImage, keep_centre: bool, native: bool = False, sensor: bool = False) -> None:
+        qimg = self._cut(qimg)
         frac = self._centre_frac() if keep_centre and self.has_image else None
         geo = self._geo.get(str(self.pic.primary)) if self.pic is not None else None
         if geo is not None and self.zoomed:
@@ -509,13 +537,24 @@ class Viewer(QGraphicsView):
         if pm.isNull():
             return None
         shown = (pm.width(), pm.height())
-        if self._shown_native or self._shown_sensor or self._full.get(self.index) == "skipped":
+        if self._is_story() or self._shown_native or self._shown_sensor or self._full.get(self.index) == "skipped":
             return shown
         if self.pic is not None:
             hit = self._cached_full(str(self.pic.primary))
             if hit is not None:
-                return (hit[0].width(), hit[0].height())
-        return info_native_size(self.info, shown) or shown
+                return self._cut_size(hit[0].width(), hit[0].height())
+        src = (self._preview.width(), self._preview.height()) if self._derived is not None and self._preview else shown
+        return self._cut_size(*(info_native_size(self.info, src) or src))
+
+    def _cut_size(self, w: int, h: int) -> tuple[int, int]:
+        """The size of the derived crop's region of a w x h source (w x h itself for the picture)."""
+        d = self._derived
+        if d is None or d.kind != dv.CROP:
+            return (w, h)
+        from spuza.crop import crop_box
+
+        x0, y0, x1, y1 = crop_box((w, h), d.crop)
+        return (max(1, x1 - x0), max(1, y1 - y0))
 
     def _preview_ratio(self) -> float:
         """How much bigger the native pixels are than the pixmap on screen (1.0 once they are on screen)."""
@@ -597,7 +636,7 @@ class Viewer(QGraphicsView):
             self._sync_hud()
 
     def _swap_cached_full(self) -> bool:
-        if self.pic is None:
+        if self.pic is None or self._is_story():
             return False
         hit = self._cached_full(str(self.pic.primary))
         if hit is None:
@@ -606,7 +645,7 @@ class Viewer(QGraphicsView):
         return True
 
     def _request_full(self) -> None:
-        if self.pic is None or self.index < 0 or self._preview is None:
+        if self.pic is None or self.index < 0 or self._preview is None or self._is_story():
             return
         if self._full.get(self.index) == "pending":
             return

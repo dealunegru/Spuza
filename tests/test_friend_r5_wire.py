@@ -1,5 +1,6 @@
-"""Friend round 5, window side: X crops, S story-fits, Backspace clears; the marks on the filmstrip and in the
-inspector; the session; the copy sheet. Synthetic pictures only (offscreen)."""
+"""Friend round 5, window side: X crops, S story-fits (since round 7 each Enter makes a derived picture on the
+filmstrip, see test_friend_r7_band); the marks on the filmstrip and in the inspector; the session; the copy sheet.
+Synthetic pictures only (offscreen)."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
+from spuza import derived as dv
 from spuza import features
 from spuza.session import SessionStore, card_key
 from spuza.story import Story
@@ -55,6 +57,14 @@ def story_with(win, story=Story(2.0, 0.0, 0.0)):
     key(win, Qt.Key_Return)
 
 
+def crops(win):
+    return [d.crop for d in win.band if d.kind == dv.CROP]
+
+
+def stories(win):
+    return [d.story for d in win.band if d.kind == dv.STORY]
+
+
 # -- crop ---------------------------------------------------------------------------------------------------
 def test_overlays_are_lazy(w):
     assert w._crop_overlay is None and w._story_editor is None
@@ -71,26 +81,25 @@ def test_x_enters_crop_mode_at_fit_and_enter_applies(w):
     draw(w)
     key(w, Qt.Key_Return)
     assert not w._crop_overlay.editing
-    assert w.crops == {0: CROP}
-    assert w._crop_overlay._applied == CROP  # the passive outline
+    assert crops(w) == [CROP] and w._cur_id == w.band.items[0].id
+    assert w._crop_overlay._applied is None  # the original carries no outline; the derived picture shows the crop
 
 
-def test_enter_with_no_rectangle_clears_the_crop(w):
+def test_enter_with_no_rectangle_changes_nothing(w):
     crop_with(w)
     key(w, Qt.Key_X)
-    assert w._crop_overlay._rect == CROP  # begins from the existing crop
+    assert w._crop_overlay._rect == CROP  # begins from the derived crop's rectangle
     w._crop_overlay.set_rect_frac(None)
     key(w, Qt.Key_Return)
-    assert w.crops == {} and w._crop_overlay._applied is None
+    assert crops(w) == [CROP] and len(w.band) == 1
 
 
-def test_escape_cancels_and_restores_the_previous_crop(w):
+def test_escape_cancels_and_keeps_the_derived_crop(w):
     crop_with(w)
     key(w, Qt.Key_X)
     draw(w, (0.0, 0.0, 0.3, 0.3))
     key(w, Qt.Key_Escape)
-    assert not w._crop_overlay.editing and w.crops == {0: CROP}
-    assert w._crop_overlay._applied == CROP
+    assert not w._crop_overlay.editing and crops(w) == [CROP]
 
 
 def test_escape_in_crop_mode_does_not_leave_full_bleed_or_review(w):
@@ -102,21 +111,21 @@ def test_escape_in_crop_mode_does_not_leave_full_bleed_or_review(w):
     assert not w.is_bleed
 
 
-def test_x_again_clears_and_leaves(w):
+def test_x_again_in_the_edit_does_nothing(w):
     crop_with(w)
     key(w, Qt.Key_X)
     key(w, Qt.Key_X)
-    assert w.crops == {} and not w._crop_overlay.editing and w._crop_overlay._applied is None
+    assert w._crop_overlay.editing and crops(w) == [CROP]
 
 
-def test_backspace_clears_in_and_out_of_the_mode(w):
+def test_backspace_removes_the_derived_picture_out_of_the_mode_and_clears_the_rectangle_in_it(w):
     crop_with(w)
-    key(w, Qt.Key_Backspace)  # out of the mode
-    assert w.crops == {} and w._crop_overlay._applied is None
+    key(w, Qt.Key_Backspace)  # out of the mode: the derived picture goes
+    assert crops(w) == [] and w._cur_id is None and w.catalog.index == 0
     crop_with(w)
     key(w, Qt.Key_X)
-    key(w, Qt.Key_Backspace)  # in the mode
-    assert w.crops == {} and not w._crop_overlay.editing
+    key(w, Qt.Key_Backspace)  # in the mode: the rectangle goes, the picture stays
+    assert w._crop_overlay.editing and w._crop_overlay.rect_frac() is None and len(w.band) == 1
 
 
 def test_zoom_keys_do_nothing_while_cropping(w):
@@ -141,7 +150,7 @@ def test_navigation_cancels_the_edit_then_moves(w, nav, expect):
     draw(w, (0.0, 0.0, 0.3, 0.3))
     key(w, nav)
     assert w.catalog.index == expect and not w._crop_overlay.editing
-    assert w.crops == {0: CROP}  # the cancelled edit left the old crop
+    assert crops(w) == [CROP]  # the cancelled edit left the derived crop as it was
 
 
 def test_navigation_back_cancels_a_story_edit(w):
@@ -149,29 +158,32 @@ def test_navigation_back_cancels_a_story_edit(w):
     shown(w)
     key(w, Qt.Key_S)
     key(w, Qt.Key_K)
-    assert w.catalog.index == 0 and not w._story_editor.active and w.stories == {}
+    assert w.catalog.index == 0 and not w._story_editor.active and not w.band
 
 
-def test_outline_follows_the_picture(w):
+def test_the_crop_follows_the_row_not_an_outline(w):
     crop_with(w)
+    pm = w.viewer.image_item().pixmap()
+    assert (pm.width(), pm.height()) != (64, 48)  # the derived row shows the crop
     w.step(1)
-    assert w._crop_overlay._applied is None  # picture 1 has none
+    pm = w.viewer.image_item().pixmap()
+    assert w.catalog.index == 1 and (pm.width(), pm.height()) == (64, 48)  # picture 1 has none
     w.step(-1)
-    assert w._crop_overlay._applied == CROP
+    assert w.catalog.index == 0 and w._cur_id == w.band.items[0].id
     w.filmstrip.picked.emit(2)
-    assert w._crop_overlay._applied is None
+    assert w.catalog.index == 2 and w._cur_id is None
 
 
-def test_outline_follows_a_pixmap_swap(w):
+def test_the_crop_follows_a_pixmap_swap(w):
     crop_with(w)
-    before = w._crop_overlay._size
     from PySide6.QtGui import QColor, QImage
 
     im = QImage(128, 96, QImage.Format.Format_RGB888)
     im.fill(QColor("#224466"))
-    w.viewer._put(im, keep_centre=False)
-    assert w._crop_overlay._size == (128.0, 96.0) != before
-    assert w._crop_overlay._applied == CROP
+    w.viewer._put(im, keep_centre=False)  # a full decode arriving: the crop of it is what is shown
+    pm = w.viewer.image_item().pixmap()
+    assert (pm.width(), pm.height()) == (64, 48)  # CROP of 128 x 96
+    assert w._crop_overlay._size == (64.0, 48.0)
 
 
 def test_crop_keys_are_ignored_on_the_review_page(w):
@@ -180,7 +192,7 @@ def test_crop_keys_are_ignored_on_the_review_page(w):
     assert w.stack.currentIndex() == 1
     for k in (Qt.Key_X, Qt.Key_S, Qt.Key_Backspace):
         key(w, k)
-    assert w._crop_overlay is None and w._story_editor is None and w.crops == {} and w.stories == {}
+    assert w._crop_overlay is None and w._story_editor is None and not w.band
 
 
 def test_crop_keys_are_ignored_in_compare():
@@ -214,13 +226,13 @@ def test_s_enters_story_mode_and_enter_applies(w):
     w._story_editor._story = Story(1.5, 0.0, 0.0)
     key(w, Qt.Key_Return)
     assert not w._story_editor.active
-    assert w.stories == {0: Story(1.5, 0.0, 0.0)}
+    assert stories(w) == [Story(1.5, 0.0, 0.0)] and w._cur_id == w.band.items[0].id
 
 
 def test_story_begins_from_the_existing_story_and_turns_and_native_size(w):
     story_with(w, Story(1.2, 0.0, 0.0))
     w.rotations[0] = 1
-    key(w, Qt.Key_S)
+    key(w, Qt.Key_S)  # on the derived story: a re-fit, starting from its story
     assert w._story_editor.story().zoom == pytest.approx(1.2)
     assert w._story_editor._src == (48, 64)  # turned once: the loader's 64x48 becomes 48x64
     key(w, Qt.Key_Escape)
@@ -231,15 +243,16 @@ def test_story_escape_cancels_and_keeps_the_old_one(w):
     key(w, Qt.Key_S)
     w._story_editor._story = Story(3.0, 0.0, 0.0)
     key(w, Qt.Key_Escape)
-    assert not w._story_editor.active and w.stories == {0: Story(2.0, 0.0, 0.0)}
+    assert not w._story_editor.active and stories(w) == [Story(2.0, 0.0, 0.0)]
 
 
-@pytest.mark.parametrize("clear", [Qt.Key_S, Qt.Key_Backspace])
-def test_story_clear_leaves_the_mode(w, clear):
+def test_story_s_again_does_nothing_and_backspace_resets_the_frame(w):
     story_with(w)
     key(w, Qt.Key_S)
-    key(w, clear)
-    assert w.stories == {} and not w._story_editor.active
+    key(w, Qt.Key_S)
+    assert w._story_editor.active and stories(w) == [Story(2.0, 0.0, 0.0)]
+    key(w, Qt.Key_Backspace)
+    assert w._story_editor.active and w._story_editor.story() == Story() and len(w.band) == 1
 
 
 def test_story_zoom_keys_go_to_the_editor_not_the_viewer(w):
@@ -268,54 +281,53 @@ def test_plus_minus_zoom_the_viewer_outside_story_mode(w):
     assert w._story_editor is None
 
 
-def test_a_crop_and_a_story_coexist(w):
-    # round 6 (D6) lifts round 5's "one or the other": applying one no longer drops the other
+def test_a_crop_and_a_story_are_two_derived_pictures_of_one_original(w):
     story_with(w)
+    w.go_to(0)
     crop_with(w)
-    assert w.crops == {0: CROP} and w.stories == {0: Story(2.0, 0.0, 0.0)}
+    assert [d.kind for d in w.band] == [dv.STORY, dv.CROP] and {d.source for d in w.band} == {0}
+    w.go_to(0)
     story_with(w, Story(1.5, 0.0, 0.0))
-    assert w.stories == {0: Story(1.5, 0.0, 0.0)} and w.crops == {0: CROP}
-    assert w._crop_overlay._applied == CROP
+    assert stories(w) == [Story(2.0, 0.0, 0.0), Story(1.5, 0.0, 0.0)] and crops(w) == [CROP]
 
 
 # -- indicators ---------------------------------------------------------------------------------------------
 def test_filmstrip_tags_distinguish_crop_and_story(w):
-    assert [w.filmstrip.edit_tag_of(i) for i in range(3)] == [[], [], []]
+    assert [w.filmstrip.row_tags(i) for i in range(3)] == [[], [], []]
     crop_with(w)
-    w.step(1)
+    w.go_to(1)
     story_with(w)
-    tags = [w.filmstrip.edit_tag_of(i) for i in range(3)]  # round 6: a list of (text, kind) per picture
-    assert tags[0] and tags[1] and tags[2] == [] and tags[0] != tags[1]
-    assert tags[0] == [("crop", "crop")] and tags[1] == [("9:16", "story")]
-    cell = w.filmstrip.visualRect(w.filmstrip.model().index(0))
+    crop_id, story_id = (d.id for d in w.band)
+    assert w.filmstrip.row_tags(0) == [] and w.filmstrip.row_tags(1) == []  # the originals carry none
+    assert w.filmstrip.row_tags(0, crop_id) == [("crop", "crop")]
+    assert w.filmstrip.row_tags(1, story_id) == [("9:16", "story")]
+    cell = w.filmstrip.visualRect(w.filmstrip.model().index(1))
     assert w.filmstrip.viewport().grab(cell).toImage().width() > 0  # paints without raising
 
 
 def test_inspector_line(w):
     assert not any(t.startswith(("Crop", "Story")) for t in w.inspector.lines)
     crop_with(w)
-    assert "Crop: free, 32 x 24 px" in w.inspector.lines  # round 6: pixels of the 64 x 48 stand-in, not percentages
+    assert "Crop of P0.JPG" in w.inspector.lines and "32 x 24 px" in w.inspector.lines  # pixels of the 64 x 48 stand-in
+    w.go_to(0)
     story_with(w)
-    assert "Story fit: 9:16, zoom 2.0x" in w.inspector.lines
-    lines = [t for t in w.inspector.lines if t.startswith(("Crop", "Story"))]
-    assert lines == ["Crop: free, 32 x 24 px", "Story fit: 9:16, zoom 2.0x"]  # both, crop first
-    w.step(1)
+    assert "Story fit of P0.JPG" in w.inspector.lines
+    w.step(1)  # past the story: picture 1
     assert not any(t.startswith(("Crop", "Story")) for t in w.inspector.lines)
-    # after the date row, before Marked
-    w.step(-1)
-    assert w.inspector.lines[-1] in ("Marked", "Not marked") and w.inspector.lines[-2].startswith("Story fit")
+    w.go_to(0, w.band.items[0].id)
+    assert w.inspector.lines[-1] in ("Marked", "Not marked") and w.inspector.lines[-4].startswith("Crop of")
 
 
 # -- copy ---------------------------------------------------------------------------------------------------
-def test_copy_factory_gets_crops_and_stories_keyed_by_primary():
+def test_copy_factory_gets_the_derived_pairs():
     win = make_window(marked=(0, 1, 3))
     try:
-        win.crops.update({0: CROP, 2: (0.0, 0.0, 0.5, 0.5)})
-        win.stories.update({1: Story(1.4, 0.0, 0.0), 4: Story()})
+        a = win.band.add(0, dv.CROP, crop=CROP)
+        b = win.band.add(1, dv.STORY, story=Story(1.4, 0.0, 0.0))
+        win.band.add(2, dv.CROP, crop=(0.0, 0.0, 0.5, 0.5), marked=False)  # unmarked: not copied
         pics = win.catalog.marked()  # 0, 1, 3
-        sheet = win._default_copy_sheet_factory(pics)
-        assert sheet.crops == {pics[0].primary: CROP}
-        assert sheet.stories == {pics[1].primary: Story(1.4, 0.0, 0.0)}
+        sheet = win._default_copy_sheet_factory(pics, derived=win._derived_pairs())
+        assert sheet.derived == [(win.catalog.pictures[0], a), (win.catalog.pictures[1], b)]
     finally:
         win.close()
 
@@ -468,15 +480,32 @@ def test_start_fresh_keeps_crops_like_rotations(tmp_path):
     assert crops2 == {2: CROP}
 
 
-def test_window_shares_its_dicts_with_the_resume_controller(tmp_path, monkeypatch):
+def test_window_shares_its_band_with_the_resume_controller(tmp_path, monkeypatch):
     features.set_mode(features.ADVANCED)
     monkeypatch.setenv("SPUZA_SESSIONS_DIR", str(tmp_path / "sessions"))
     win = make_window(marked=())
     try:
         ctl = win._ensure_resume()
-        assert ctl.crops is win.crops and ctl.stories is win.stories
+        assert ctl.band is win.band and ctl.rotations is win.rotations
     finally:
         win.close()
+
+
+def test_a_saved_derived_picture_comes_back_on_the_filmstrip(tmp_path, monkeypatch):
+    features.set_mode(features.ADVANCED)
+    monkeypatch.setenv("SPUZA_SESSIONS_DIR", str(tmp_path / "sessions"))
+    win = make_window(marked=())
+    try:
+        crop_with(win)
+        win._ensure_resume().flush()
+    finally:
+        win.close()
+    win2 = make_window(marked=())
+    try:
+        assert [d.crop for d in win2.band] == [CROP]
+        assert win2.filmstrip.model().rowCount() == 7 and win2.sidebar.counts()["All"] == 7
+    finally:
+        win2.close()
 
 
 # -- turning during an edit ---------------------------------------------------------------------------------
@@ -488,13 +517,13 @@ def test_turning_during_a_story_edit_rebegins_the_editor_with_the_new_turns(w):
     assert w._story_editor._src == (48, 64)  # the editor works in the new turned frame
     w._story_editor._story = Story(1.3, 0.0, 0.0)
     key(w, Qt.Key_Return)
-    assert w.stories[0].zoom == pytest.approx(1.3)
+    assert stories(w)[0].zoom == pytest.approx(1.3)
 
 
-def test_turning_clamps_a_stored_story_for_the_new_frame(w):
-    w.stories[0] = Story(2.0, 0.0, 0.0)  # fine for 64x48 (zoom limit 2.25), above the 1.33 limit once turned
+def test_turning_clamps_a_derived_story_for_the_new_frame(w):
+    w.band.add(0, dv.STORY, story=Story(2.0, 0.0, 0.0))  # fine for 64x48 (zoom limit 2.25), above the 1.33 limit once turned
     QTest.keyClick(w, Qt.Key_BracketRight)
-    assert w.stories[0].zoom <= 1.34
+    assert stories(w)[0].zoom <= 1.34
 
 
 def test_turning_during_a_crop_edit_keeps_the_rectangle(w):
@@ -503,4 +532,4 @@ def test_turning_during_a_crop_edit_keeps_the_rectangle(w):
     QTest.keyClick(w, Qt.Key_BracketLeft)
     assert w._edit == "crop" and w._crop_overlay.editing and w._crop_overlay.rect_frac() == CROP
     key(w, Qt.Key_Return)
-    assert w.crops == {0: CROP}
+    assert crops(w) == [CROP]

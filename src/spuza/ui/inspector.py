@@ -103,6 +103,36 @@ def edit_lines(crop=None, story=None, ratio=None, native=None, turns: int = 0) -
     return out
 
 
+def derived_lines(d, source_name: str, native=None, turns: int = 0) -> tuple[str, list[str]]:
+    """(headline, rows) for a derived picture. A crop: "Crop of <file>", its ratio ("Free" for none) and its size in
+    pixels, "<w> x <h> px", from the source's un-turned native (w, h) and given as seen on screen (swapped for an odd
+    `turns`). A story: "Story fit of <file>", "9:16", "1080 x 1920 px". Pure arithmetic: no file is read."""
+    from spuza import derived as dv
+    from spuza import ratio as ratio_mod
+    from spuza import story as story_mod
+
+    if not isinstance(d, dv.Derived):
+        return f"Derived picture of {source_name}", []
+    if d.kind == dv.STORY:
+        return f"Story fit of {source_name}", ["9:16", f"{story_mod.FRAME_W} x {story_mod.FRAME_H} px"]
+    try:
+        rows = ["Free" if d.ratio is None else ratio_mod.label(d.ratio, turns)]
+    except (TypeError, ValueError, AttributeError):
+        rows = ["Free"]
+    try:
+        pw, ph = ratio_mod.pixel_size(d.crop, native[0], native[1])
+        if int(turns) % 2 == 1:
+            pw, ph = ph, pw
+        rows.append(f"{pw} x {ph} px")
+    except (TypeError, ValueError, IndexError, OverflowError):
+        try:
+            left, top, right, bottom = d.crop
+            rows.append(f"{round((right - left) * 100)}% x {round((bottom - top) * 100)}% of the picture")
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return f"Crop of {source_name}", rows
+
+
 class Inspector(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -118,9 +148,11 @@ class Inspector(QWidget):
         self.lines: list[str] = []
         self.amber = False
         self._args = None
+        self._head: str | None = None  # a derived picture's own headline (else explain() names the files)
 
     def set_picture(self, pic, info=None, marked=False, reason: str | None = None, edit=()) -> None:
         self._args = (pic, info, marked, reason)
+        self._head = None
         if pic is None:
             self.lines, self.amber = [], False
             self.label.setText("")
@@ -162,6 +194,13 @@ class Inspector(QWidget):
         self.lines, self.amber = lines, amber
         self._render()
 
+    def set_derived(self, pic, head: str, rows, marked=False) -> None:
+        """A derived picture (friend round 7): its headline, its rows, and whether it is marked."""
+        self._args = (pic, None, marked, None)
+        self._head = head
+        self.lines, self.amber = [pic.stem, head, *rows, "Marked" if marked else "Not marked"], False
+        self._render()
+
     def retheme(self) -> None:
         if self._args is not None:
             self._render()
@@ -170,6 +209,8 @@ class Inspector(QWidget):
         c = theme.current()
         pic, info, marked, reason = self._args
         head, amber = explain(pic)
+        if self._head is not None:
+            head, amber = self._head, False
         out = [f"<div style='font-size:15px;font-weight:600'>{html.escape(pic.stem)}</div>",
                f"<p style='color:{c.amber if amber else c.text}'><b>{html.escape(head)}</b></p>"]
         body = self.lines[2:]
