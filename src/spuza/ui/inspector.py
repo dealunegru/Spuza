@@ -73,18 +73,34 @@ def taken_line(pic, info=None) -> str:
     return ""
 
 
-def edit_line(crop=None, story=None) -> str:
-    """One row for a picture's crop ("Crop: 62% x 48% of the picture") or story fit ("Story fit: 9:16, zoom 1.4x");
-    "" when it has neither. Pure arithmetic on two small values: no file is read."""
+def edit_lines(crop=None, story=None, ratio=None, native=None, turns: int = 0) -> list[str]:
+    """The rows for a picture's edits, crop first: "Crop: 5:4, 5000 x 4000 px" ("free" / "original" by name), then
+    "Story fit: 9:16, zoom 1.4x". `native` is the picture's un-turned (w, h); pixels are given as seen on screen
+    (swapped for an odd `turns`). Without a usable native size the crop reads as a share of the picture. [] when
+    the picture has neither. Pure arithmetic on small values: no file is read."""
+    from spuza import ratio as ratio_mod
+
+    out: list[str] = []
     try:
         if crop is not None:
             left, top, right, bottom = crop
-            return f"Crop: {round((right - left) * 100)}% x {round((bottom - top) * 100)}% of the picture"
-        if story is not None:
-            return f"Story fit: 9:16, zoom {story.zoom:.1f}x"
+            r = ratio if isinstance(ratio, ratio_mod.Ratio) else ratio_mod.FREE
+            name = ratio_mod.label(r, turns).lower() if r.entry in (1, 2) else ratio_mod.label(r, turns)
+            try:
+                pw, ph = ratio_mod.pixel_size(crop, native[0], native[1])
+                if int(turns) % 2 == 1:
+                    pw, ph = ph, pw
+                out.append(f"Crop: {name}, {pw} x {ph} px")
+            except (TypeError, ValueError, IndexError):
+                out.append(f"Crop: {name}, {round((right - left) * 100)}% x {round((bottom - top) * 100)}% of the picture")
     except (TypeError, ValueError, AttributeError):
         pass
-    return ""
+    try:
+        if story is not None:
+            out.append(f"Story fit: 9:16, zoom {story.zoom:.1f}x")
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return out
 
 
 class Inspector(QWidget):
@@ -103,7 +119,7 @@ class Inspector(QWidget):
         self.amber = False
         self._args = None
 
-    def set_picture(self, pic, info=None, marked=False, reason: str | None = None, edit: str = "") -> None:
+    def set_picture(self, pic, info=None, marked=False, reason: str | None = None, edit=()) -> None:
         self._args = (pic, info, marked, reason)
         if pic is None:
             self.lines, self.amber = [], False
@@ -140,8 +156,8 @@ class Inspector(QWidget):
         focus = getattr(info, "focus", None) if not reason else None
         if focus is not None:
             lines.append(focus.describe())
-        if edit:  # friend round 5: what a copy will do to this picture
-            lines.append(edit)
+        if edit:  # friend round 5: what a copy will do to this picture (round 6: a list; a str is one row)
+            lines.extend([edit] if isinstance(edit, str) else edit)
         lines.append("Marked" if marked else "Not marked")
         self.lines, self.amber = lines, amber
         self._render()

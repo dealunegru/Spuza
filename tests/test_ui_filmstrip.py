@@ -74,3 +74,32 @@ def test_right_click_menu_on_thumbnail(monkeypatch):
 def test_no_menu_on_empty_space():
     s = make(n=3)
     assert s.context_menu_for(QPoint(1100, 40)) is None
+
+
+def test_edit_tags_are_a_list_a_bare_string_is_one_crop_tag_and_junk_is_none():
+    s = make(3)
+    assert s.edit_tags(0) == []
+    s.edit_tag_of = lambda i: [("4:5", "crop"), ("9:16", "story")]
+    assert s.edit_tags(0) == [("4:5", "crop"), ("9:16", "story")]
+    s.edit_tag_of = lambda i: "crop"
+    assert s.edit_tags(0) == [("crop", "crop")]
+    s.edit_tag_of = lambda i: [("x", "weird")]
+    assert s.edit_tags(0) == [("x", "crop")]
+    for bad in (5, [5], [("a",)], object()):
+        s.edit_tag_of = lambda i, b=bad: b
+        assert s.edit_tags(0) == []
+    s.edit_tag_of = lambda i: 1 / 0
+    assert s.edit_tags(0) == []
+
+
+def test_two_tags_paint_side_by_side_the_story_one_as_an_outline():
+    s = make(3)
+    s.edit_tag_of = lambda i: [("4:5", "crop"), ("9:16", "story")]
+    s.set_current(1)
+    cell = s.visualRect(s.model().index(0))
+    img = s.viewport().grab(cell).toImage()
+    c = theme.current()
+    row = 10  # inside the tag row (box.y + 3 .. + 16, cell offset 4)
+    seen = [QColor(img.pixel(x, row)).name() for x in range(img.width())]
+    assert c.accent.lower() in seen  # the filled crop tag and the outline's border are both accent
+    assert c.panel.lower() in seen  # the outline tag's panel fill

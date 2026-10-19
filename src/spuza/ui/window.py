@@ -7,6 +7,7 @@ so they are only imported when used (and tests can inject fakes).
 Classic also has crop (X) and story fit (S): a rectangle or a 9:16 frame drawn over the big picture, kept per
 picture in `crops` / `stories` (catalog index -> value, like `rotations`), marked on the filmstrip, named in the
 inspector, saved with the session and handed to the copy sheet. The two overlays are built on first use.
+Round 6: the X edit has a ratio strip (keys 1-8, V, 0; `crop_ratios`), and a picture may have a crop and a story fit.
 
 Advanced mode wires four more features, each behind its flag and each a no-op (key falls through, widget
 hidden, nothing written) in classic: N compare (compare_view), P peaking (focus_peaking), O AF point and Z
@@ -26,11 +27,13 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, Q
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from spuza import features
+from spuza import ratio as ratio_mod
 from spuza.cards import catalog_note
 from spuza.copy import human_size
 from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
-from spuza.ui.inspector import Inspector, edit_line
+from spuza.ui.inspector import Inspector, edit_lines
+from spuza.ui.ratio_strip import RatioStrip
 from spuza.ui.viewer import Viewer, info_native_size
 
 DOT = "·"
@@ -210,6 +213,9 @@ class MainWindow(QMainWindow):
         self.rotations: dict[int, int] = {}  # friend round 3: catalog index -> clockwise quarter turns 1..3 (0 omitted)
         self.crops: dict[int, tuple] = {}  # friend round 5: catalog index -> spuza.crop.Crop (fractions l, t, r, b)
         self.stories: dict[int, object] = {}  # friend round 5: catalog index -> spuza.story.Story
+        self.crop_ratios: dict[int, ratio_mod.Ratio] = {}  # round 6: catalog index -> its crop's Ratio (absent = Free)
+        self._crop_ratio = ratio_mod.FREE  # the open crop edit's ratio
+        self._crop_native = (1, 1)  # the open crop edit's un-turned native size
         self._crop_overlay = None  # CropOverlay, built on first X (or the first picture that has a crop)
         self._story_editor = None  # StoryEditor, built on first S
         self._story_native = (1, 1)  # the open story edit's un-turned native size
@@ -282,7 +288,17 @@ class MainWindow(QMainWindow):
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.sidebar)
-        split.addWidget(self.viewer)
+        self.ratio_strip = RatioStrip()  # round 6: above the picture, only while the X crop edit is open
+        self.ratio_strip.setVisible(False)
+        self.ratio_strip.picked.connect(self._pick_ratio)
+        self.ratio_strip.turn.connect(self._turn_ratio)
+        stage = QWidget()
+        stage_lay = QVBoxLayout(stage)
+        stage_lay.setContentsMargins(0, 0, 0, 0)
+        stage_lay.setSpacing(0)
+        stage_lay.addWidget(self.ratio_strip)
+        stage_lay.addWidget(self.viewer, 1)
+        split.addWidget(stage)
         split.addWidget(self.inspector)
         split.setStretchFactor(1, 1)
         split.setChildrenCollapsible(False)
@@ -506,12 +522,22 @@ class MainWindow(QMainWindow):
         return {p.primary: table[i] for i, p in enumerate(self.catalog.pictures) if table.get(i) and id(p) in want}
 
     # -- crop (X) and story fit (S): per picture, applied only to the copy -------------------------------------
-    def _edit_tag(self, i: int) -> str:
-        """The filmstrip's small tag: "crop", "9:16" or nothing."""
-        return "crop" if i in self.crops else ("9:16" if i in self.stories else "")
+    def _edit_tag(self, i: int) -> list[tuple[str, str]]:
+        """The filmstrip's small tags, crop first: ("4:5" | "crop", "crop") and ("9:16", "story"); [] for none."""
+        out = []
+        if i in self.crops:
+            r = self.crop_ratios.get(i, ratio_mod.FREE)
+            out.append(("crop" if r.entry in (1, 2) else ratio_mod.label(r, self._rotation_of(i)), "crop"))
+        if i in self.stories:
+            out.append(("9:16", "story"))
+        return out
 
-    def _edit_line(self, i: int) -> str:
-        return edit_line(self.crops.get(i), self.stories.get(i))
+    def _edit_lines(self, i: int) -> list[str]:
+        """The inspector rows for picture i's crop and story fit (see inspector.edit_lines)."""
+        native = None
+        if i in self.crops and 0 <= i < len(self.catalog):
+            native = info_native_size(self.prefetcher.info(i), None)  # un-turned: the crop is in that frame
+        return edit_lines(self.crops.get(i), self.stories.get(i), self.crop_ratios.get(i), native, self._rotation_of(i))
 
     def _can_edit(self) -> bool:
         return (self.stack.currentIndex() == 0 and not self._compare_shown() and len(self.catalog) > 0
@@ -554,9 +580,56 @@ class MainWindow(QMainWindow):
             self.say("Crop needs a picture on screen")
             return
         self._prepare_edit()
-        self._ensure_crop_overlay().begin(self.crops.get(self.catalog.index))
+        i = self.catalog.index
+        pm = self.viewer.image_item().pixmap()
+        shown = (pm.width(), pm.height())
+        self._crop_native = info_native_size(self.prefetcher.info(i), shown) or shown
+        self._ensure_crop_overlay().begin(self.crops.get(i))
         self._edit = "crop"
-        self.say("Crop: drag on the picture. Enter applies, Esc cancels, X or Backspace clears")
+        self.ratio_strip.setVisible(True)
+        self._set_ratio(self.crop_ratios.get(i, ratio_mod.FREE), reshape=False)
+
+    # -- the ratio of the open crop edit (keys 1-8, V, 0 and the strip's chips) ---------------------------------
+    def _crop_status(self) -> None:
+        label = ratio_mod.label(self._crop_ratio, self._rotation_of(self.catalog.index))
+        if self._crop_ratio.entry == 1:
+            self.say("Crop free: drag on the picture. 1-8 ratio, 0 resets. Enter applies, Esc cancels, X clears")
+        else:
+            self.say(f"Crop {label}: drag to move, corners to size. 1-8 ratio, V turns it, 0 resets. "
+                     "Enter applies, Esc cancels, X clears")
+
+    def _set_ratio(self, r, reshape: bool = True) -> None:
+        """Make `r` the open crop's ratio: lock the overlay to it and (reshape) bring the rectangle to it, keeping
+        its centre and area, or the largest centred one when there is none yet. Free keeps the rectangle."""
+        w, h = self._crop_native
+        self._crop_ratio = r
+        aspect = ratio_mod.frame_aspect(r, w, h)
+        ov = self._crop_overlay
+        turns = self._rotation_of(self.catalog.index)
+        ov.set_aspect(aspect, (w, h), ratio_mod.label(r, turns))
+        if reshape and aspect is not None:
+            cur = ov.rect_frac()
+            ov.set_rect_frac(ratio_mod.reshape(cur, aspect, w, h) if cur is not None
+                             else ratio_mod.largest_centred(aspect, w, h))
+        self.ratio_strip.set_state(r, turns)
+        self._crop_status()
+
+    def _pick_ratio(self, entry: int) -> None:
+        if self._edit != "crop":
+            return
+        w, h = self._crop_native
+        self._set_ratio(ratio_mod.opening(entry, w, h, self._rotation_of(self.catalog.index)))
+
+    def _turn_ratio(self) -> None:
+        if self._edit == "crop":
+            self._set_ratio(ratio_mod.flip(self._crop_ratio))
+
+    def _reset_ratio(self) -> None:
+        if self._edit != "crop":
+            return
+        w, h = self._crop_native
+        self._crop_overlay.set_rect_frac(ratio_mod.largest_centred(ratio_mod.frame_aspect(self._crop_ratio, w, h), w, h))
+        self._crop_status()
 
     def start_story(self) -> None:
         if self._edit is not None:
@@ -580,6 +653,8 @@ class MainWindow(QMainWindow):
         nothing: its overlay is a child of the item and turns with it."""
         from spuza import story as st
 
+        if self._edit == "crop" and i == self.catalog.index:
+            self._set_ratio(self._crop_ratio, reshape=False)  # the chip, label and status name the ratio as turned
         if self._edit == "story" and i == self.catalog.index:
             ed = self._story_editor
             ed.begin(self.viewer.image_item().pixmap(), self._rotation_of(i), ed.story(), self._story_native)
@@ -594,6 +669,9 @@ class MainWindow(QMainWindow):
         kind, self._edit = self._edit, None
         if kind == "crop":
             self._crop_overlay.end()
+            self._crop_overlay.set_aspect(None, (0, 0))
+            self._crop_ratio = ratio_mod.FREE
+            self.ratio_strip.setVisible(False)
             self._show_applied_crop()
         elif kind == "story":
             self._story_editor.end()
@@ -611,15 +689,21 @@ class MainWindow(QMainWindow):
 
         i = self.catalog.index
         rect = normalise(self._crop_overlay.rect_frac())
+        r = self._crop_ratio
         self._end_edit()
         name = self.catalog.pictures[i].stem
         if rect is None:
             self.crops.pop(i, None)
+            self.crop_ratios.pop(i, None)
             self._edited(i, f"No crop on {name}")
         else:
             self.crops[i] = rect
-            self.stories.pop(i, None)  # a picture has a crop or a story fit, not both
-            self._edited(i, f"Cropped {name}: {self._edit_line(i)[6:]}. The original stays as it is; the copy gets it")
+            if r.entry == 1:
+                self.crop_ratios.pop(i, None)  # Free is "absent"
+            else:
+                self.crop_ratios[i] = r
+            # round 6 (D6): a crop and a story fit may coexist; neither drops the other
+            self._edited(i, f"Cropped {name}: {self._edit_lines(i)[0][6:]}. The original stays as it is; the copy gets it")
 
     def _apply_story(self) -> None:
         if self._edit != "story":
@@ -628,16 +712,21 @@ class MainWindow(QMainWindow):
         story = self._story_editor.story()
         self._end_edit()
         self.stories[i] = story
-        self.crops.pop(i, None)
         self._edited(i, f"Story fit on {self.catalog.pictures[i].stem}: 9:16. The original stays as it is; the copy gets it")
 
     def clear_edits(self, crop: bool = True, story: bool = True) -> None:
         """X / S again, or Backspace: drop this picture's crop and/or story fit, and leave the edit mode."""
         i = self.catalog.index
         self._end_edit()
-        had = (crop and self.crops.pop(i, None) is not None) | (story and self.stories.pop(i, None) is not None)
-        if had:
-            self._edited(i, f"Cleared the crop or story fit on {self.catalog.pictures[i].stem}")
+        gone = []
+        if crop and self.crops.pop(i, None) is not None:
+            gone.append("the crop")
+        if crop:
+            self.crop_ratios.pop(i, None)
+        if story and self.stories.pop(i, None) is not None:
+            gone.append("the story fit")
+        if gone:
+            self._edited(i, f"Cleared {' and '.join(gone)} on {self.catalog.pictures[i].stem}")
         else:
             self._show_applied_crop()
 
@@ -654,7 +743,7 @@ class MainWindow(QMainWindow):
                 self._end_edit(announce=True)  # never also leaves full-bleed or the review
         elif k == Qt.Key_Backspace:
             if not auto:
-                self.clear_edits()
+                self.clear_edits(crop=crop, story=not crop)  # the edit that is open; the viewer's Backspace clears both
         elif k == (Qt.Key_X if crop else Qt.Key_S):
             if not auto:
                 self.clear_edits(crop=crop, story=not crop)
@@ -662,6 +751,17 @@ class MainWindow(QMainWindow):
             pass  # the other editor's key, and Z: nothing while editing
         elif crop and k in (Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus):
             pass
+        elif crop and Qt.Key_1 <= k <= Qt.Key_8:
+            if not auto:
+                self._pick_ratio(k - Qt.Key_0)
+        elif crop and k == Qt.Key_9:
+            pass
+        elif crop and k == Qt.Key_V:
+            if not auto:
+                self._turn_ratio()
+        elif crop and k == Qt.Key_0:
+            if not auto:
+                self._reset_ratio()
         elif not crop and k in (Qt.Key_Plus, Qt.Key_Equal):
             self._story_editor.zoom_step(1)
         elif not crop and k == Qt.Key_Minus:
@@ -727,7 +827,7 @@ class MainWindow(QMainWindow):
         if pic is not None:
             self.viewer.strip.set_state(cat.position_text(), marked, pic.stem, pic.kind, cat.marked_count)
             self.inspector.set_picture(pic, self.prefetcher.info(i), marked, self.prefetcher.failed_reason(i),
-                                       edit=self._edit_line(i))
+                                       edit=self._edit_lines(i))
         else:
             self.inspector.set_picture(None)
         self.refresh_status()
@@ -749,7 +849,7 @@ class MainWindow(QMainWindow):
         cat = self.catalog
         if i == cat.index and 0 <= i < len(cat):
             self.inspector.set_picture(cat.pictures[i], info, cat.is_marked(i), self.prefetcher.failed_reason(i),
-                                       edit=self._edit_line(i))
+                                       edit=self._edit_lines(i))
 
     def _on_failed(self, i: int, _reason: str) -> None:
         self.filmstrip.item_changed(i)
@@ -1465,6 +1565,7 @@ class MainWindow(QMainWindow):
         self.viewer.retheme()
         self.filmstrip.retheme()
         self.inspector.retheme()
+        self.ratio_strip.retheme()
         self.viewer.strip.set_state(self.catalog.position_text(), bool(self.catalog.current) and
                                     self.catalog.is_marked(self.catalog.index),
                                     self.catalog.current.stem if self.catalog.current else "",
