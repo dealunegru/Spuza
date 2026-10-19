@@ -4,10 +4,13 @@ Design: 02-bench, with 01-bleed as its full-screen mode. Most keys have a toolba
 The review grid and the copy sheet are built lazily through `review_factory` / `copy_sheet_factory`
 so they are only imported when used (and tests can inject fakes).
 
-Classic also has crop (X) and story fit (S): a rectangle or a 9:16 frame drawn over the big picture, kept per
-picture in `crops` / `stories` (catalog index -> value, like `rotations`), marked on the filmstrip, named in the
-inspector, saved with the session and handed to the copy sheet. The two overlays are built on first use.
-Round 6: the X edit has a ratio strip (keys 1-8, V, 0; `crop_ratios`), and a picture may have a crop and a story fit.
+Classic also has crop (X) and story fit (S): a rectangle or a 9:16 frame drawn over the big picture. Round 7: Enter
+makes a DERIVED picture of it (`band`, a derived.Band shared with the filmstrip and the resume controller), placed on
+the filmstrip right after its original, with its own thumbnail, tag, mark and inspector rows; the original is never
+changed and can be cropped again. A derived picture is never in the Catalog: `catalog.index` stays its SOURCE's index
+while one is current (`_cur_id` names it), so the prefetcher, Z, peaking and compare work on the source unchanged.
+X on a derived crop (S on a derived story) edits it in place, Backspace removes it. The two overlays are built on first
+use. The X edit has a ratio strip (keys 1-8, V, 0).
 
 Advanced mode wires four more features, each behind its flag and each a no-op (key falls through, widget
 hidden, nothing written) in classic: N compare (compare_view), P peaking (focus_peaking), O AF point and Z
@@ -26,13 +29,14 @@ from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
+from spuza import derived as dv
 from spuza import features
 from spuza import ratio as ratio_mod
 from spuza.cards import catalog_note
 from spuza.copy import human_size
 from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
-from spuza.ui.inspector import Inspector, edit_lines
+from spuza.ui.inspector import Inspector, derived_lines
 from spuza.ui.ratio_strip import RatioStrip
 from spuza.ui.viewer import Viewer, info_native_size
 
@@ -211,9 +215,10 @@ class MainWindow(QMainWindow):
         self._prefs_seed = False
         self.last_message = ""
         self.rotations: dict[int, int] = {}  # friend round 3: catalog index -> clockwise quarter turns 1..3 (0 omitted)
-        self.crops: dict[int, tuple] = {}  # friend round 5: catalog index -> spuza.crop.Crop (fractions l, t, r, b)
-        self.stories: dict[int, object] = {}  # friend round 5: catalog index -> spuza.story.Story
-        self.crop_ratios: dict[int, ratio_mod.Ratio] = {}  # round 6: catalog index -> its crop's Ratio (absent = Free)
+        self.band = dv.Band()  # friend round 7: every derived picture (crop / story fit), shared by reference
+        self._cur_id: int | None = None  # the derived picture on screen (of catalog.index), None: the original itself
+        self._edit_target: int | None = None  # the derived id the open edit replaces (None: it adds a new one)
+        self._edit_view = False  # an edit is open on a derived row: the viewer shows the source's own pixels
         self._crop_ratio = ratio_mod.FREE  # the open crop edit's ratio
         self._crop_native = (1, 1)  # the open crop edit's un-turned native size
         self._rect_auto = False  # the open crop's rectangle is still the untouched largest-centred one
@@ -223,6 +228,9 @@ class MainWindow(QMainWindow):
         self._edit: str | None = None  # None | "crop" | "story": the mode the viewer is in
         self._markall_undo: frozenset[int] | None = None  # the marks before the last Mark all / Unmark all
         self._markall_after: frozenset[int] = frozenset()  # the marks right after it (to count later changes)
+        self._markall_undo_d: frozenset[int] = frozenset()  # ... the marked derived ids before it
+        self._markall_after_d: frozenset[int] = frozenset()  # ... and right after it
+        self._markall_dids: frozenset[int] = frozenset()  # the derived ids that existed then (later ones are not undone)
         self.is_bleed = False
         self._forwarding = False
         self._was_maximized = False
@@ -234,9 +242,8 @@ class MainWindow(QMainWindow):
         self.viewer = Viewer()
         self.sidebar = Sidebar(self.root)
         self.inspector = Inspector()
-        self.filmstrip = Filmstrip(catalog, prefetcher)
+        self.filmstrip = Filmstrip(catalog, prefetcher, band=self.band)
         self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
-        self.filmstrip.edit_tag_of = self._edit_tag
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -335,6 +342,7 @@ class MainWindow(QMainWindow):
         self.viewer.shown.connect(self._on_shown)
         self.viewer.zoom_changed.connect(lambda z: self.buttons["zoom"].setChecked(z))
         self.filmstrip.picked.connect(self.go_to)
+        self.filmstrip.picked_derived.connect(self.go_to)
         self.sidebar.show_all.connect(self.close_review)
         self.sidebar.show_marked.connect(self.open_review)
         QShortcut(QKeySequence(QKeySequence.StandardKey.FullScreen), self,
@@ -366,29 +374,68 @@ class MainWindow(QMainWindow):
             # (and saved over the old session) before it ran
             ctl = self._ensure_resume()
             self._banner = ctl.restore() if ctl is not None else None
+            self._band_changed()  # a restored session brings its derived pictures
         prefetcher.update(catalog.index)
         self._enter_next_features(defer=True)  # after update(): importing numpy for peaking must not delay the first decodes
         self._render_current()
 
     # -- navigation -------------------------------------------------------------------------------
-    def step(self, delta: int) -> None:
-        if (self.catalog.next() if delta > 0 else self.catalog.back()):
-            self._moved()
+    def _rows(self) -> tuple:
+        """The filmstrip's rows: (catalog index, derived id | None), each original followed by its derived pictures."""
+        return self.band.rows(len(self.catalog))
 
-    def go_to(self, i: int) -> None:
+    def _row_pos(self):
+        return self.band.row_of(self.catalog.index, self._cur_id, len(self.catalog))
+
+    def _current_derived(self):
+        """The derived picture on screen (a Derived of catalog.index), or None when the original is."""
+        if self._cur_id is None:
+            return None
+        d = self.band.get(self._cur_id)
+        if d is None or d.source != self.catalog.index:
+            self._cur_id = None
+            return None
+        return d
+
+    def step(self, delta: int) -> None:
+        if not self.band:  # no derived picture anywhere: the plain walk over the catalog
+            self._cur_id = None
+            if (self.catalog.next() if delta > 0 else self.catalog.back()):
+                self._moved()
+            return
+        pos = self._row_pos()
+        if pos is None:
+            self._cur_id = None
+            pos = self.band.row_of(self.catalog.index, None, len(self.catalog))
+        rows = self._rows()
+        if pos is None or not 0 <= pos + delta < len(rows):
+            return
+        src, did = rows[pos + delta]
+        self.catalog.go(src)
+        self._cur_id = did
+        self._moved()
+
+    def go_to(self, i: int, did=None) -> None:
+        """Show catalog index i, or the derived picture `did` of it."""
         if self._compare_shown():
             return  # the filmstrip is behind compare; a stray pick must not move the viewer under it
         if self.stack.currentIndex() == 1:
-            self._select_in_review(i)  # review stays up; the viewer's picture does not move
-            return
-        if len(self.catalog) and i != self.catalog.index:
+            if did is None:
+                self._select_in_review(i)  # review stays up; the viewer's picture does not move
+            return  # the review lists originals only
+        if did is not None:
+            d = self.band.get(did)
+            if d is None or d.source != i:
+                return
+        if len(self.catalog) and (i != self.catalog.index or did != self._cur_id):
             self.catalog.go(i)
+            self._cur_id = did
             self._moved()
             if self.stack.currentIndex() == 1:
                 self._focus_review()
 
     def _moved(self) -> None:
-        self._end_edit()  # a crop or story edit in progress is cancelled by moving on
+        self._end_edit(restore=False)  # a crop or story edit in progress is cancelled by moving on
         self._t_key = time.perf_counter()
         self.prefetcher.update(self.catalog.index)
         self._render_current()
@@ -397,8 +444,13 @@ class MainWindow(QMainWindow):
         if not len(self.catalog):
             return
         i = self.catalog.index
-        self.catalog.toggle_mark(i)
-        self.filmstrip.item_changed(i)
+        d = self._current_derived()
+        if d is not None:
+            self.band.set_marked(d.id, not d.marked)
+            self.filmstrip.item_changed(i, d.id)
+        else:
+            self.catalog.toggle_mark(i)
+            self.filmstrip.item_changed(i)
         self.refresh_marks()
         if self.advance_on_mark and self.stack.currentIndex() == 0:
             self.step(1)  # "move on mark": mark or unmark, the pick is decided; show the next (last: stays)
@@ -417,11 +469,19 @@ class MainWindow(QMainWindow):
 
     # -- mark all / unmark all (one level of undo) -------------------------------------------------
     def _all_marked(self) -> bool:
-        return len(self.catalog) > 0 and self.catalog.marked_count == len(self.catalog)
+        return len(self.catalog) > 0 and self._marked_total() == len(self.catalog) + len(self.band)
 
     def _marks_set(self) -> frozenset[int]:
         c = self.catalog
         return frozenset(i for i in range(len(c)) if c.is_marked(i))
+
+    def _dmarks_set(self) -> frozenset[int]:
+        """The ids of the marked derived pictures."""
+        return frozenset(d.id for d in self.band if d.marked)
+
+    def _marked_total(self) -> int:
+        """Marked originals plus marked derived pictures."""
+        return self.catalog.marked_count + sum(1 for d in self.band if d.marked)
 
     def _marks_changed_everywhere(self) -> None:
         """The same refreshes toggle_mark does, plus the review grid (which lists only marked pictures) and compare.
@@ -434,22 +494,27 @@ class MainWindow(QMainWindow):
         self.refresh_marks()
 
     def mark_all(self, on: bool) -> None:
-        """Mark (or unmark) every picture, never asking first. The marks from before are kept for ONE Ctrl+Z; the
-        snapshot lives until the next Mark all / Unmark all or U (start fresh) replaces it, or the window closes."""
+        """Mark (or unmark) every picture, derived ones too, never asking first. The marks from before are kept for
+        ONE Ctrl+Z; the snapshot lives until the next Mark all / Unmark all or U (start fresh) replaces it, or the
+        window closes."""
         c = self.catalog
-        n = len(c)
-        if not n:
+        n = len(c) + len(self.band)
+        if not len(c):
             self.say("No pictures to mark")
             return
-        before = self._marks_set()
-        changed = n - len(before) if on else len(before)
+        before, dbefore = self._marks_set(), self._dmarks_set()
+        have = len(before) + len(dbefore)
+        changed = n - have if on else have
         if changed == 0:
             self.say("Everything is already marked" if on else "Nothing is marked")
             return
-        self._markall_undo = before
-        for i in range(n):
+        self._markall_undo, self._markall_undo_d = before, dbefore
+        self._markall_dids = frozenset(d.id for d in self.band)
+        for i in range(len(c)):
             c.set_mark(i, on)
-        self._markall_after = self._marks_set()
+        for d in self.band:
+            self.band.set_marked(d.id, on)
+        self._markall_after, self._markall_after_d = self._marks_set(), self._dmarks_set()
         self._marks_changed_everywhere()
         if on:
             self.say(f"Marked {changed} (Ctrl+Z undoes)" if changed == n
@@ -462,13 +527,18 @@ class MainWindow(QMainWindow):
         if prev is None:
             self.say("Nothing to undo")
             return
+        dprev, dids = self._markall_undo_d, self._markall_dids
         c = self.catalog
-        later = len(self._marks_set() ^ self._markall_after)  # pictures marked or unmarked by hand since the action
+        later = (len(self._marks_set() ^ self._markall_after)  # pictures marked or unmarked by hand since the action
+                 + len((self._dmarks_set() ^ self._markall_after_d) & dids))
         for i in range(len(c)):
             c.set_mark(i, i in prev)
+        for d in list(self.band):
+            if d.id in dids:  # a derived picture made since was not part of the action
+                self.band.set_marked(d.id, d.id in dprev)
         self._marks_changed_everywhere()
         note = f" ({later} later change{'s' if later != 1 else ''} replaced)" if later else ""
-        self.say(f"Undid Mark all / Unmark all: {len(prev)} marked again{note}")
+        self.say(f"Undid Mark all / Unmark all: {len(prev) + len(dprev & dids)} marked again{note}")
 
     # -- rotation (clockwise quarter turns; a copy writes it into the EXIF of the copy only) --------
     def _rotation_of(self, i: int) -> int:
@@ -505,6 +575,9 @@ class MainWindow(QMainWindow):
             self._story_follows_turn(i)
             for v in self._views():
                 v.rotation_changed(i)
+        d = self._current_derived()
+        if d is not None and d.kind == dv.STORY and d.source in targets:
+            self._render_current()  # the story is drawn from the turned picture: draw it again
         side = "right" if delta > 0 else "left"
         if len(targets) == 1:
             t = self.rotations.get(targets[0], 0)
@@ -522,23 +595,15 @@ class MainWindow(QMainWindow):
         want = {id(p) for p in pictures}
         return {p.primary: table[i] for i, p in enumerate(self.catalog.pictures) if table.get(i) and id(p) in want}
 
-    # -- crop (X) and story fit (S): per picture, applied only to the copy -------------------------------------
-    def _edit_tag(self, i: int) -> list[tuple[str, str]]:
-        """The filmstrip's small tags, crop first: ("4:5" | "crop", "crop") and ("9:16", "story"); [] for none."""
-        out = []
-        if i in self.crops:
-            r = self.crop_ratios.get(i, ratio_mod.FREE)
-            out.append(("crop" if r.entry in (1, 2) else ratio_mod.label(r, self._rotation_of(i)), "crop"))
-        if i in self.stories:
-            out.append(("9:16", "story"))
-        return out
+    def _derived_pairs(self) -> list:
+        """(source Picture, Derived) for each MARKED derived picture, in band order."""
+        pics = self.catalog.pictures
+        return [(pics[d.source], d) for d in self.band if d.marked and 0 <= d.source < len(pics)]
 
-    def _edit_lines(self, i: int) -> list[str]:
-        """The inspector rows for picture i's crop and story fit (see inspector.edit_lines)."""
-        native = None
-        if i in self.crops and 0 <= i < len(self.catalog):
-            native = info_native_size(self.prefetcher.info(i), None)  # un-turned: the crop is in that frame
-        return edit_lines(self.crops.get(i), self.stories.get(i), self.crop_ratios.get(i), native, self._rotation_of(i))
+    # -- crop (X) and story fit (S): Enter makes a derived picture; the original is never touched -----------------
+    def _native_of(self, i: int):
+        """Picture i's un-turned native (w, h) as far as the prefetcher's info says, else None."""
+        return info_native_size(self.prefetcher.info(i), None) if 0 <= i < len(self.catalog) else None
 
     def _can_edit(self) -> bool:
         return (self.stack.currentIndex() == 0 and not self._compare_shown() and len(self.catalog) > 0
@@ -546,7 +611,7 @@ class MainWindow(QMainWindow):
 
     def _ensure_crop_overlay(self):
         if self._crop_overlay is None:
-            from spuza.ui.crop_overlay import CropOverlay  # lazy: nothing is built until a crop is made or shown
+            from spuza.ui.crop_overlay import CropOverlay  # lazy: nothing is built until a crop is made
 
             ov = CropOverlay(self.viewer.image_item())
             ov.changed.connect(self._rect_touched)  # a drag, move or resize (never a programmatic set_rect_frac)
@@ -565,15 +630,27 @@ class MainWindow(QMainWindow):
         return self._story_editor
 
     def _show_applied_crop(self) -> None:
-        """The passive outline of the shown picture's crop (none for a picture without one). O(1): a dict lookup."""
-        rect = self.crops.get(self.catalog.index)
-        if rect is None and self._crop_overlay is None:
-            return
-        self._ensure_crop_overlay().show_applied(rect)
+        """Originals carry no crop any more: the passive outline is only ever cleared (O(1) when never built)."""
+        if self._crop_overlay is not None:
+            self._crop_overlay.show_applied(None)
 
     def _prepare_edit(self) -> None:
         if self.viewer.zoomed:
             self.viewer.toggle_zoom()  # both editors work on the fitted picture
+
+    def _edit_on_source(self) -> bool:
+        """A derived picture is current: while the edit is open the viewer shows the SOURCE's own pixels. False when
+        they are not on screen (the edit does not start)."""
+        if self._current_derived() is None:
+            return True
+        self._edit_view = True
+        self._render_current()
+        if self.viewer.has_image:
+            return True
+        self._edit_view = False
+        self._render_current()
+        self.say("The original is not decoded yet: try again in a moment")
+        return False
 
     def start_crop(self) -> None:
         if self._edit is not None:
@@ -583,14 +660,19 @@ class MainWindow(QMainWindow):
             return
         self._prepare_edit()
         i = self.catalog.index
+        d = self._current_derived()
+        redo = d if d is not None and d.kind == dv.CROP else None  # X on a derived crop re-crops it; else a new one
+        if not self._edit_on_source():
+            return
         pm = self.viewer.image_item().pixmap()
         shown = (pm.width(), pm.height())
         self._crop_native = info_native_size(self.prefetcher.info(i), shown) or shown
-        self._ensure_crop_overlay().begin(self.crops.get(i))
+        self._ensure_crop_overlay().begin(redo.crop if redo is not None else None)
         self._rect_auto = False
         self._edit = "crop"
+        self._edit_target = redo.id if redo is not None else None
         self.ratio_strip.setVisible(True)
-        self._set_ratio(self.crop_ratios.get(i, ratio_mod.FREE), reshape=False)
+        self._set_ratio(redo.ratio if redo is not None and redo.ratio is not None else ratio_mod.FREE, reshape=False)
 
     # -- the ratio of the open crop edit (keys 1-8, V, 0 and the strip's chips) ---------------------------------
     def _rect_touched(self) -> None:
@@ -598,11 +680,13 @@ class MainWindow(QMainWindow):
 
     def _crop_status(self) -> None:
         label = ratio_mod.label(self._crop_ratio, self._rotation_of(self.catalog.index))
+        again = " replaces it" if self._edit_target is not None else " adds it after the original"
         if self._crop_ratio.entry == 1:
-            self.say("Crop free: drag on the picture. 1-8 ratio, 0 resets. Enter applies, Esc cancels, X clears")
+            self.say(f"Crop free: drag on the picture. 1-8 ratio, 0 resets. Enter{again}, Esc cancels, "
+                     "Backspace clears the rectangle")
         else:
             self.say(f"Crop {label}: drag to move, corners to size. 1-8 ratio, V turns it, 0 resets. "
-                     "Enter applies, Esc cancels, X clears")
+                     f"Enter{again}, Esc cancels, Backspace clears the rectangle")
 
     def _set_ratio(self, r, reshape: bool = True) -> None:
         """Make `r` the open crop's ratio: lock the overlay to it and (reshape) bring the rectangle to it, keeping
@@ -649,18 +733,24 @@ class MainWindow(QMainWindow):
             return
         self._prepare_edit()
         i = self.catalog.index
+        d = self._current_derived()
+        redo = d if d is not None and d.kind == dv.STORY else None  # S on a derived story re-fits it; else a new one
+        if not self._edit_on_source():
+            return
         pm = self.viewer.image_item().pixmap()
         shown = (pm.width(), pm.height())
         native = info_native_size(self.prefetcher.info(i), shown) or shown
         self._story_native = native
-        self._ensure_story_editor().begin(pm, self._rotation_of(i), self.stories.get(i), native)
+        self._ensure_story_editor().begin(pm, self._rotation_of(i), redo.story if redo is not None else None, native)
         self._edit = "story"
-        self.say("Story fit 9:16: drag to move, wheel or + - to zoom, 0 resets. Enter applies, Esc cancels, S clears")
+        self._edit_target = redo.id if redo is not None else None
+        self.say("Story fit 9:16: drag to move, wheel or + - to zoom, 0 resets. "
+                 + ("Enter replaces it, Esc cancels" if redo is not None else "Enter adds it after the original, Esc cancels"))
 
     def _story_follows_turn(self, i: int) -> None:
         """A story is placed in the TURNED frame, so a new turn re-fits it: an open story edit is re-begun with the
-        new turns (its Story re-clamped for the new frame), and a stored Story is re-clamped for it. A crop needs
-        nothing: its overlay is a child of the item and turns with it."""
+        new turns (its Story re-clamped for the new frame), and every derived story of the picture is re-clamped for
+        it. A crop needs nothing: it is in the un-turned frame."""
         from spuza import story as st
 
         if self._edit == "crop" and i == self.catalog.index:
@@ -668,15 +758,19 @@ class MainWindow(QMainWindow):
         if self._edit == "story" and i == self.catalog.index:
             ed = self._story_editor
             ed.begin(self.viewer.image_item().pixmap(), self._rotation_of(i), ed.story(), self._story_native)
-        stored = self.stories.get(i)
         native = info_native_size(self.prefetcher.info(i), None)
-        if stored is not None and native:
+        if native:
             w, h = native if self._rotation_of(i) % 2 == 0 else (native[1], native[0])
-            self.stories[i] = st.clamp(stored, w, h)
+            for d in self.band.of(i):
+                if d.kind == dv.STORY:
+                    self.band.replace(d.id, story=st.clamp(d.story, w, h))
+            self.filmstrip.band_changed()
 
-    def _end_edit(self, announce: bool = False) -> None:
-        """Leave the edit mode without applying anything (the dicts were never touched): the old state is back."""
+    def _end_edit(self, announce: bool = False, restore: bool = True) -> None:
+        """Leave the edit mode without applying anything. `restore`: show the derived picture again if the edit had
+        put the source on screen (the callers that render next pass False)."""
         kind, self._edit = self._edit, None
+        self._edit_target = None
         if kind == "crop":
             self._crop_overlay.end()
             self._crop_overlay.set_aspect(None, (0, 0))
@@ -685,13 +779,22 @@ class MainWindow(QMainWindow):
             self._show_applied_crop()
         elif kind == "story":
             self._story_editor.end()
+        if self._edit_view:
+            self._edit_view = False
+            if restore:
+                self._render_current()
         if kind and announce:
             self.say("Cancelled: nothing changed")
 
-    def _edited(self, i: int, text: str) -> None:
-        self.filmstrip.item_changed(i)
-        self._show_applied_crop()
-        self.refresh_marks()
+    def _band_changed(self) -> None:
+        """The Band was changed (a picture made, replaced, removed or restored): the selection and the strip follow."""
+        self._current_derived()  # drops a selection that no longer exists
+        self.filmstrip.band_changed()
+
+    def _derived_done(self, d, text: str) -> None:
+        self._cur_id = d.id
+        self._band_changed()
+        self._render_current()
         self.say(text)
 
     def _apply_crop(self) -> None:
@@ -700,45 +803,66 @@ class MainWindow(QMainWindow):
         i = self.catalog.index
         rect = normalise(self._crop_overlay.rect_frac())
         r = self._crop_ratio
-        self._end_edit()
+        target = self._edit_target
+        self._end_edit(restore=False)
         name = self.catalog.pictures[i].stem
-        if rect is None:
-            self.crops.pop(i, None)
-            self.crop_ratios.pop(i, None)
-            self._edited(i, f"No crop on {name}")
-        else:
-            self.crops[i] = rect
-            if r.entry == 1:
-                self.crop_ratios.pop(i, None)  # Free is "absent"
-            else:
-                self.crop_ratios[i] = r
-            # round 6 (D6): a crop and a story fit may coexist; neither drops the other
-            self._edited(i, f"Cropped {name}: {self._edit_lines(i)[0][6:]}. The original stays as it is; the copy gets it")
+        if rect is None:  # no rectangle: nothing is made, nothing changes
+            self._render_current()
+            self.say(f"No rectangle drawn: nothing was added for {name}")
+            return
+        ratio = None if r.entry == 1 else r  # Free is None
+        try:
+            d = self.band.replace(target, crop=rect, ratio=ratio) if target is not None else None
+            if d is None:
+                d = self.band.add(i, dv.CROP, crop=rect, ratio=ratio)
+                target = None
+        except ValueError as exc:
+            self._render_current()
+            self.say(f"Cannot crop {name}: {exc}")
+            return
+        head, rows = derived_lines(d, name, self._native_of(i), self._rotation_of(i))
+        lab = rows[0].lower() if d.ratio is None or d.ratio.entry in (1, 2) else rows[0]
+        size = rows[1] if len(rows) > 1 else ""
+        what = "" if target is None else " again"
+        tail = "It replaced the earlier crop" if target is not None else "It is a new picture after the original"
+        self._derived_done(d, f"Cropped {name}{what}: {lab}, {size}. {tail}; the original stays as it is")
 
     def _apply_story(self) -> None:
         if self._edit != "story":
             return
         i = self.catalog.index
         story = self._story_editor.story()
-        self._end_edit()
-        self.stories[i] = story
-        self._edited(i, f"Story fit on {self.catalog.pictures[i].stem}: 9:16. The original stays as it is; the copy gets it")
-
-    def clear_edits(self, crop: bool = True, story: bool = True) -> None:
-        """X / S again, or Backspace: drop this picture's crop and/or story fit, and leave the edit mode."""
-        i = self.catalog.index
-        self._end_edit()
-        gone = []
-        if crop and self.crops.pop(i, None) is not None:
-            gone.append("the crop")
-        if crop:
-            self.crop_ratios.pop(i, None)
-        if story and self.stories.pop(i, None) is not None:
-            gone.append("the story fit")
-        if gone:
-            self._edited(i, f"Cleared {' and '.join(gone)} on {self.catalog.pictures[i].stem}")
+        target = self._edit_target
+        self._end_edit(restore=False)
+        name = self.catalog.pictures[i].stem
+        d = self.band.replace(target, story=story) if target is not None else None
+        if d is None:
+            try:
+                d = self.band.add(i, dv.STORY, story=story)
+            except ValueError as exc:
+                self._render_current()
+                self.say(f"Cannot fit {name}: {exc}")
+                return
+            tail = "It is a new picture after the original"
         else:
-            self._show_applied_crop()
+            tail = "It replaced the earlier fit"
+        self._derived_done(d, f"Story fit on {name}: 9:16. {tail}; the original stays as it is")
+
+    def remove_derived(self) -> None:
+        """Backspace on a derived picture: take it off the filmstrip. The selection moves to the previous row."""
+        d = self._current_derived()
+        if d is None:
+            self.say("Nothing to remove here")
+            return
+        pos = self._row_pos()
+        prev = self._rows()[pos - 1] if pos else (d.source, None)
+        name = self.catalog.pictures[d.source].stem
+        tag = dv.tag(d, self._rotation_of(d.source))
+        self.band.remove(d.id)
+        self._cur_id = prev[1] if prev[0] == d.source else None
+        self._band_changed()
+        self._render_current()
+        self.say(f"Removed the {'story' if d.kind == dv.STORY else 'crop'} picture {tag} of {name}; the original is untouched")
 
     def _edit_key(self, e) -> bool:
         """While a crop or story edit is open: True when the key was taken here. Moving keys cancel the edit and
@@ -753,12 +877,14 @@ class MainWindow(QMainWindow):
                 self._end_edit(announce=True)  # never also leaves full-bleed or the review
         elif k == Qt.Key_Backspace:
             if not auto:
-                self.clear_edits(crop=crop, story=not crop)  # the edit that is open; the viewer's Backspace clears both
-        elif k == (Qt.Key_X if crop else Qt.Key_S):
-            if not auto:
-                self.clear_edits(crop=crop, story=not crop)
-        elif k == (Qt.Key_S if crop else Qt.Key_X) or k == Qt.Key_Z:
-            pass  # the other editor's key, and Z: nothing while editing
+                if crop:  # clear the rectangle: Enter then makes nothing
+                    self._crop_overlay.set_rect_frac(None)
+                    self._rect_auto = False
+                    self.say("Rectangle cleared: draw a new one, or Esc to cancel")
+                else:
+                    self._story_editor.reset()
+        elif k in (Qt.Key_X, Qt.Key_S) or k == Qt.Key_Z:
+            pass  # either editor's key again, and Z: nothing while editing
         elif crop and k in (Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus):
             pass
         elif crop and Qt.Key_1 <= k <= Qt.Key_8:
@@ -780,7 +906,7 @@ class MainWindow(QMainWindow):
             self._story_editor.reset()
         else:
             if k in (Qt.Key_Right, Qt.Key_J, Qt.Key_Left, Qt.Key_K):
-                self._end_edit()
+                self._end_edit(restore=False)  # the move that follows renders
             return False
         return True
 
@@ -792,8 +918,9 @@ class MainWindow(QMainWindow):
         else:
             img = self.prefetcher.cached(i)
             reason = self.prefetcher.failed_reason(i)
+            d = None if self._edit_view else self._current_derived()
             if img is not None:
-                self.viewer.show_image(i, pic, img, self.prefetcher.info(i))
+                self.viewer.show_image(i, pic, img, self.prefetcher.info(i), derived=d)
             elif reason:
                 self.viewer.show_error(i, pic, reason)
             else:
@@ -802,15 +929,23 @@ class MainWindow(QMainWindow):
             self._show_applied_crop()
             if img is not None or reason:
                 self._say_banner()
-        self.filmstrip.set_current(i)
+        self.filmstrip.set_current(i, self._cur_id)
         self.refresh_marks()
 
     def _overlays_for(self, i: int, img) -> None:
         """Peaking mask and AF ring for the picture just shown (both no-ops while off or in classic)."""
         if self.peaking is not None:
-            self.peaking.show(i, img)
+            self.peaking.show(i, None if self._derived_view() else img)  # its mask is the source frame's
         if self.marker is not None:
             self.marker.set_point(self._focus_frac(i) if img is not None and not self.viewer.sensor_shown else None)
+
+    def _derived_view(self) -> bool:
+        """A derived picture (not the source under an edit) is on screen: the peaking mask and the AF point belong to
+        the source's frame, so neither is shown over it."""
+        return self._cur_id is not None and not self._edit_view and self._current_derived() is not None
+
+    def _peak_image(self, i: int):
+        return None if self._derived_view() else self.prefetcher.cached(i)
 
     def _say_banner(self) -> None:
         if self._banner:
@@ -821,7 +956,8 @@ class MainWindow(QMainWindow):
         """Everything that depends on the current picture or the marked set."""
         cat, i = self.catalog, self.catalog.index
         pic = cat.current
-        marked = bool(pic) and cat.is_marked(i)
+        d = self._current_derived()
+        marked = d.marked if d is not None else (bool(pic) and cat.is_marked(i))
         shown = self._review_shown_index()
         if self._compare_shown():  # lit for the focused cell
             f = self.compare.focused_index()
@@ -833,19 +969,38 @@ class MainWindow(QMainWindow):
         else:  # lit for what the user sees: the grid selection (or its zoom page)
             self.buttons["mark"].setEnabled(shown is not None)
             self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
-        self.sidebar.set_counts(len(cat), cat.marked_count)
+        total_marked = self._marked_total()
+        self.sidebar.set_counts(len(cat) + len(self.band), total_marked)
         if pic is not None:
-            self.viewer.strip.set_state(cat.position_text(), marked, pic.stem, pic.kind, cat.marked_count)
-            self.inspector.set_picture(pic, self.prefetcher.info(i), marked, self.prefetcher.failed_reason(i),
-                                       edit=self._edit_lines(i))
+            name, kind = (pic.stem, pic.kind) if d is None else (
+                f"{pic.stem} ({dv.tag(d, self._rotation_of(i))})", "story" if d.kind == dv.STORY else "crop")
+            self.viewer.strip.set_state(cat.position_text(), marked, name, kind, total_marked)
+            self._show_inspector(marked=marked)
         else:
             self.inspector.set_picture(None)
         self.refresh_status()
 
+    def _show_inspector(self, info=None, marked=None) -> None:
+        cat, i = self.catalog, self.catalog.index
+        pic = cat.current
+        if pic is None:
+            return
+        d = self._current_derived()
+        if marked is None:
+            marked = d.marked if d is not None else cat.is_marked(i)
+        if d is not None:
+            head, rows = derived_lines(d, pic.primary.name, self._native_of(i), self._rotation_of(i))
+            self.inspector.set_derived(pic, head, rows, marked)
+        else:
+            self.inspector.set_picture(pic, info if info is not None else self.prefetcher.info(i), marked,
+                                       self.prefetcher.failed_reason(i))
+
     def refresh_status(self) -> None:
         cat = self.catalog
-        self.lbl_pos.setText(cat.position_text())
-        self.lbl_marked.setText(f"{cat.marked_count} marked {DOT} {human_size(cat.marked_bytes)}")
+        d = self._current_derived()
+        self.lbl_pos.setText(cat.position_text() if d is None else
+                             f"{cat.position_text()} {DOT} {'story' if d.kind == dv.STORY else 'crop'} {dv.tag(d, self._rotation_of(d.source))}")
+        self.lbl_marked.setText(f"{self._marked_total()} marked {DOT} {human_size(cat.marked_bytes)}")
 
     def _on_ready(self, i: int, _img, _info) -> None:
         self.filmstrip.item_changed(i)
@@ -858,8 +1013,7 @@ class MainWindow(QMainWindow):
         """The picture's own size came in late (Prefetcher.sized): refresh the inspector, nothing else."""
         cat = self.catalog
         if i == cat.index and 0 <= i < len(cat):
-            self.inspector.set_picture(cat.pictures[i], info, cat.is_marked(i), self.prefetcher.failed_reason(i),
-                                       edit=self._edit_lines(i))
+            self._show_inspector(info=info)
 
     def _on_failed(self, i: int, _reason: str) -> None:
         self.filmstrip.item_changed(i)
@@ -1013,6 +1167,7 @@ class MainWindow(QMainWindow):
 
     def _review_open_index(self, i: int) -> None:
         self.catalog.go(i)
+        self._cur_id = None  # the review lists originals only
         self.close_review()
         self._moved()
 
@@ -1020,26 +1175,29 @@ class MainWindow(QMainWindow):
         self.filmstrip.viewport().update()
         self.refresh_marks()
 
-    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None):
+    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=()):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
+        derived = list(derived)
+        # a marked derived picture is exported with its source's turns, whether or not the source itself is marked
+        turned = list(pictures) + [p for p, _d in derived]
         return CopySheet(pictures, default_dest=default_dest, parent=parent,
                          others=getattr(self.catalog, "others", ()), unreadable=getattr(self.catalog, "unreadable", ()),
                          organise=settings.read_organise(self.prefs), eject_after=settings.read_eject_after(self.prefs),
                          quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount,
-                         rotations=self._copy_rotations(pictures),
-                         crops=self._copy_table(pictures, self.crops), stories=self._copy_table(pictures, self.stories),
-                         crop_ratios=self._copy_table(pictures, self.crop_ratios),
+                         rotations=self._copy_rotations(turned), derived=derived,
                          write_rotation=settings.read_write_rotation(self.prefs))
 
     def open_copy(self) -> None:
         marked = self.catalog.marked()
-        if not marked:
+        pairs = self._derived_pairs()  # the marked crops and story fits go too, with or without their originals
+        if not marked and not pairs:
             self.say("Nothing is marked yet: press Space on the pictures you want to copy.")
             return
         factory = self.copy_sheet_factory or self._default_copy_sheet_factory
         try:
-            self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self)
+            extra = {"derived": pairs} if pairs else {}  # a factory that knows nothing of derived pictures is called as before
+            self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self, **extra)
             quit_signal = getattr(self._sheet, "quit_requested", None)
             if quit_signal is not None:
                 quit_signal.connect(self.close)  # the normal close path: closeEvent saves and flushes as usual
@@ -1078,8 +1236,9 @@ class MainWindow(QMainWindow):
         if on:
             self._enter_next_features()
             ctl = self._ensure_resume()
-            if ctl is not None and self.catalog.marked_count == 0 and self.catalog.index == 0:
+            if ctl is not None and self.catalog.marked_count == 0 and self.catalog.index == 0 and not self.band:
                 self._banner = ctl.restore()
+                self._band_changed()
         else:
             self._sync_next_buttons()
         self._render_current()
@@ -1150,7 +1309,7 @@ class MainWindow(QMainWindow):
     # -- advanced features: each is a no-op unless its flag is on -----------------------------------
     def _focus_frac(self, i):
         """Picture `i`'s AF point as a (fx, fy) fraction, or None (flag off, no info, no usable point)."""
-        if i is None or i < 0 or not features.enabled("focus_point"):
+        if i is None or i < 0 or not features.enabled("focus_point") or self._derived_view():
             return None
         try:
             fi = getattr(self.prefetcher.info(i), "focus", None)
@@ -1215,7 +1374,7 @@ class MainWindow(QMainWindow):
         if features.enabled("focus_peaking") and settings.read_peaking_on(self.prefs) and self.peaking is None:
             self._ensure_peaking().set_on(True)
             if len(self.catalog):
-                self.peaking.show(self.catalog.index, self.prefetcher.cached(self.catalog.index))
+                self.peaking.show(self.catalog.index, self._peak_image(self.catalog.index))
             self._sync_next_buttons()
 
     def _leave_next_features(self) -> None:
@@ -1255,7 +1414,7 @@ class MainWindow(QMainWindow):
         settings.write_peaking_on(self.prefs, on)
         self.prefs.sync()
         if on and len(self.catalog):
-            ov.show(self.catalog.index, self.prefetcher.cached(self.catalog.index))
+            ov.show(self.catalog.index, self._peak_image(self.catalog.index))
         self._reset_compare_masks(clear=True)
         self._compare_overlays()
         self._sync_next_buttons()
@@ -1289,8 +1448,7 @@ class MainWindow(QMainWindow):
 
             store = SessionStore()  # builds a path only; the folder is made on the first save
             self.resume = ResumeController(self.catalog, self.root, store, parent=self, rotations=self.rotations,
-                                           crops=self.crops, stories=self.stories,
-                                           crop_ratios=self.crop_ratios)
+                                           band=self.band)
             remember = settings.read_resume_on(self.prefs)
             self.resume.set_enabled(remember)
             if remember and not self._pruned:
@@ -1313,6 +1471,7 @@ class MainWindow(QMainWindow):
         if ctl is None:
             return
         text = ctl.start_fresh()
+        self._band_changed()
         if text:
             self.say(text)
         self.filmstrip.viewport().update()
@@ -1446,6 +1605,8 @@ class MainWindow(QMainWindow):
             self._focus_review()
         else:
             self.stack.setCurrentIndex(0)
+            if i != self.catalog.index:
+                self._cur_id = None  # compare lists originals only: it may have moved on
             self.catalog.go(i)
             self._moved()
             self.setFocus()
@@ -1549,7 +1710,7 @@ class MainWindow(QMainWindow):
                 self.start_story()
         elif k == Qt.Key_Backspace and self.stack.currentIndex() == 0:
             if not e.isAutoRepeat():
-                self.clear_edits()
+                self.remove_derived()
         elif k == Qt.Key_U and features.enabled("resume_session") and self.stack.currentIndex() == 0:
             if not e.isAutoRepeat():
                 self.start_fresh()
@@ -1582,7 +1743,7 @@ class MainWindow(QMainWindow):
                                     self.catalog.is_marked(self.catalog.index),
                                     self.catalog.current.stem if self.catalog.current else "",
                                     self.catalog.current.kind if self.catalog.current else "",
-                                    self.catalog.marked_count)
+                                    self._marked_total())
 
     def follow_system_theme(self, app) -> None:
         theme.follow(app, self.retheme)

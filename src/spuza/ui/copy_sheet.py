@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from spuza import copy as copy_mod
+from spuza import derived as derived_mod
 from spuza import crop as crop_mod
 from spuza import eject as eject_mod
 from spuza import ratio as ratio_mod
@@ -120,8 +121,22 @@ class CopySheet(QDialog):
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
                  eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
-                 stories=None, crop_ratios=None):
+                 stories=None, crop_ratios=None, derived=None):
         super().__init__(parent)
+        # contract fr7: (Picture, derived.Derived) pairs, the marked derived pictures only; each exports to ed/ whether or
+        # not its original is in `pictures`, with the source's turns (from `rotations`) baked in. A malformed pair is dropped.
+        self.derived = []
+        try:
+            pairs = list(derived or ())
+        except TypeError:
+            pairs = []
+        for pair in pairs:
+            try:
+                p, d = pair
+            except (TypeError, ValueError):
+                continue
+            if isinstance(d, derived_mod.Derived) and getattr(p, "primary", None) is not None and self._derived_ok(d):
+                self.derived.append((p, d))
         # contract fr6: Picture.primary -> spuza.ratio.Ratio of that picture's crop (names its ed file); a value that is
         # not a Ratio is dropped, which exports the crop as Free.
         self.crop_ratios = {k: v for k, v in dict(crop_ratios or {}).items() if isinstance(v, ratio_mod.Ratio)}
@@ -185,7 +200,11 @@ class CopySheet(QDialog):
         self.total_companions = sum(len(getattr(p, "companions", ())) for p in self.pictures)
         self.total_twins = sum(len(getattr(p, "twins", ())) for p in self.pictures)
 
-        self.title_label = QLabel(f"Copy {len(self.pictures)} marked picture{'s' if len(self.pictures) != 1 else ''}")
+        if self.pictures or not self.derived:
+            title = f"Copy {len(self.pictures)} marked picture{'s' if len(self.pictures) != 1 else ''}"
+        else:
+            title = f"Export {_n(len(self.derived), 'cropped picture', 'cropped pictures')}"
+        self.title_label = QLabel(title)
         f = self.title_label.font()
         f.setBold(True)
         f.setPointSize(f.pointSize() + 2)
@@ -336,7 +355,7 @@ class CopySheet(QDialog):
             self.copy_button.setEnabled(False)
             return
         self.dest_label.setText(str(self.dest))
-        if self.pictures:  # plan once: the bytes still to write (not the identical ones) decide "short"
+        if self._has_work():  # plan once: the bytes still to write (not the identical ones) decide "short"
             self.plan = self._plan()
         free = self._free()
         short = self.space_short()
@@ -351,8 +370,8 @@ class CopySheet(QDialog):
         else:
             self.free_label.setText(f"{human_size(free)} free at the destination")
             self.free_label.setStyleSheet("")
-        self.copy_button.setEnabled(bool(self.pictures) and not self.running and not short)
-        if self.pictures and not short:
+        self.copy_button.setEnabled(self._has_work() and not self.running and not short)
+        if self._has_work() and not short:
             self._show_plan(self.plan)
 
     def _turns(self) -> dict[Path, int]:
@@ -369,6 +388,20 @@ class CopySheet(QDialog):
                 out.update({f: t for f in p.files if f not in skip and f.suffix.lower() in KNOWN_EXTS})
         return out
 
+    @staticmethod
+    def _derived_ok(d) -> bool:
+        if d.kind == derived_mod.CROP:
+            return crop_mod.normalise(d.crop) is not None
+        return d.kind == derived_mod.STORY and isinstance(d.story, story_mod.Story)
+
+    def _has_work(self) -> bool:
+        """Originals to copy, or marked derived pictures to export (a copy needs no selected original for those)."""
+        return bool(self.pictures) or bool(self.derived)
+
+    def _turns_of(self, p) -> int:
+        t = self.rotations.get(getattr(p, "primary", None), 0)
+        return t % 4 if isinstance(t, int) and not isinstance(t, bool) else 0
+
     def _crop_jobs(self) -> list:
         """One job per marked picture that has a crop; the turns are the picture's own, whatever write_rotation says."""
         jobs = []
@@ -379,6 +412,10 @@ class CopySheet(QDialog):
             t = self.rotations.get(p.primary, 0)
             t = t % 4 if isinstance(t, int) and not isinstance(t, bool) else 0
             jobs.append(crop_mod.CropJob(p.primary, getattr(p, "sidecar", None), c, t, self.crop_ratios.get(p.primary)))
+        for p, d in self.derived:
+            if d.kind == derived_mod.CROP:
+                jobs.append(crop_mod.CropJob(p.primary, getattr(p, "sidecar", None), crop_mod.normalise(d.crop),
+                                             self._turns_of(p), d.ratio))
         return jobs
 
     def _story_jobs(self) -> list:
@@ -391,6 +428,9 @@ class CopySheet(QDialog):
             t = self.rotations.get(p.primary, 0)
             t = t % 4 if isinstance(t, int) and not isinstance(t, bool) else 0
             jobs.append(story_mod.StoryJob(p.primary, getattr(p, "sidecar", None), s, t))
+        for p, d in self.derived:
+            if d.kind == derived_mod.STORY:
+                jobs.append(story_mod.StoryJob(p.primary, getattr(p, "sidecar", None), d.story, self._turns_of(p)))
         return jobs
 
     def _plan(self):
@@ -411,7 +451,7 @@ class CopySheet(QDialog):
 
     # ---- copying -------------------------------------------------------------------------------
     def start_copy(self) -> None:
-        if self.running or self.dest is None or not self.pictures:
+        if self.running or self.dest is None or not self._has_work():
             return
         self._show_plan()
         if self.space_short(self.plan.total_bytes):
@@ -457,10 +497,13 @@ class CopySheet(QDialog):
         comps = {c for p in self.pictures for c in getattr(p, "companions", ())}
         n_comp = sum(1 for f in res.copied if f in comps)
         comp_text = f", {_n(n_comp, 'companion', 'companions')}" if n_comp else ""
-        text = (
-            f"Copied {pics} picture{'s' if pics != 1 else ''} ({len(res.copied)} files{comp_text})"
-            f" · skipped {len(res.skipped)} · failed {len(res.failed)}"
-        )
+        if self.pictures:
+            text = (
+                f"Copied {pics} picture{'s' if pics != 1 else ''} ({len(res.copied)} files{comp_text})"
+                f" · skipped {len(res.skipped)} · failed {len(res.failed)}"
+            )
+        else:  # only derived pictures: nothing went to raw or soc
+            text = f"No originals copied · failed {len(res.failed)}"
         if partial:
             text += f" · {partial} picture{'s' if partial != 1 else ''} not fully copied"
         if res.cancelled:

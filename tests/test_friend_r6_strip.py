@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractButton
 
+from spuza import derived as dv
 from spuza import ratio
 from spuza.ratio import FREE, Ratio
 from spuza.story import Story
@@ -19,12 +20,18 @@ from spuza.ui.ratio_strip import Chip, RatioStrip
 from test_friend_r3_window import make_window, pump
 
 CHIPS = ["1 Free", "2 Original", "3 1:1", "4 4:5", "5 3:4", "6 2:3", "7 9:16", "8 1.91:1", "V turn"]
-FREE_STATUS = "Crop free: drag on the picture. 1-8 ratio, 0 resets. Enter applies, Esc cancels, X clears"
+FREE_STATUS = ("Crop free: drag on the picture. 1-8 ratio, 0 resets. Enter adds it after the original, Esc cancels, "
+               "Backspace clears the rectangle")
 
 
 def status(label):
     return (f"Crop {label}: drag to move, corners to size. 1-8 ratio, V turns it, 0 resets. "
-            "Enter applies, Esc cancels, X clears")
+            "Enter adds it after the original, Esc cancels, Backspace clears the rectangle")
+
+
+def made(win):
+    """The derived crops, in band order."""
+    return [d for d in win.band if d.kind == dv.CROP]
 
 
 @pytest.fixture
@@ -214,31 +221,31 @@ def test_the_largest_flag_survives_ratio_changes_until_a_drag_and_is_off_for_a_s
     assert px(w) == "16:9 · 4000 × 2250 px"  # keeps the area (2250 x 4000), not the largest 6000 x 3375
 
 
-def test_copy_factory_gets_the_ratio_keyed_by_primary(w):
+def test_copy_factory_gets_the_ratio_on_the_derived_picture(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_Return)
-    pics = [w.catalog.pictures[0]]
-    sheet = w._default_copy_sheet_factory(pics)
-    assert sheet.crop_ratios == {pics[0].primary: Ratio(4)} and pics[0].primary in sheet.crops
+    (d,) = w.band.items
+    assert d.ratio == Ratio(4)
+    sheet = w._default_copy_sheet_factory([], derived=w._derived_pairs())
+    assert sheet.derived == [(w.catalog.pictures[0], d)] and sheet.derived[0][1].ratio == Ratio(4)
 
 
-def test_the_resume_controller_shares_the_ratios_and_restores_them(w, tmp_path, monkeypatch):
+def test_the_resume_controller_saves_the_ratio_with_the_derived_picture_and_restores_it(w, tmp_path, monkeypatch):
     from spuza import features
 
     features.set_mode(features.ADVANCED)
     monkeypatch.setenv("SPUZA_SESSIONS_DIR", str(tmp_path / "sessions"))
     ctl = w._ensure_resume()
-    assert ctl.crop_ratios is w.crop_ratios
+    assert ctl.band is w.band
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_V)
     key(w, Qt.Key_Return)
     ctl.flush()
-    w.crop_ratios.clear()
-    w.crops.clear()
+    w.band.reset(())
     ctl.restore()
-    assert w.crop_ratios == {0: Ratio(4, True)} and 0 in w.crops
+    assert [d.ratio for d in w.band] == [Ratio(4, True)] and len(made(w)) == 1
 
 
 def test_v_does_nothing_for_free_and_square(w):
@@ -299,7 +306,7 @@ def test_digits_and_v_do_nothing_on_the_plain_viewer(w):
     for k in (Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4, Qt.Key_5, Qt.Key_6, Qt.Key_7, Qt.Key_8, Qt.Key_9, Qt.Key_V,
               Qt.Key_0):
         key(w, k)
-    assert w._edit is None and w._crop_overlay is None and w.crop_ratios == {} and w.crops == {}
+    assert w._edit is None and w._crop_overlay is None and not w.band
     assert not w.ratio_strip.isVisible() and w.last_message == msg
 
 
@@ -309,7 +316,7 @@ def test_digits_and_v_do_nothing_in_story_fit(w):
     for k in (Qt.Key_1, Qt.Key_4, Qt.Key_8, Qt.Key_9, Qt.Key_V):
         key(w, k)
     assert w._story_editor.story() == before and w._story_editor.active
-    assert w._crop_overlay is None and w.crop_ratios == {} and not w.ratio_strip.isVisible()
+    assert w._crop_overlay is None and not w.band and not w.ratio_strip.isVisible()
     key(w, Qt.Key_Plus)
     key(w, Qt.Key_0)  # S keeps only its 0
     assert w._story_editor.story() == Story()
@@ -334,88 +341,94 @@ def test_enter_stores_the_ratio_and_reopening_restores_it(w):
     key(w, Qt.Key_V)
     key(w, Qt.Key_0)
     key(w, Qt.Key_Return)
-    assert w.crop_ratios == {0: Ratio(4, True)} and 0 in w.crops
+    (d,) = made(w)
+    assert d.ratio == Ratio(4, True)
     assert "Cropped P0: 5:4, 5000 x 4000 px" in w.last_message
-    key(w, Qt.Key_X)
+    key(w, Qt.Key_X)  # on the derived crop: a re-crop with its ratio and rectangle
     assert w._crop_ratio == Ratio(4, True) and chips(w)[3] == "4 5:4"
     assert w._crop_overlay.aspect == pytest.approx(1.25)
     assert px(w) == "5:4 · 5000 × 4000 px"
     key(w, Qt.Key_Escape)
-    assert w.crop_ratios == {0: Ratio(4, True)}
+    assert [x.ratio for x in made(w)] == [Ratio(4, True)]
 
 
-def test_free_is_absent_and_a_cancelled_edit_keeps_the_old_ratio(w):
+def test_free_is_none_and_a_cancelled_edit_keeps_the_old_ratio(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_5)
     key(w, Qt.Key_Return)
     key(w, Qt.Key_X)
     key(w, Qt.Key_1)
     key(w, Qt.Key_Escape)
-    assert w.crop_ratios == {0: Ratio(5)}
+    assert [d.ratio for d in made(w)] == [Ratio(5)]
     key(w, Qt.Key_X)
     key(w, Qt.Key_1)
     key(w, Qt.Key_Return)
-    assert w.crop_ratios == {} and 0 in w.crops
+    assert [d.ratio for d in made(w)] == [None] and len(made(w)) == 1  # replaced in place; Free is None
 
 
 def test_each_picture_has_its_own_ratio(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_Return)
-    w.step(1)
+    w.step(1)  # from the derived crop to the next original
     pump(lambda: w.prefetcher.cached(1) is not None and w.viewer.has_image)  # X needs the picture decoded
     key(w, Qt.Key_X)
     assert w._crop_ratio == FREE and w.last_message == FREE_STATUS
     key(w, Qt.Key_7)
     key(w, Qt.Key_Return)
-    assert w.crop_ratios == {0: Ratio(4), 1: Ratio(7)}
+    assert [(d.source, d.ratio) for d in made(w)] == [(0, Ratio(4)), (1, Ratio(7))]
 
 
-def test_x_again_and_backspace_drop_the_ratio_too(w):
-    for clear in (Qt.Key_X, Qt.Key_Backspace):
-        key(w, Qt.Key_X)
-        key(w, Qt.Key_4)
-        key(w, Qt.Key_Return)
-        key(w, Qt.Key_X)
-        key(w, clear)
-        assert w.crops == {} and w.crop_ratios == {} and not w.ratio_strip.isVisible()
-
-
-def test_backspace_on_the_viewer_clears_both_and_says_so(w):
-    key(w, Qt.Key_X)
-    key(w, Qt.Key_4)
-    key(w, Qt.Key_Return)
-    key(w, Qt.Key_S)
-    key(w, Qt.Key_Return)
-    assert w.crops and w.stories and w.crop_ratios
-    key(w, Qt.Key_Backspace)
-    assert w.crops == {} and w.stories == {} and w.crop_ratios == {}
-    assert w.last_message == "Cleared the crop and the story fit on P0"
-    key(w, Qt.Key_X)
-    key(w, Qt.Key_3)
-    key(w, Qt.Key_Return)
-    key(w, Qt.Key_Backspace)
-    assert w.last_message == "Cleared the crop on P0"
-
-
-def test_backspace_in_the_crop_edit_keeps_the_story(w):
-    key(w, Qt.Key_S)
-    key(w, Qt.Key_Return)
+def test_backspace_clears_the_rectangle_in_the_edit_and_removes_the_picture_outside_it(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_Return)
     key(w, Qt.Key_X)
     key(w, Qt.Key_Backspace)
-    assert w.crops == {} and list(w.stories) == [0]
+    assert w.ratio_strip.isVisible() and w._crop_overlay.rect_frac() is None and w._crop_ratio == Ratio(4)
+    key(w, Qt.Key_Escape)
+    assert not w.ratio_strip.isVisible() and len(made(w)) == 1
+    key(w, Qt.Key_Backspace)
+    assert made(w) == [] and not w.ratio_strip.isVisible()
 
 
-def test_a_crop_and_a_story_coexist_with_their_ratio(w):
-    key(w, Qt.Key_S)
-    key(w, Qt.Key_Return)
+def test_backspace_on_the_viewer_removes_only_the_picture_on_screen_and_says_so(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_Return)
-    assert list(w.crops) == [0] and list(w.stories) == [0] and w.crop_ratios == {0: Ratio(4)}
+    w.go_to(0)
+    key(w, Qt.Key_S)
+    key(w, Qt.Key_Return)
+    assert [d.kind for d in w.band] == [dv.CROP, dv.STORY]
+    key(w, Qt.Key_Backspace)  # on the story
+    assert [d.kind for d in w.band] == [dv.CROP]
+    assert w.last_message.startswith("Removed the story picture 9:16 of P0")
+    key(w, Qt.Key_Backspace)  # now on the crop
+    assert not w.band and w.last_message.startswith("Removed the crop picture 4:5 of P0")
+    key(w, Qt.Key_Backspace)
+    assert w.last_message == "Nothing to remove here"
+
+
+def test_backspace_in_the_crop_edit_keeps_every_picture(w):
+    key(w, Qt.Key_S)
+    key(w, Qt.Key_Return)
+    w.go_to(0)
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    key(w, Qt.Key_Return)
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_Backspace)
+    assert [d.kind for d in w.band] == [dv.STORY, dv.CROP]
+
+
+def test_a_crop_and_a_story_are_both_kept_with_their_ratio(w):
+    key(w, Qt.Key_S)
+    key(w, Qt.Key_Return)
+    w.go_to(0)
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    key(w, Qt.Key_Return)
+    assert [(d.kind, d.ratio) for d in w.band] == [(dv.STORY, None), (dv.CROP, Ratio(4))]
 
 
 # -- turned pictures -------------------------------------------------------------------------------------------
@@ -426,8 +439,9 @@ def test_a_turned_picture_opens_the_ratio_on_screen_and_names_it_as_seen(w):
     assert w._crop_ratio == Ratio(4, True)  # stored in the un-turned frame
     assert chips(w)[3] == "4 4:5" and w.last_message == status("4:5")  # portrait on screen
     key(w, Qt.Key_Return)
-    assert w.inspector.lines.count("Crop: 4:5, 4000 x 5000 px") == 1  # on-screen pixel order
-    assert w.filmstrip.edit_tag_of(0) == [("4:5", "crop")]
+    assert "4:5" in w.inspector.lines and "4000 x 5000 px" in w.inspector.lines  # on-screen pixel order
+    (d,) = made(w)
+    assert w.filmstrip.row_tags(0, d.id) == [("4:5", "crop")]
 
 
 # -- inspector -------------------------------------------------------------------------------------------------
@@ -462,15 +476,15 @@ def test_edit_lines_survive_junk(bad):
     assert isinstance(edit_lines((0.1, 0.1, 0.5, 0.5), None, None, bad, bad if isinstance(bad, int) else 0), list)
 
 
-def test_inspector_shows_both_lines_in_the_window(w):
+def test_inspector_shows_the_derived_picture_rows_in_the_window(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_Return)
+    assert w.inspector.lines[1:] == ["Crop of P0.JPG", "4:5", "3200 x 4000 px", "Marked"]
+    w.go_to(0)
     key(w, Qt.Key_S)
     key(w, Qt.Key_Return)
-    lines = [t for t in w.inspector.lines if t.startswith(("Crop", "Story"))]
-    assert lines == ["Crop: 4:5, 3200 x 4000 px", "Story fit: 9:16, zoom 1.0x"]
-    assert w.inspector.lines[-1] in ("Marked", "Not marked")
+    assert w.inspector.lines[1:] == ["Story fit of P0.JPG", "9:16", "1080 x 1920 px", "Marked"]
 
 
 # -- filmstrip -------------------------------------------------------------------------------------------------
@@ -478,24 +492,25 @@ def test_filmstrip_tags_carry_the_ratio_and_the_story_is_an_outline(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
     key(w, Qt.Key_Return)
-    assert w.filmstrip.edit_tags(0) == [("4:5", "crop")]
+    (d,) = made(w)
+    assert w.filmstrip.row_tags(0, d.id) == [("4:5", "crop")]
     key(w, Qt.Key_X)
     key(w, Qt.Key_V)
     key(w, Qt.Key_Return)
-    assert w.filmstrip.edit_tags(0) == [("5:4", "crop")]
+    assert w.filmstrip.row_tags(0, d.id) == [("5:4", "crop")]
     key(w, Qt.Key_X)
     key(w, Qt.Key_1)
     key(w, Qt.Key_Return)
-    assert w.filmstrip.edit_tags(0) == [("crop", "crop")]
-    key(w, Qt.Key_X)
-    key(w, Qt.Key_2)
-    key(w, Qt.Key_Return)
-    assert w.filmstrip.edit_tags(0) == [("crop", "crop")]  # Original keeps the plain "crop"
+    assert w.filmstrip.row_tags(0, d.id) == [("crop", "crop")]
+    w.go_to(0)
     key(w, Qt.Key_S)
     key(w, Qt.Key_Return)
-    assert w.filmstrip.edit_tags(0) == [("crop", "crop"), ("9:16", "story")]  # two tags, side by side
-    cell = w.filmstrip.visualRect(w.filmstrip.model().index(0))
-    assert w.filmstrip.viewport().grab(cell).toImage().width() > 0  # paints both without raising
+    story = w.band.items[-1]
+    assert w.filmstrip.row_tags(0, story.id) == [("9:16", "story")]  # an outline tag on its own cell
+    assert w.filmstrip.row_tags(0) == []
+    for pos in (1, 2):
+        cell = w.filmstrip.visualRect(w.filmstrip.model().index(pos))
+        assert w.filmstrip.viewport().grab(cell).toImage().width() > 0  # paints both without raising
 
 
 def test_the_strip_class_is_what_the_window_holds(w):
