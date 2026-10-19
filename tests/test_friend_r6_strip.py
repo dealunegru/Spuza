@@ -51,6 +51,12 @@ def px(win):
     return win._crop_overlay.label_text()
 
 
+def drag(win, rect):
+    """What a mouse drag leaves behind: a new rectangle and the overlay's `changed` signal."""
+    win._crop_overlay.set_rect_frac(rect)
+    win._crop_overlay.changed.emit()
+
+
 def chips(win):
     return win.ratio_strip.chip_texts()
 
@@ -124,7 +130,7 @@ def test_a_click_does_what_the_key_does(w):
     w.ratio_strip._chips[4].click()
     assert px(w) == "4:5 · 3200 × 4000 px" and w.last_message == status("4:5")
     w.ratio_strip._turn.click()
-    assert px(w) == "5:4 · 4000 × 3200 px"  # D5: the same centre and area, turned
+    assert px(w) == "5:4 · 5000 × 4000 px"  # still the untouched largest one
     w.ratio_strip._chips[1].click()
     assert w.last_message == FREE_STATUS and w._crop_overlay.aspect is None
 
@@ -155,18 +161,84 @@ def test_digits_open_the_largest_centred_rectangle(w, k, label, pixels):
 def test_v_turns_the_ratio(w, k, label, pixels):
     key(w, Qt.Key_X)
     key(w, k)
+    key(w, Qt.Key_V)  # the rectangle is still the untouched largest one: V gives the largest of the turned ratio
+    assert px(w) == f"{label} · {pixels} px" and w._crop_ratio == Ratio(k - Qt.Key_0, True)
+    key(w, Qt.Key_V)
+    assert w._crop_ratio == Ratio(k - Qt.Key_0)
+
+
+def test_fresh_v_round_trips_the_largest_rectangle(w):
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    assert px(w) == "4:5 · 3200 × 4000 px"
+    key(w, Qt.Key_V)
+    assert px(w) == "5:4 · 5000 × 4000 px"
+    key(w, Qt.Key_V)
+    assert px(w) == "4:5 · 3200 × 4000 px"
+
+
+def test_after_a_drag_v_keeps_centre_and_area(w):
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    key(w, Qt.Key_V)
+    key(w, Qt.Key_V)
+    drag(w, w._crop_overlay.rect_frac())  # a drag (even one that ends where it began) ends "untouched"
     before = w._crop_overlay.rect_frac()
     key(w, Qt.Key_V)
     after = w._crop_overlay.rect_frac()
-    assert px(w).startswith(f"{label} · ") and w._crop_ratio == Ratio(k - Qt.Key_0, True)
-    cx = lambda r: ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)  # noqa: E731
-    area = lambda r: (r[2] - r[0]) * (r[3] - r[1])  # noqa: E731
-    assert cx(after) == pytest.approx(cx(before), abs=1e-3)  # the same centre
-    assert area(after) <= area(before) * 1.01  # the same area, shrunk only where the picture forces it
-    key(w, Qt.Key_0)
-    assert px(w) == f"{label} · {pixels} px"  # V then 0: the design table's largest crop of the turned ratio
+    assert px(w) == "5:4 · 4000 × 3200 px"
+    c = lambda r: ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)  # noqa: E731
+    assert c(after) == pytest.approx(c(before), abs=1e-3)
+
+
+def test_after_a_drag_ratio_changes_land_near_the_start(w):
+    key(w, Qt.Key_X)
+    drag(w, (0.2, 0.2, 0.6, 0.6))
+    key(w, Qt.Key_4)
+    first = w._crop_overlay.rect_frac()
+    key(w, Qt.Key_3)
+    key(w, Qt.Key_4)
+    last = w._crop_overlay.rect_frac()
+    assert last == pytest.approx(first, abs=0.02)
+
+
+def test_the_largest_flag_survives_ratio_changes_until_a_drag_and_is_off_for_a_stored_crop(w):
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    key(w, Qt.Key_3)
+    key(w, Qt.Key_7)
+    assert px(w) == "9:16 · 2250 × 4000 px"  # each digit gave the largest of its own ratio
+    key(w, Qt.Key_Return)
+    key(w, Qt.Key_X)  # a picture that already has a crop starts with the flag off
     key(w, Qt.Key_V)
-    assert w._crop_ratio == Ratio(k - Qt.Key_0)
+    assert px(w) == "16:9 · 4000 × 2250 px"  # keeps the area (2250 x 4000), not the largest 6000 x 3375
+
+
+def test_copy_factory_gets_the_ratio_keyed_by_primary(w):
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    key(w, Qt.Key_Return)
+    pics = [w.catalog.pictures[0]]
+    sheet = w._default_copy_sheet_factory(pics)
+    assert sheet.crop_ratios == {pics[0].primary: Ratio(4)} and pics[0].primary in sheet.crops
+
+
+def test_the_resume_controller_shares_the_ratios_and_restores_them(w, tmp_path, monkeypatch):
+    from spuza import features
+
+    features.set_mode(features.ADVANCED)
+    monkeypatch.setenv("SPUZA_SESSIONS_DIR", str(tmp_path / "sessions"))
+    ctl = w._ensure_resume()
+    assert ctl.crop_ratios is w.crop_ratios
+    key(w, Qt.Key_X)
+    key(w, Qt.Key_4)
+    key(w, Qt.Key_V)
+    key(w, Qt.Key_Return)
+    ctl.flush()
+    w.crop_ratios.clear()
+    w.crops.clear()
+    ctl.restore()
+    assert w.crop_ratios == {0: Ratio(4, True)} and 0 in w.crops
 
 
 def test_v_does_nothing_for_free_and_square(w):
@@ -180,7 +252,7 @@ def test_v_does_nothing_for_free_and_square(w):
 
 def test_a_ratio_keeps_the_centre_and_the_area_of_the_rectangle(w):
     key(w, Qt.Key_X)
-    w._crop_overlay.set_rect_frac((0.2, 0.2, 0.6, 0.6))  # centre (0.4, 0.4); 2400 x 1600 px
+    drag(w, (0.2, 0.2, 0.6, 0.6))  # centre (0.4, 0.4); 2400 x 1600 px
     key(w, Qt.Key_4)
     left, top, right, bottom = w._crop_overlay.rect_frac()
     assert ((left + right) / 2, (top + bottom) / 2) == pytest.approx((0.4, 0.4), abs=1e-3)
@@ -191,11 +263,11 @@ def test_a_ratio_keeps_the_centre_and_the_area_of_the_rectangle(w):
 def test_zero_resets_to_the_largest_rectangle_of_the_current_ratio(w):
     key(w, Qt.Key_X)
     key(w, Qt.Key_4)
-    w._crop_overlay.set_rect_frac((0.0, 0.0, 0.2, 0.25))
+    drag(w, (0.0, 0.0, 0.2, 0.25))
     key(w, Qt.Key_0)
     assert px(w) == "4:5 · 3200 × 4000 px"
     key(w, Qt.Key_V)
-    w._crop_overlay.set_rect_frac((0.0, 0.0, 0.1, 0.1))
+    drag(w, (0.0, 0.0, 0.1, 0.1))
     key(w, Qt.Key_0)
     assert px(w) == "5:4 · 5000 × 4000 px"
 

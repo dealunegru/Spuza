@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         self.crop_ratios: dict[int, ratio_mod.Ratio] = {}  # round 6: catalog index -> its crop's Ratio (absent = Free)
         self._crop_ratio = ratio_mod.FREE  # the open crop edit's ratio
         self._crop_native = (1, 1)  # the open crop edit's un-turned native size
+        self._rect_auto = False  # the open crop's rectangle is still the untouched largest-centred one
         self._crop_overlay = None  # CropOverlay, built on first X (or the first picture that has a crop)
         self._story_editor = None  # StoryEditor, built on first S
         self._story_native = (1, 1)  # the open story edit's un-turned native size
@@ -548,6 +549,7 @@ class MainWindow(QMainWindow):
             from spuza.ui.crop_overlay import CropOverlay  # lazy: nothing is built until a crop is made or shown
 
             ov = CropOverlay(self.viewer.image_item())
+            ov.changed.connect(self._rect_touched)  # a drag, move or resize (never a programmatic set_rect_frac)
             self.viewer.pixmap_changed.connect(lambda *_a: ov.sync())
             self._crop_overlay = ov
         return self._crop_overlay
@@ -585,11 +587,15 @@ class MainWindow(QMainWindow):
         shown = (pm.width(), pm.height())
         self._crop_native = info_native_size(self.prefetcher.info(i), shown) or shown
         self._ensure_crop_overlay().begin(self.crops.get(i))
+        self._rect_auto = False
         self._edit = "crop"
         self.ratio_strip.setVisible(True)
         self._set_ratio(self.crop_ratios.get(i, ratio_mod.FREE), reshape=False)
 
     # -- the ratio of the open crop edit (keys 1-8, V, 0 and the strip's chips) ---------------------------------
+    def _rect_touched(self) -> None:
+        self._rect_auto = False
+
     def _crop_status(self) -> None:
         label = ratio_mod.label(self._crop_ratio, self._rotation_of(self.catalog.index))
         if self._crop_ratio.entry == 1:
@@ -609,8 +615,11 @@ class MainWindow(QMainWindow):
         ov.set_aspect(aspect, (w, h), ratio_mod.label(r, turns))
         if reshape and aspect is not None:
             cur = ov.rect_frac()
-            ov.set_rect_frac(ratio_mod.reshape(cur, aspect, w, h) if cur is not None
-                             else ratio_mod.largest_centred(aspect, w, h))
+            if cur is None or self._rect_auto:  # still the untouched largest one: the new ratio's largest, centred
+                ov.set_rect_frac(ratio_mod.largest_centred(aspect, w, h))
+                self._rect_auto = True
+            else:  # D5: keep the centre and the area
+                ov.set_rect_frac(ratio_mod.reshape(cur, aspect, w, h))
         self.ratio_strip.set_state(r, turns)
         self._crop_status()
 
@@ -629,6 +638,7 @@ class MainWindow(QMainWindow):
             return
         w, h = self._crop_native
         self._crop_overlay.set_rect_frac(ratio_mod.largest_centred(ratio_mod.frame_aspect(self._crop_ratio, w, h), w, h))
+        self._rect_auto = True
         self._crop_status()
 
     def start_story(self) -> None:
@@ -1019,6 +1029,7 @@ class MainWindow(QMainWindow):
                          quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount,
                          rotations=self._copy_rotations(pictures),
                          crops=self._copy_table(pictures, self.crops), stories=self._copy_table(pictures, self.stories),
+                         crop_ratios=self._copy_table(pictures, self.crop_ratios),
                          write_rotation=settings.read_write_rotation(self.prefs))
 
     def open_copy(self) -> None:
@@ -1278,7 +1289,8 @@ class MainWindow(QMainWindow):
 
             store = SessionStore()  # builds a path only; the folder is made on the first save
             self.resume = ResumeController(self.catalog, self.root, store, parent=self, rotations=self.rotations,
-                                           crops=self.crops, stories=self.stories)
+                                           crops=self.crops, stories=self.stories,
+                                           crop_ratios=self.crop_ratios)
             remember = settings.read_resume_on(self.prefs)
             self.resume.set_enabled(remember)
             if remember and not self._pruned:
