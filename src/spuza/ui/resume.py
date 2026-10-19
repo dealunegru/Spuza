@@ -49,7 +49,7 @@ class ResumeController(QObject):
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()  # guards _pending and _thread
         self._io = threading.Lock()  # one store operation at a time
-        self._undo: tuple[frozenset[int], float] | None = None
+        self._undo: tuple[frozenset[int], float, tuple[int, ...]] | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(max(1, int(interval_ms)))
         self._timer.timeout.connect(self.tick)
@@ -198,20 +198,26 @@ class ResumeController(QObject):
         c = self._catalog
         now = self._clock()
         if self._undo is not None:
-            marks, at = self._undo
+            marks, at, made = self._undo
             self._undo = None
             if now - at <= UNDO_SECONDS:
                 for i in marks:
                     c.set_mark(i, True)
+                if self.band is not None:
+                    for i in made:
+                        self.band.set_marked(i, True)  # a derived picture removed meanwhile is skipped
                 self._last = snap = self._snapshot()
                 if self._on:
                     self.wait_idle()
                     if not self._write_bounded(snap):
                         self._last = None  # the next tick queues it
-                return f"Marks back ({len(marks)})"
+                return f"Marks back ({len(marks) + len(made)})"
         marks = self._snapshot()[0]
         for i in marks:
             c.set_mark(i, False)
+        made = tuple(d.id for d in self.band.items if d.marked) if self.band is not None else ()
+        for i in made:  # friend round 7: derived pictures carry their own marks; U clears those too (they stay)
+            self.band.set_marked(i, False)
         with self._lock:
             self._pending = None
         self.wait_idle()
@@ -225,11 +231,12 @@ class ResumeController(QObject):
             busy = ""
         else:  # a write is stuck: do not freeze the GUI behind it; the next tick saves the cleared state instead
             busy = " (the saved session is busy; it is replaced when it frees)"
-        self._undo = (marks, now) if marks else None
-        if not marks:
+        total = len(marks) + len(made)
+        self._undo = (marks, now, made) if total else None
+        if not total:
             return "Started fresh · nothing was marked" + busy
-        word = "mark" if len(marks) == 1 else "marks"
-        return f"Started fresh: {len(marks)} {word} cleared{busy} · U again within 10 s to undo"
+        word = "mark" if total == 1 else "marks"
+        return f"Started fresh: {total} {word} cleared{busy} · U again within 10 s to undo"
 
     def flush(self) -> None:
         """Write now if anything changed since the last save (closeEvent). Blocks at most ~1 s."""
