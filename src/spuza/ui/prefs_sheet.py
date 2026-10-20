@@ -76,6 +76,9 @@ class PrefsSheet(QDialog):
         self.reset_button.setAutoDefault(False)
         self.reset_button.clicked.connect(self.reset_to_defaults)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        for std, tip in ((QDialogButtonBox.StandardButton.Ok, "OK  Enter"),
+                         (QDialogButtonBox.StandardButton.Cancel, "Cancel  Esc")):
+            self.buttons.button(std).setToolTip(tip)  # names its key (design policy)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
 

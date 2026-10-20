@@ -2,7 +2,7 @@
 
 Contract for the window (wired by spz-nx-wire). The window adds one `CompareView` as a page of its stack and
 calls `open(indices, focus)`; the view owns its keys while shown:
-  ← → K J  move focus (K back, J next, as in the window) between cells (never off the set)    Space M  mark/unmark the focused cell
+  ← → J K  move focus (J back, K next, as in the window) between cells (never off the set)    Space M  mark/unmark the focused cell
   Z        the focused cell and its neighbour (two at most: memory) to 100% at the same fractional point: the native pixels
            (an embedded preview of full size uncapped, a raw with a small preview demosaiced and cropped to its frame); drag pans all
   N        2 -> 3 -> 4 cells when opened on a run from the single view; on 4 (or a grid pick) it closes
@@ -575,9 +575,9 @@ class CompareView(QWidget):
             return
         if ev.isAutoRepeat() and k in _NO_REPEAT:
             return
-        if k in (Qt.Key.Key_Left, Qt.Key.Key_K):
+        if k in (Qt.Key.Key_Left, Qt.Key.Key_J):
             self._set_focus(self._focus - 1)
-        elif k in (Qt.Key.Key_Right, Qt.Key.Key_J):
+        elif k in (Qt.Key.Key_Right, Qt.Key.Key_K):
             self._set_focus(self._focus + 1)
         elif k in (Qt.Key.Key_Space, Qt.Key.Key_M):
             self._mark_focused()

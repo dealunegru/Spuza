@@ -163,16 +163,24 @@ class ReviewGrid(QWidget):
 
         self.header = QLabel()
         self.unmark_button = QPushButton("Unmark")
-        self.unmark_button.setToolTip("Take this picture off the marked list (nothing is deleted)")
         self.zoom_button = QPushButton("Zoom")
+        # every button names its key (design policy): the tooltip reads "<label>  <key>", a chip shows the key
+        self.unmark_button.cap, self.zoom_button.cap = "M", "Z"
+        self.unmark_button.setToolTip("Unmark  M")
+        self.zoom_button.setToolTip("Zoom  Z")
         for b in (self.unmark_button, self.zoom_button):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.unmark_button.clicked.connect(self.unmark_selected)
         self.zoom_button.clicked.connect(self.toggle_zoom)
         top = QHBoxLayout()
         top.addWidget(self.header, 1)
-        top.addWidget(self.zoom_button)
-        top.addWidget(self.unmark_button)
+        for b in (self.zoom_button, self.unmark_button):
+            chip = QLabel(b.cap)
+            chip.setObjectName("keyChip")
+            chip.setStyleSheet("color: palette(text); border: 1px solid palette(mid); border-radius: 4px;"
+                               " padding: 1px 6px;")
+            top.addWidget(b)
+            top.addWidget(chip)
 
         self.model = QStandardItemModel(self)
         self.view = QListView()

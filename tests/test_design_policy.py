@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QPalette
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QKeySequence, QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QToolButton
+from PySide6.QtWidgets import QAbstractButton, QApplication, QToolButton
 
 from spuza import features
 from spuza.catalog import Catalog, Prefetcher, scan
@@ -261,3 +261,138 @@ def test_the_pill_is_visible_only_in_b_and_not_in_full_screen(win):
     assert not win.pill.isVisible()  # A
     QTest.keyClick(win, Qt.Key_Tab)
     assert win.pill.isVisible()
+
+
+# -- 2b. every visible button of every view names its key (bug-442) -----------------------------------------
+# Genuinely keyless controls, each with its reason. Anything else a view shows must read "<label>  <key>".
+KEYLESS_BUTTONS = {
+    "quietMore": "opens the overflow menu; each item in it names its key",
+    "Choose folder…": "Copy sheet: opens a folder dialog; no key exists for it",
+    "Reset to defaults": "Preferences sheet: a mouse-only reset on purpose, so it cannot be hit by habit",
+    "Stay": "Copy sheet: cancels the pending quit-after-copy; no key exists for it",
+    "Show": "Copy sheet: reveals the result in the file manager; no key exists for it",
+}
+FORM_CONTROLS = ("QCheckBox",)  # settings toggled with Space when focused: not actions, so no key chip
+
+
+def nameless_buttons(root) -> list[str]:
+    """Every visible button under `root` that does not read '<label>  <key>' (minus the commented allow-list)."""
+    bad = []
+    for b in root.findChildren(QAbstractButton):
+        if not b.isVisible() or type(b).__name__ in FORM_CONTROLS:
+            continue
+        label = b.objectName() or b.text()
+        if label in KEYLESS_BUTTONS or any(b.text().startswith(k) for k in KEYLESS_BUTTONS if k.isalpha()):
+            continue
+        if not _key_of_tooltip(b.toolTip()):
+            bad.append(f"{type(b).__name__} {label!r} tooltip={b.toolTip()!r}")
+        elif hasattr(b, "cap"):
+            assert _key_of_tooltip(b.toolTip()) == b.cap, (label, b.toolTip(), b.cap)
+    return bad
+
+
+@pytest.fixture
+def two(tmp_path):
+    features.set_mode(features.ADVANCED)
+    w = make_window(tmp_path / "card", n=4)
+    w.catalog.toggle_mark(0)
+    w.catalog.toggle_mark(1)
+    yield w
+    w.close()
+
+
+def test_single_view_buttons_name_their_keys(two):
+    assert nameless_buttons(two) == []
+
+
+def test_review_grid_and_zoom_page_buttons_name_their_keys(two):
+    two.open_review()
+    pump(lambda: two.stack.currentIndex() == 1)
+    shown = {b.text() for b in two.review.findChildren(QAbstractButton) if b.isVisible()}
+    assert {"Zoom", "Unmark"} <= shown
+    assert nameless_buttons(two) == []
+    two.review.show_zoom()
+    QTest.qWait(20)
+    assert nameless_buttons(two) == []
+
+
+def test_compare_buttons_name_their_keys(two):
+    two.open_compare()
+    pump(lambda: two._compare_shown())
+    assert nameless_buttons(two) == []
+
+
+@pytest.mark.parametrize("start", ["start_crop", "start_story"])
+def test_crop_and_story_edit_buttons_name_their_keys(two, start):
+    getattr(two, start)()
+    assert two._edit is not None
+    assert nameless_buttons(two) == []
+
+
+def test_lights_out_buttons_name_their_keys(two):
+    two.set_lights_out(True)
+    pump(lambda: two.pill.isVisible())
+    assert {b.objectName() for b in two.pill.findChildren(QAbstractButton)} >= {"pillHelp", "pillCopy"}
+    assert nameless_buttons(two) == []
+
+
+def test_dialog_buttons_name_their_keys(two, tmp_path):
+    from spuza.ui.copy_sheet import CopySheet
+    from spuza.ui.prefs_sheet import PrefsSheet
+
+    prefs = PrefsSheet(12, 8)
+    prefs.show()
+    copy = CopySheet(two.catalog.marked(), tmp_path / "out")
+    copy.show()
+    try:
+        assert nameless_buttons(prefs) == []
+        assert nameless_buttons(copy) == []
+    finally:
+        prefs.close()
+        copy.close()
+
+
+# -- 2c. J is back and K is next, as they sit beside the arrows --------------------------------------------
+def test_j_goes_back_and_k_goes_forward_in_the_single_view(two):
+    QTest.keyClick(two, Qt.Key_K)
+    assert two.catalog.index == 1
+    QTest.keyClick(two, Qt.Key_K)
+    assert two.catalog.index == 2
+    QTest.keyClick(two, Qt.Key_J)
+    assert two.catalog.index == 1
+    assert act.by_id()["back"].keys == ("Left", "J") and act.by_id()["next"].keys == ("Right", "K")
+    assert two.buttons["back"].cap == "←/J" and two.buttons["next"].cap == "→/K"
+
+
+def test_j_goes_back_and_k_goes_forward_in_compare(two):
+    two.open_compare()
+    pump(lambda: two._compare_shown())
+    start = two.compare.focused_index()
+    QTest.keyClick(two.compare, Qt.Key_K)
+    assert two.compare.focused_index() == start + 1
+    QTest.keyClick(two.compare, Qt.Key_J)
+    assert two.compare.focused_index() == start
+
+
+# -- 2d. the `?` overlay is opaque where it matters (improvement-436) -------------------------------------
+@pytest.mark.parametrize("dark", [True, False])
+def test_shortcut_overlay_panel_is_solid_and_the_scrim_hides_the_window(two, dark):
+    theme.apply(APP, dark)
+    two.retheme()
+    two.sidebar.root_label.setText("SIDEBAR TEXT " * 8)  # high-contrast text that must not show through
+    QTest.qWait(30)
+    before = two.grab().toImage()
+    two.toggle_shortcuts()
+    QTest.qWait(30)
+    ov = two._shortcuts
+    after = two.grab().toImage()
+    c = theme.current()
+    # (a) inside the panel, away from every label: exactly the panel token
+    pt = ov.panel.mapTo(two, ov.panel.rect().topLeft()) + QPoint(14, 14)
+    assert after.pixelColor(pt).name() == QColor(c.panel).name()
+    # (b) in the scrim (the window corner, outside the panel): at least 85% of the scrim colour
+    for x, y in ((6, 6), (two.width() - 8, two.height() - 8), (6, two.height() - 8), (two.width() - 8, 6)):
+        was, now = before.pixelColor(x, y), after.pixelColor(x, y)
+        for ch in ("red", "green", "blue"):
+            assert getattr(now, ch)() <= round(0.15 * getattr(was, ch)()) + 1, (x, y, ch, was.name(), now.name())
+    two.toggle_shortcuts()
