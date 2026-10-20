@@ -256,6 +256,10 @@ class CopySheet(QDialog):
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close)
         self.close_button.hide()
+        # every button names its key (design policy); the mouse-only ones are listed in the policy test
+        self.copy_button.setToolTip("Copy  Enter")
+        self.cancel_button.setToolTip("Cancel  Esc")
+        self.close_button.setToolTip("Close  Esc")
 
         where = QHBoxLayout()
         where.addWidget(QLabel("Where:"))

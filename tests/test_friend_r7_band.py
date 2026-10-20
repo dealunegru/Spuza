@@ -185,7 +185,7 @@ def test_s_on_a_derived_story_refits_it_in_place(w):
 def test_moving_to_another_row_cancels_an_open_edit(w):
     crop_with(w)
     key(w, Qt.Key_X)
-    key(w, Qt.Key_J)
+    key(w, Qt.Key_K)
     assert w._edit is None and w.catalog.index == 1 and len(w.band) == 1
 
 
@@ -225,19 +225,19 @@ def test_x_again_no_longer_clears(w):
 
 
 # -- stepping, marks, counts ----------------------------------------------------------------------------------------
-def test_j_and_k_step_through_the_derived_rows(w):
+def test_k_and_j_step_through_the_derived_rows(w):
     crop_with(w)
     d = w.band.items[0]
     w.go_to(0)
-    key(w, Qt.Key_J)
-    assert (w.catalog.index, w._cur_id) == (0, d.id) and w.filmstrip.current == 0
-    key(w, Qt.Key_J)
-    assert (w.catalog.index, w._cur_id) == (1, None)
     key(w, Qt.Key_K)
+    assert (w.catalog.index, w._cur_id) == (0, d.id) and w.filmstrip.current == 0
+    key(w, Qt.Key_K)
+    assert (w.catalog.index, w._cur_id) == (1, None)
+    key(w, Qt.Key_J)
     assert (w.catalog.index, w._cur_id) == (0, d.id)
     key(w, Qt.Key_Left)
     assert (w.catalog.index, w._cur_id) == (0, None)
-    key(w, Qt.Key_K)  # the first row: stays
+    key(w, Qt.Key_J)  # the first row: stays
     assert (w.catalog.index, w._cur_id) == (0, None)
 
 

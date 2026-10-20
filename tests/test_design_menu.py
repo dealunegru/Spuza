@@ -275,8 +275,8 @@ def test_question_mark_opens_and_closes_the_overlay_over_the_picture(win):
     assert win._shortcuts is None
     QTest.keyClick(win, Qt.Key_Question, SHIFT)
     ov = win._shortcuts
-    assert ov is not None and ov.isVisible() and ov.parent() is win.stack
-    assert ov.geometry() == win.stack.rect()
+    assert ov is not None and ov.isVisible() and ov.parent() is win
+    assert ov.geometry() == win.rect()
     QTest.keyClick(ov, Qt.Key_Question, SHIFT)
     assert not ov.isVisible()
     QTest.keyClick(win, Qt.Key_Question, SHIFT)
@@ -312,7 +312,7 @@ def test_overlay_click_closes_and_follows_resize(win):
     win.toggle_shortcuts()
     win.resize(1000, 700)
     QApplication.processEvents()
-    assert win._shortcuts.geometry() == win.stack.rect()
+    assert win._shortcuts.geometry() == win.rect()
     QTest.mouseClick(win._shortcuts, Qt.MouseButton.LeftButton)
     assert not win._shortcuts.isVisible()
 

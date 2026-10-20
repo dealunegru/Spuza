@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.11.0-informational" alt="Version 0.11.0">
+  <img src="https://img.shields.io/badge/version-0.11.1-informational" alt="Version 0.11.1">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -44,6 +44,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## What's new
 
+- **0.11.1**: Zoom and Unmark in the review grid now show their key chips, and the other buttons name their key in the tooltip. The `?` shortcut overlay is a dark scrim over the whole window with the keys on a solid panel. J and K are swapped (J is back, K is next).
 - **0.11.0**: Eighth round: a quieter, darker Spuza. Spuza is dark by default on Windows and Linux; on a Mac it follows the system's light or dark appearance until you pick one. `Ctrl+T` (or View, Dark theme) flips it, and the pick is remembered. The bar above the picture is quieter: icon buttons for Back, Next, Mark, Zoom and Review, a filled Copy button, and a `⋯` menu holding Move on mark, Full screen, Preferences, Lights out and the advanced tools. Hover a button for its name and key. `Tab` is Lights out: the bar, sidebar, inspector, filmstrip and status line hide, and a small pill floats over the picture with the mark, `n / N`, `keys ?` and Copy. It is remembered between runs, and `F` full screen stays independent of it. There is now a menu bar (File, Edit, View, Picture, Help) that lists every action with its key, `?` opens a keyboard shortcut overlay, and `Ctrl+Q` quits. The keys and features are otherwise the same.
 - **0.10.0**: Seventh feedback round. A crop or a story fit is now a picture of its own on the filmstrip. `Enter` in a crop (`X`) or a story fit (`S`) adds a new picture right after the original, with its own thumbnail and a tag (the ratio, `crop` for Free, an outlined `9:16` for a story). The original is not touched, so `X` on it again cuts another crop: one original, any number of crops and story fits. A crop picture can be viewed, zoomed, marked and stepped through like any other, and `Backspace` removes it. Mark all counts them. Copy writes each marked one to `ed`. A session from 0.9.0 turns its crops and story fits into these pictures.
 
@@ -114,8 +115,8 @@ Every key in one table. The bar above the picture has icon buttons for the commo
 
 | Key | Where | Does |
 |---|---|---|
-| `→` or `J` | viewer, compare | next picture (compare: the frame moves right) |
-| `←` or `K` | viewer, compare | previous picture (compare: the frame moves left) |
+| `→` or `K` | viewer, compare | next picture (compare: the frame moves right) |
+| `←` or `J` | viewer, compare | previous picture (compare: the frame moves left) |
 | `↑` `↓` | review | move through the sheet with `←` `→` |
 | `Space` or `M` | viewer, review, compare | mark or unmark the picture (review: unmark the selected one; compare: the one with the frame) |
 | `Ctrl+A` | viewer, review | **Mark all** (`Cmd+A` on a Mac). Keys only, and nothing asks first |

@@ -107,7 +107,7 @@ def test_bar_holds_the_same_key_buttons_icon_only_and_a_filled_copy(win):
 
 
 def test_tooltips_are_one_line_name_and_key(win):
-    for name, tip in (("back", "Back  ←/K"), ("next", "Next  →/J"), ("mark", "Mark  Space/M"), ("zoom", "Zoom 100%  Z"),
+    for name, tip in (("back", "Back  ←/J"), ("next", "Next  →/K"), ("mark", "Mark  Space/M"), ("zoom", "Zoom 100%  Z"),
                       ("review", "Review  R"), ("copy", "Copy…  C")):
         assert win.buttons[name].toolTip().replace("\xa0", " ") == tip, name
 

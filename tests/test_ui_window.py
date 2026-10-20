@@ -95,10 +95,10 @@ def test_keys_move_index_and_status(win):
     assert win.lbl_pos.text() == "1 of 6"
     key(win, Qt.Key_Right)
     assert win.catalog.index == 1 and win.lbl_pos.text() == "2 of 6"
-    key(win, Qt.Key_J)
+    key(win, Qt.Key_K)
     assert win.catalog.index == 2
     key(win, Qt.Key_Left)
-    key(win, Qt.Key_K)
+    key(win, Qt.Key_J)
     assert win.catalog.index == 0 and win.lbl_pos.text() == "1 of 6"
     key(win, Qt.Key_Left)  # clamps
     assert win.catalog.index == 0
@@ -106,7 +106,7 @@ def test_keys_move_index_and_status(win):
 
 def test_toolbar_has_every_key_with_its_cap(win):
     caps = {n: b.cap for n, b in win.buttons.items()}
-    assert caps == {"back": "←/K", "next": "→/J", "mark": "Space/M", "advance": "A", "zoom": "Z",
+    assert caps == {"back": "←/J", "next": "→/K", "mark": "Space/M", "advance": "A", "zoom": "Z",
                     "fullscreen": "F", "review": "R", "copy": "C"}
     assert win.buttons["zoom"].text().startswith("Zoom 100%")
     for b in win.buttons.values():

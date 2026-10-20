@@ -143,7 +143,7 @@ def test_marks_keep_working_while_editing(w):
     assert w.catalog.is_marked(0) and w._crop_overlay.editing
 
 
-@pytest.mark.parametrize("nav,expect", [(Qt.Key_Right, 1), (Qt.Key_J, 1)])
+@pytest.mark.parametrize("nav,expect", [(Qt.Key_Right, 1), (Qt.Key_K, 1)])
 def test_navigation_cancels_the_edit_then_moves(w, nav, expect):
     crop_with(w)
     key(w, Qt.Key_X)
@@ -157,7 +157,7 @@ def test_navigation_back_cancels_a_story_edit(w):
     w.step(1)
     shown(w)
     key(w, Qt.Key_S)
-    key(w, Qt.Key_K)
+    key(w, Qt.Key_J)
     assert w.catalog.index == 0 and not w._story_editor.active and not w.band
 
 

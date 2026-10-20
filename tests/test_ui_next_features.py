@@ -567,12 +567,12 @@ def test_bench_runs_without_resume(tmp_path, monkeypatch):
     assert session_files() == []
 
 
-def test_j_is_next_and_k_is_back_inside_compare(made):
+def test_k_is_next_and_j_is_back_inside_compare(made):
     w = ready(made(True), 2)
     key(w, Qt.Key_N)
-    key(w, Qt.Key_J)
-    assert w.compare.focused_index() == 1
     key(w, Qt.Key_K)
+    assert w.compare.focused_index() == 1
+    key(w, Qt.Key_J)
     assert w.compare.focused_index() == 0
 
 

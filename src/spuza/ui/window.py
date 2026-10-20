@@ -88,8 +88,8 @@ GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key
 # did not fit the one classic row at 1280 px); Ctrl+A, Ctrl+Shift+A, Ctrl+Z, [ and ] are window shortcuts only.
 PREFS_CAP = "⌘," if sys.platform == "darwin" else "Ctrl+,"
 BUTTONS = [
-    ("back", "Back", "←/K", False),
-    ("next", "Next", "→/J", False),
+    ("back", "Back", "←/J", False),
+    ("next", "Next", "→/K", False),
     ("mark", "Mark", "Space/M", True),
     ("advance", "Move on mark", "A", True),
     ("zoom", "Zoom 100%", "Z", True),
@@ -157,6 +157,7 @@ class Sidebar(QWidget):
             btn = QPushButton(name)
             btn.setFlat(True)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setToolTip("All  Esc" if name == "All" else "Marked  R")  # names its key (design policy)
             btn.clicked.connect(lambda _=False, s=sig: s.emit())
             cnt = QLabel("0")
             row.addWidget(btn, 1)
@@ -1932,8 +1933,8 @@ class MainWindow(QMainWindow):
             ov.deleteLater()
         from spuza.ui.shortcut_overlay import ShortcutOverlay  # built fresh each time: it reads the theme and the mode
 
-        self._shortcuts = ov = ShortcutOverlay(self.stack)
-        ov.setGeometry(self.stack.rect())
+        self._shortcuts = ov = ShortcutOverlay(self)  # over the whole window, bars and sidebar too
+        ov.setGeometry(self.rect())
         ov.show()
         ov.raise_()
         ov.setFocus()
@@ -1947,7 +1948,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, e) -> None:  # noqa: N802
         super().resizeEvent(e)
         if self._shortcuts is not None and self._shortcuts.isVisible():
-            self._shortcuts.setGeometry(self.stack.rect())
+            self._shortcuts.setGeometry(self.rect())
         self._place_toast()
 
     # -- keys, theme, close -----------------------------------------------------------------------
@@ -1978,9 +1979,9 @@ class MainWindow(QMainWindow):
         if k in (Qt.Key_Space, Qt.Key_M):
             if not e.isAutoRepeat():  # a held key marks one picture, never a run (move on mark would)
                 self.toggle_mark()
-        elif k in (Qt.Key_Right, Qt.Key_J):
+        elif k in (Qt.Key_Right, Qt.Key_K):
             self.step(1)
-        elif k in (Qt.Key_Left, Qt.Key_K):
+        elif k in (Qt.Key_Left, Qt.Key_J):
             self.step(-1)
         elif k == Qt.Key_Z:
             self.viewer.toggle_zoom()

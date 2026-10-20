@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from spuza import features
@@ -18,8 +18,12 @@ def rows() -> list[tuple[str, str, str]]:
     return out
 
 
+SCRIM = QColor(0, 0, 0, 230)  # 90% black over the whole window, in both themes
+PANEL_RADIUS = 12
+
+
 class ShortcutOverlay(QFrame):
-    """Covers its parent. Esc, `?` or a click closes it; every other key is swallowed, never reaching the picture."""
+    """Covers its parent: a dark scrim, and the columns on a solid, opaque panel (the panel token) in the middle. Esc, `?` or a click closes it; every other key is swallowed, never reaching the picture."""
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
@@ -27,16 +31,22 @@ class ShortcutOverlay(QFrame):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAutoFillBackground(False)
         c = theme.current()
-        veil = QColor(c.window)
         self.setStyleSheet(
-            f"#shortcut_overlay {{ background: rgba({veil.red()},{veil.green()},{veil.blue()},238); }}"
+            f"#shortcut_panel {{ background: {c.panel}; border: 1px solid {c.border};"
+            f" border-radius: {PANEL_RADIUS}px; }}"
             f"#shortcut_overlay QLabel {{ color: {c.text}; background: transparent; }}"
             f"#shortcut_overlay QLabel[role='dim'] {{ color: {c.dim}; }}"
             f"#shortcut_overlay QLabel[role='head'] {{ color: {c.accent}; font-weight: 600; padding-top: 8px; }}"
-            f"#shortcut_overlay QLabel[role='key'] {{ color: {c.text}; background: {c.panel};"
+            f"#shortcut_overlay QLabel[role='key'] {{ color: {c.text}; background: {c.raised};"
             f" border: 1px solid {c.border}; border-radius: 4px; padding: 1px 6px; }}"
             "")
-        outer = QVBoxLayout(self)
+        self.panel = QFrame(self)
+        self.panel.setObjectName("shortcut_panel")
+        self.panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        frame = QVBoxLayout(self)
+        frame.setContentsMargins(24, 24, 24, 24)
+        frame.addWidget(self.panel, 0, Qt.AlignmentFlag.AlignCenter)
+        outer = QVBoxLayout(self.panel)
         outer.setContentsMargins(40, 30, 40, 30)
         title = QLabel("Keyboard shortcuts")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
@@ -71,6 +81,11 @@ class ShortcutOverlay(QFrame):
                 grid.addWidget(key, r, 1, Qt.AlignmentFlag.AlignLeft)
             column.addLayout(grid)
         self.hide()
+
+    def paintEvent(self, _e) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), SCRIM)
+        p.end()
 
     def labels(self) -> list[str]:
         return [w.text() for w in self.findChildren(QLabel)]
