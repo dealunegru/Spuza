@@ -318,9 +318,9 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(catalog, prefetcher, root, resume=not args.bench, card_mount=mount,
                         **({"card_note": note} if note else {}))
     if args.bench:
-        theme.apply(app, theme.is_dark(app))
+        theme.apply(app, True)  # a fixed theme: timings never depend on the OS
     else:
-        window.follow_system_theme(app)
+        theme.start(app, window.prefs, window.retheme)
 
     seen_first: list[int] = []
     if args.demo:

@@ -91,7 +91,7 @@ class RatioStrip(QWidget):
         self._title.setStyleSheet(f"color: {c.dim}; font-size: 12px;")
         base = (f"color: {c.text}; background: {c.window}; border: 1px solid {c.border};"
                 f" border-radius: 10px; padding: 3px 10px; font-size: 12px;")
-        on = (f"color: #ffffff; background: {c.accent}; border: 1px solid {c.accent};"
+        on = (f"color: {c.on_focus}; background: {c.focus}; border: 1px solid {c.focus};"
               f" border-radius: 10px; padding: 3px 10px; font-size: 12px; font-weight: 600;")
         for entry, b in self._chips.items():
             b.setStyleSheet(on if entry == self._r.entry else base)

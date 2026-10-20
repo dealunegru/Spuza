@@ -105,19 +105,24 @@ class _Cell(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         vp = self.viewport()
         self.tag = QLabel(name, vp)
-        self.tag.setStyleSheet("background: rgba(0,0,0,150); color: #fff; padding: 2px 8px; border-radius: 6px;")
         self.tag.move(8, 8)
         self.tag.adjustSize()
         self.message = QLabel(vp)
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: #ccc;")
         self.caption = QLabel(vp)
-        self.caption.setStyleSheet("background: rgba(0,0,0,150); color: #fff; padding: 1px 8px; border-radius: 6px;")
         self.caption.hide()
+        self.retheme()
         self.set_message("Loading…")
         self.horizontalScrollBar().valueChanged.connect(self._moved)
         self.verticalScrollBar().valueChanged.connect(self._moved)
+
+    def retheme(self) -> None:
+        c = theme.current()
+        self.tag.setStyleSheet(f"background: {c.hud}; color: {c.on_focus}; padding: 2px 8px; border-radius: 6px;")
+        self.caption.setStyleSheet(f"background: {c.hud}; color: {c.on_focus}; padding: 1px 8px; border-radius: 6px;")
+        self.message.setStyleSheet(f"color: {c.text_dim};")
+        self.setBackgroundBrush(QColor(c.stage))
 
     # -- content ----------------------------------------------------------------------------------
     @property
@@ -497,10 +502,15 @@ class CompareView(QWidget):
             if c.index == index:
                 self._set_focus(pos)
 
+    def retheme(self) -> None:
+        for cell in self._cells:
+            cell.retheme()
+        self._refresh_chrome()
+
     def _refresh_chrome(self) -> None:
         c = theme.current()
         for pos, cell in enumerate(self._cells):
-            colour = c.accent if pos == self._focus else "transparent"
+            colour = c.focus if pos == self._focus else "transparent"
             cell.setStyleSheet(f"QGraphicsView {{ border: 3px solid {colour}; }}")
             cell.setBackgroundBrush(QColor(c.stage))
             cell.set_marked(self.catalog.is_marked(cell.index))

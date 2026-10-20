@@ -42,10 +42,10 @@ from spuza import ratio as ratio_mod
 from spuza import story as story_mod
 from spuza.catalog import KNOWN_EXTS
 from spuza.copy import human_size
+from spuza.ui import theme
 
 MIN_PROGRESS_INTERVAL = 1 / 30  # seconds between progress emits (about 30 per second)
 BAR_STEPS = 1000
-AMBER = "#d98a00"
 NL = chr(10)
 
 
@@ -366,7 +366,7 @@ class CopySheet(QDialog):
             self.free_label.setText(
                 f"Not enough space: need {human_size(self.plan.total_bytes)}, {human_size(free)} free here"
             )
-            self.free_label.setStyleSheet(f"color: {AMBER}; font-weight: bold;")
+            self.free_label.setStyleSheet(f"color: {theme.current().warning}; font-weight: bold;")
         else:
             self.free_label.setText(f"{human_size(free)} free at the destination")
             self.free_label.setStyleSheet("")

@@ -111,7 +111,7 @@ def _run(root: Path, out: Path) -> int:
         """The window dimmed, the sheet (a separate top-level dialog) centred over it."""
         base = window.grab().toImage().convertToFormat(QImage.Format.Format_ARGB32)
         p = QPainter(base)
-        p.fillRect(base.rect(), QColor(0, 0, 0, 140))
+        p.fillRect(base.rect(), theme.qcolor(theme.current().hud, 140))
         s = sheet.grab().toImage()
         p.drawImage((base.width() - s.width()) // 2, (base.height() - s.height()) // 2, s)
         p.end()

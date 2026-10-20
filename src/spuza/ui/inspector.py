@@ -202,7 +202,7 @@ class Inspector(QWidget):
         self._render()
 
     def retheme(self) -> None:
-        if self._args is not None:
+        if self._args is not None and self._args[0] is not None:  # no picture (an empty catalog): nothing to repaint, bug-437
             self._render()
 
     def _render(self) -> None:
@@ -212,10 +212,10 @@ class Inspector(QWidget):
         if self._head is not None:
             head, amber = self._head, False
         out = [f"<div style='font-size:15px;font-weight:600'>{html.escape(pic.stem)}</div>",
-               f"<p style='color:{c.amber if amber else c.text}'><b>{html.escape(head)}</b></p>"]
+               f"<p style='color:{c.warning if amber else c.text}'><b>{html.escape(head)}</b></p>"]
         body = self.lines[2:]
         for t in body:
-            col = c.green if t == "Marked" else (c.amber if reason and t.startswith("Preview failed") else c.dim)
+            col = c.marked if t == "Marked" else (c.warning if reason and t.startswith("Preview failed") else c.dim)
             out.append(f"<div style='color:{col};margin-bottom:3px'>{html.escape(t)}</div>")
         self.label.setText("".join(out))
 
