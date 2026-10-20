@@ -18,12 +18,10 @@ from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixm
 from PySide6.QtWidgets import QWidget
 
 from .. import story as st
+from . import theme
 
 MARGIN = 24
 WHEEL_FACTOR = 1.1  # per 120 units of wheel angle
-OUTSIDE = QColor(0, 0, 0, 165)
-BACKDROP = QColor(18, 18, 18)
-BORDER = QColor(255, 255, 255, 200)
 
 
 class StoryEditor(QWidget):
@@ -192,7 +190,8 @@ class StoryEditor(QWidget):
 
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), BACKDROP)
+        c = theme.current()
+        p.fillRect(self.rect(), QColor(c.stage))
         fr = self._frame()
         p.fillRect(fr, Qt.GlobalColor.black)
         if self._pm is not None:
@@ -206,8 +205,8 @@ class StoryEditor(QWidget):
         outside.addRect(QRectF(self.rect()))
         inner = QPainterPath()
         inner.addRect(fr)
-        p.fillPath(outside.subtracted(inner), OUTSIDE)
-        pen = QPen(BORDER)
+        p.fillPath(outside.subtracted(inner), theme.qcolor(c.hud, 165))
+        pen = QPen(theme.qcolor(c.on_focus, 200))
         pen.setWidth(1)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)

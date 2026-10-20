@@ -189,7 +189,6 @@ class BleedStrip(QFrame):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("bleedStrip")
-        self.setStyleSheet("#bleedStrip { background: rgba(0,0,0,150); } QLabel { color: #f2f2f4; }")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 6, 14, 6)
         self.dot, self.pos, self.name, self.count = QLabel("●"), QLabel(), QLabel(), QLabel()
@@ -197,7 +196,6 @@ class BleedStrip(QFrame):
             lay.addWidget(w)
         lay.addStretch(1)
         self.note = QLabel()
-        self.note.setStyleSheet("color: #ffd9a0; font-weight: 600;")
         self.note.hide()
         lay.addWidget(self.note)
         lay.addSpacing(16)
@@ -206,12 +204,19 @@ class BleedStrip(QFrame):
         self._note_timer.setSingleShot(True)
         self._note_timer.timeout.connect(self.expire_note)
         self.marked = False
+        self.retheme()
         self.hide()
+
+    def retheme(self) -> None:
+        c = theme.current()
+        self.setStyleSheet(f"#bleedStrip {{ background: {c.hud}; }} QLabel {{ color: {c.on_focus}; }}")
+        self.note.setStyleSheet(f"color: {c.warning}; font-weight: 600;")
+        self.dot.setStyleSheet(f"color: {c.marked if self.marked else c.text_dim}; font-size: 16px;")
 
     def set_state(self, pos: str, marked: bool, name: str, kind: str, marked_count: int) -> None:
         c = theme.current()
         self.marked = marked
-        self.dot.setStyleSheet(f"color: {c.green if marked else '#8a8a90'}; font-size: 16px;")
+        self.dot.setStyleSheet(f"color: {c.marked if marked else c.text_dim}; font-size: 16px;")
         self.pos.setText(pos)
         self.name.setText(f"{name}  [{kind}]" if name else "")
         self.count.setText(f"{marked_count} marked")
@@ -288,8 +293,6 @@ class Viewer(QGraphicsView):
         self.message.setWordWrap(True)
         self.message.hide()
         self.hud = QLabel("decoding full resolution…", vp)
-        self.hud.setStyleSheet("background: rgba(0,0,0,170); color: #fff; padding: 4px 10px;"
-                               " border-radius: 9px;")
         self.hud.adjustSize()
         self.hud.hide()
         self.strip = BleedStrip(vp)
@@ -737,7 +740,9 @@ class Viewer(QGraphicsView):
     def retheme(self) -> None:
         c = theme.current()
         self.setBackgroundBrush(QColor(c.stage))
-        self.message.setStyleSheet(f"color: {c.dim}; font-size: 15px;")
+        self.message.setStyleSheet(f"color: {c.text_dim}; font-size: 15px;")
+        self.hud.setStyleSheet(f"background: {c.hud}; color: {c.on_focus}; padding: 4px 10px; border-radius: 9px;")
+        self.strip.retheme()
         self.viewport().update()
 
     def shutdown(self, timeout_ms: int = 3000) -> None:

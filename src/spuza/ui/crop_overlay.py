@@ -23,11 +23,12 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsObject, QGraphicsPixmapItem
 
+from spuza.ui import theme
+
 MIN_SIDE = 0.01  # a side under 1 % of the picture is no crop
 HANDLE_PX = 9.0  # drawn handle size, device pixels
 HIT_PX = 12.0  # grab radius around a handle, device pixels
 _PAD = 100.0  # item units the bounding rect extends past the picture, so edge handles stay hittable
-_DIM = QColor(0, 0, 0, 120)
 
 _CURSORS = {
     (-1, -1): Qt.CursorShape.SizeFDiagCursor, (1, 1): Qt.CursorShape.SizeFDiagCursor,
@@ -217,7 +218,7 @@ class CropOverlay(QGraphicsObject):
             self._scale = math.sqrt(det)
         if not self._editing:
             if self._applied is not None:
-                pen = QPen(QColor(255, 255, 255, 220), 1.0, Qt.PenStyle.DashLine)
+                pen = QPen(theme.qcolor(theme.current().on_focus, 220), 1.0, Qt.PenStyle.DashLine)
                 pen.setCosmetic(True)
                 painter.setPen(pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -230,14 +231,15 @@ class CropOverlay(QGraphicsObject):
         whole.addRect(QRectF(0, 0, w, h))
         hole = QPainterPath()
         hole.addRect(rect)
-        painter.fillPath(whole.subtracted(hole), _DIM)
-        pen = QPen(QColor(235, 235, 235), 1.0)
+        c = theme.current()
+        painter.fillPath(whole.subtracted(hole), theme.qcolor(c.hud, 120))
+        pen = QPen(theme.qcolor(c.on_focus, 235), 1.0)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(rect)
         if self._dragging:
-            thirds = QPen(QColor(255, 255, 255, 110), 1.0)
+            thirds = QPen(theme.qcolor(c.on_focus, 110), 1.0)
             thirds.setCosmetic(True)
             painter.setPen(thirds)
             for i in (1, 2):
@@ -247,7 +249,7 @@ class CropOverlay(QGraphicsObject):
                 painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
         half = HANDLE_PX / 2 / self._scale
         painter.setPen(pen)
-        painter.setBrush(QColor(20, 20, 20, 220))
+        painter.setBrush(theme.qcolor(c.hud, 220))
         for pt in self._handles(rect).values():
             painter.drawRect(QRectF(pt.x() - half, pt.y() - half, 2 * half, 2 * half))
         self._paint_label(painter, rect)
@@ -269,9 +271,9 @@ class CropOverlay(QGraphicsObject):
         tw, th = fm.horizontalAdvance(text) + 18, fm.height() + 8
         pill = QRectF(centre.x() - tw / 2, centre.y() - th / 2, tw, th)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(20, 20, 20, 184))
+        painter.setBrush(theme.qcolor(theme.current().hud, 184))
         painter.drawRoundedRect(pill, th / 2, th / 2)
-        painter.setPen(QColor(255, 255, 255))
+        painter.setPen(QColor(theme.current().on_focus))
         painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, text)
         painter.restore()
 

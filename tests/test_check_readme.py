@@ -20,7 +20,7 @@ _KEY_TOKEN = {"right": "→", "left": "←", "up": "↑", "down": "↓", "esc": 
 @pytest.fixture
 def root(tmp_path):
     """A copy of just the root bits the check reads, plus one screenshot."""
-    for rel in ("src/spuza/ui/window.py", "src/spuza/ui/review.py", "src/spuza/ui/compare.py",
+    for rel in ("src/spuza/ui/window.py", "src/spuza/ui/actions.py", "src/spuza/ui/review.py", "src/spuza/ui/compare.py",
                 "src/spuza/features.py", "src/spuza/cli.py", "src/spuza/catalog.py",
                 "pyproject.toml", "docs/FEATURE_FLAGS.md"):
         dst = tmp_path / rel
@@ -209,3 +209,24 @@ def test_crop_and_story_keys_are_required_and_spelled_alike():
     assert {"x", "s", "backspace"} <= required and "0" in allowed
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert {"x", "s", "backspace", "0", "enter"} <= cr.readme_keys(text)
+
+
+def test_a_key_only_the_menu_table_shows_must_be_documented(root):
+    """ui/actions.py is parsed too: a key in the menu's table with no README row is drift."""
+    p = root / "src" / "spuza" / "ui" / "actions.py"
+    p.write_text(p.read_text(encoding="utf-8").replace('("Ctrl+Q",)', '("Ctrl+Y",)'), encoding="utf-8")
+    required, _, _ = cr.code_keys(root)
+    assert "ctrl+y" in required
+    t = good_readme(root).replace("`CTRL+Y`", "`Q`")
+    _one(root, t, "key 'ctrl+y' is handled in the window but is in no README key table")
+
+
+def test_missing_actions_table_is_drift_not_a_pass(root):
+    (root / "src" / "spuza" / "ui" / "actions.py").unlink()
+    _one(root, good_readme(root), "cannot read actions.py")
+
+
+def test_real_actions_keys_are_all_documented():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    got = cr.action_keys(cr.ast.parse((ROOT / "src" / "spuza" / "ui" / "actions.py").read_text(encoding="utf-8")))
+    assert {"?", "ctrl+q", "ctrl+shift+a", "backspace"} <= got <= cr.readme_keys(text)

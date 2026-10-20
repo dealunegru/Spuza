@@ -30,7 +30,7 @@ REVIEW_TABLE = {
     "fullscreen": "disabled", "review": "global", "copy": "global",
     "sidebar:All": "global", "sidebar:Marked": "global",
     "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
-    "prefs": "global", "shortcut:Ctrl+,": "global",
+    "prefs": "global", "shortcut:Ctrl+,": "global", "shortcut:Ctrl+Q": "global",
     # friend round 3: Mark all acts on the whole card from anywhere; the turns act on the grid's selected pictures
     # (round 4: hotkeys only, no buttons)
     "shortcut:Ctrl+A": "global", "shortcut:Ctrl+Shift+A": "global", "shortcut:Ctrl+Z": "global",
@@ -38,6 +38,10 @@ REVIEW_TABLE = {
     "review:Unmark": "grid", "review:Zoom": "grid",
     # advanced-only (hidden, never absent, in classic): N acts on the grid selection; P and O are global switches
     "compare": "grid", "peaking": "global", "afpoint": "global",
+    # design round 2: Tab (Lights out) and Ctrl+T (theme) are window layout/look switches, global; the bar's overflow
+    # button opens the menu's own actions; the pill (shown only in Lights out, never over the review) calls act_help / act_copy
+    "shortcut:Tab": "global", "shortcut:Ctrl+T": "global",
+    "quietMore": "global", "pillHelp": "global", "pillCopy": "global",
 }
 
 
@@ -91,7 +95,7 @@ def in_review(w):
 
 
 # Widgets that are Qt internals, not controls of ours. Anything else a window owns must be in the table.
-INTERNAL_BUTTONS = {"qt_toolbar_ext_button"}  # the toolbar's overflow chevron
+INTERNAL_BUTTONS = {"qt_toolbar_ext_button", "qt_menubar_ext_button"}  # the toolbar's and menu bar's overflow chevrons
 
 
 def _control_key(b, w):
@@ -100,6 +104,8 @@ def _control_key(b, w):
         return None
     if name.startswith("btn_"):
         return name[4:]
+    if name in ("quietMore", "pillHelp", "pillCopy"):
+        return name
     if w.sidebar.isAncestorOf(b):
         return f"sidebar:{b.text()}"
     if w.review is not None and w.review.isAncestorOf(b):
@@ -115,8 +121,9 @@ def test_table_covers_every_control(w):
         if k is not None:
             found.add(k)
     found |= {f"shortcut:{s.key().toString()}" for s in w.findChildren(QShortcut)}
+    # the menu bar's QActions only display keys (WidgetShortcut, never fire): test_design_menu.py covers them
     found |= {f"shortcut:{a.shortcut().toString()}" for a in w.findChildren(QAction)
-              if not a.shortcut().isEmpty()}
+              if not a.shortcut().isEmpty() and a not in w.menu_actions.values()}
     assert found == set(REVIEW_TABLE), f"unlisted: {found - set(REVIEW_TABLE)}, stale: {set(REVIEW_TABLE) - found}"
 
 

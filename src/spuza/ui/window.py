@@ -1,6 +1,10 @@
-"""The main window: toolbar, sidebar | viewer | inspector, filmstrip, status bar, review page, full-bleed.
+"""The main window: quiet bar, sidebar | viewer | inspector, filmstrip, status bar, review page, full-bleed.
 
-Design: 02-bench, with 01-bleed as its full-screen mode. Most keys have a toolbar button; Mark all, Unmark all, undo and the turns ([ ]) are keys only.
+Design: 02-bench, with 01-bleed as its full-screen mode. Design round 2: Direction A (the default) puts one quiet
+bar on top (icon buttons + filled Copy + an overflow menu; the old QToolBars are kept hidden so their buttons keep the
+state in step); Tab switches to Direction B, Lights out (only the photo, the menu bar and a floating pill), remembered
+in settings. Full screen is independent of both. Ctrl+T flips the dark / light theme.
+Most keys have a bar button; Mark all, Unmark all, undo and the turns ([ ]) are keys only.
 The review grid and the copy sheet are built lazily through `review_factory` / `copy_sheet_factory`
 so they are only imported when used (and tests can inject fakes).
 
@@ -25,8 +29,8 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
+from PySide6.QtGui import QAction, QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from spuza import derived as dv
@@ -34,9 +38,13 @@ from spuza import features
 from spuza import ratio as ratio_mod
 from spuza.cards import catalog_note
 from spuza.copy import human_size
+from spuza.ui import actions as act
 from spuza.ui import settings, theme
+from spuza.ui import tokens as tk
 from spuza.ui.filmstrip import Filmstrip
 from spuza.ui.inspector import Inspector, derived_lines
+from spuza.ui.pill import LightsOutPill
+from spuza.ui.quiet_bar import QuietBar, tooltip_text
 from spuza.ui.ratio_strip import RatioStrip
 from spuza.ui.viewer import Viewer, info_native_size
 
@@ -95,6 +103,11 @@ NEXT_BUTTONS = [
     ("peaking", "Peaking", "P", "focus_peaking"),
     ("afpoint", "AF point", "O", "focus_point"),
 ]
+# the buttons the quiet bar shows icon-only, in order (Copy is its filled primary button)
+BAR_ICONS = {"back": "arrow-left", "next": "arrow-right", "mark": "circle-check", "zoom": "zoom-in",
+             "review": "layout-grid"}
+# the menu actions the bar's overflow (the ellipsis button) holds, in order; None is a separator before the advanced ones
+OVERFLOW = ("advance", "fullscreen", "prefs", "lights_out", None, "compare", "peaking", "afpoint")
 COMPARE_KEYS = frozenset({Qt.Key_Left, Qt.Key_Right, Qt.Key_J, Qt.Key_K, Qt.Key_Space, Qt.Key_M, Qt.Key_Z,
                           Qt.Key_N, Qt.Key_Escape})
 PEAKING_WARM_MS = 3000  # a saved-on peaking at start is built when the prefetch goes idle, or after this at the latest
@@ -109,13 +122,15 @@ class KeyButton(QToolButton):
         self.setCheckable(checkable)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setToolTip(f"{label} ({cap})")
+        self.setToolTip(tooltip_text(label, cap))  # one line, "Name  Key": the quiet bar shows these icon-only
+        self.setAccessibleName(label)
         self.setObjectName(f"btn_{name}")
 
     def set_label(self, label: str) -> None:
         self.label = label
         self.setText(f"{label}   {self.cap}")
-        self.setToolTip(f"{label} ({self.cap})")
+        self.setToolTip(tooltip_text(label, self.cap))
+        self.setAccessibleName(label)
 
 
 class Sidebar(QWidget):
@@ -171,10 +186,11 @@ class Sidebar(QWidget):
 
     def retheme(self) -> None:
         c = theme.current()
-        self.head.setStyleSheet(f"color: {c.dim}; font-size: 11px; font-weight: 600;")
+        self.head.setStyleSheet(f"color: {c.text_dim}; font-size: {tk.TYPE['caption']}px; "
+                                f"font-weight: {tk.TYPE['weight_strong']};")
         for _n, btn, cnt in self._rows:
             btn.setStyleSheet(f"text-align: left; padding: 4px 6px; color: {c.text}; border: 0;")
-            cnt.setStyleSheet(f"color: {c.dim};")
+            cnt.setStyleSheet(f"color: {c.text_dim};")
 
 
 class MainWindow(QMainWindow):
@@ -264,35 +280,39 @@ class MainWindow(QMainWindow):
             self.next_buttons[nname] = nb
             self._next_actions[nname] = self.toolbar2.addWidget(nb)
         self.toolbar2.setVisible(False)
+        # Direction A: the quiet bar holds Back, Next, Mark, Zoom, Review (icon-only) and a filled Copy; Move on mark,
+        # Full screen, Preferences and the advanced three live in its overflow menu. The toolbars are never shown
+        # now; they keep those buttons (and their checked state, which the menu and tests read) in step.
+        # Preferences is not in `buttons` (those are the key-driven picture controls, kept in step by review mode).
+        self.quiet_bar = QuietBar()
+        self.quiet_bar.set_title(self.root.name or str(self.root), len(catalog))
+        self.prefs_button = KeyButton("prefs", "Preferences…", PREFS_CAP, False)
         for name, label, cap, checkable in BUTTONS:
-            if name in ("mark", "review"):
-                self.toolbar.addSeparator()
-            if name == "copy":
-                # Preferences sits left of the copy spacer; it is not in `buttons` (those are the key-driven
-                # picture controls, and review mode keeps all of them in step)
-                self.prefs_button = KeyButton("prefs", "Preferences…", PREFS_CAP, False)
-                self.toolbar.addSeparator()
-                self.toolbar.addWidget(self.prefs_button)
-                spacer = QWidget()
-                spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-                self.toolbar.addWidget(spacer)
             b = KeyButton(name, label, cap, checkable)
             self.buttons[name] = b
-            self.toolbar.addWidget(b)
+            if name in BAR_ICONS:
+                self.quiet_bar.add_button(b, BAR_ICONS[name])
+            elif name == "copy":
+                self.quiet_bar.set_copy_button(b)
+            else:
+                self.toolbar.addWidget(b)
+        self.toolbar.addWidget(self.prefs_button)
+        self.toolbar.setVisible(False)
         b = self.buttons
-        b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
-        b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
-        b["mark"].clicked.connect(lambda: self._control(Qt.Key_Space, self.toggle_mark))
-        b["advance"].clicked.connect(lambda: self.set_advance_on_mark(not self.advance_on_mark))
-        b["zoom"].clicked.connect(lambda: self._control(Qt.Key_Z, self.viewer.toggle_zoom))
-        b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
-        b["review"].clicked.connect(lambda: self.toggle_review())
-        b["copy"].clicked.connect(lambda: self.open_copy())
-        self.prefs_button.clicked.connect(lambda: self.open_prefs())
+        # the toolbar buttons and the menu actions (ui/actions.py) run the same act_* methods
+        b["back"].clicked.connect(lambda: self.act_back())
+        b["next"].clicked.connect(lambda: self.act_next())
+        b["mark"].clicked.connect(lambda: self.act_mark())
+        b["advance"].clicked.connect(lambda: self.act_advance())
+        b["zoom"].clicked.connect(lambda: self.act_zoom())
+        b["fullscreen"].clicked.connect(lambda: self.act_fullscreen())
+        b["review"].clicked.connect(lambda: self.act_review())
+        b["copy"].clicked.connect(lambda: self.act_copy())
+        self.prefs_button.clicked.connect(lambda: self.act_prefs())
         nb = self.next_buttons
-        nb["compare"].clicked.connect(lambda: self._compare_button())
-        nb["peaking"].clicked.connect(lambda: self.toggle_peaking())
-        nb["afpoint"].clicked.connect(lambda: self.toggle_marker())
+        nb["compare"].clicked.connect(lambda: self.act_compare())
+        nb["peaking"].clicked.connect(lambda: self.act_peaking())
+        nb["afpoint"].clicked.connect(lambda: self.act_afpoint())
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.sidebar)
@@ -319,7 +339,28 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.filmstrip)
         self.stack = QStackedWidget()
         self.stack.addWidget(page0)
-        self.setCentralWidget(self.stack)
+        central = QWidget()  # the quiet bar over the stack (the bar hides in Lights out and full screen)
+        central_lay = QVBoxLayout(central)
+        central_lay.setContentsMargins(0, 0, 0, 0)
+        central_lay.setSpacing(0)
+        central_lay.addWidget(self.quiet_bar)
+        central_lay.addWidget(self.stack, 1)
+        self.setCentralWidget(central)
+        # Direction B: the pill floats over the photo (a child of the stack, so over the single view only)
+        self.lights_out = settings.read_bool(self.prefs, settings.LIGHTS_OUT, False)
+        self.pill = LightsOutPill(self.stack)
+        self.pill.copy_clicked.connect(lambda: self.act_copy())
+        self.pill.help_clicked.connect(lambda: self.act_help())
+        self.pill.help_button().setToolTip(tooltip_text("Keyboard shortcuts", "?"))
+        self.pill.copy_button().setToolTip(tooltip_text("Copy…", "C"))
+        self._toast = QLabel(self.stack)  # Lights out has no status bar: say() shows its message here
+        self._toast.setObjectName("lightsOutNote")
+        self._toast.setWordWrap(True)
+        self._toast.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._toast.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._toast.hide)
 
         sb = self.statusBar()
         self.lbl_pos, self.lbl_marked = QLabel(), QLabel()
@@ -363,6 +404,22 @@ class MainWindow(QMainWindow):
                         (QKeySequence("["), lambda: self.rotate(-1)), (QKeySequence("]"), lambda: self.rotate(1))):
             sc = QShortcut(seq, self, context=Qt.ShortcutContext.WindowShortcut, activated=fn)
             sc.setAutoRepeat(False)  # a held key must not mark, undo or turn repeatedly
+        quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self, context=Qt.ShortcutContext.WindowShortcut,
+                            activated=lambda: self.act_quit())  # StandardKey.Quit is empty on Windows
+        quit_sc.setAutoRepeat(False)
+        # Tab is Qt's focus key, and whichever child holds focus (the window, the review grid) would take it for
+        # focus navigation; a window shortcut is matched before the key reaches any widget, and not at all while a
+        # dialog (the copy or prefs sheet, a line edit) is the active window, so Tab there still moves focus.
+        tab_sc = QShortcut(QKeySequence("Tab"), self, context=Qt.ShortcutContext.WindowShortcut,
+                           activated=lambda: None if self._overlay_open() else self.act_lights_out())
+        tab_sc.setAutoRepeat(False)  # a held Tab must not flip the layout back and forth
+        theme_sc = QShortcut(QKeySequence("Ctrl+T"), self, context=Qt.ShortcutContext.WindowShortcut,
+                             activated=lambda: self.act_dark_theme())
+        theme_sc.setAutoRepeat(False)
+        self._shortcuts = None  # the `?` overlay, built on each open
+        self._build_menus()
+        self.quiet_bar.overflow_menu().aboutToShow.connect(self.refresh_actions)
+        self._build_overflow()
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
@@ -672,6 +729,7 @@ class MainWindow(QMainWindow):
         self._edit = "crop"
         self._edit_target = redo.id if redo is not None else None
         self.ratio_strip.setVisible(True)
+        self._sync_chrome()
         self._set_ratio(redo.ratio if redo is not None and redo.ratio is not None else ratio_mod.FREE, reshape=False)
 
     # -- the ratio of the open crop edit (keys 1-8, V, 0 and the strip's chips) ---------------------------------
@@ -744,6 +802,7 @@ class MainWindow(QMainWindow):
         self._ensure_story_editor().begin(pm, self._rotation_of(i), redo.story if redo is not None else None, native)
         self._edit = "story"
         self._edit_target = redo.id if redo is not None else None
+        self._sync_chrome()
         self.say("Story fit 9:16: drag to move, wheel or + - to zoom, 0 resets. "
                  + ("Enter replaces it, Esc cancels" if redo is not None else "Enter adds it after the original, Esc cancels"))
 
@@ -771,6 +830,8 @@ class MainWindow(QMainWindow):
         put the source on screen (the callers that render next pass False)."""
         kind, self._edit = self._edit, None
         self._edit_target = None
+        if kind:
+            self._sync_chrome()  # the pill comes back in Lights out
         if kind == "crop":
             self._crop_overlay.end()
             self._crop_overlay.set_aspect(None, (0, 0))
@@ -971,6 +1032,8 @@ class MainWindow(QMainWindow):
             self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
         total_marked = self._marked_total()
         self.sidebar.set_counts(len(cat) + len(self.band), total_marked)
+        self.pill.set_state(marked, f"{i + 1} / {len(cat)}" if pic is not None else "0 / 0")
+        self._sync_chrome()  # the page, an edit or compare may have changed whether the pill belongs
         if pic is not None:
             name, kind = (pic.stem, pic.kind) if d is None else (
                 f"{pic.stem} ({dv.tag(d, self._rotation_of(i))})", "story" if d.kind == dv.STORY else "crop")
@@ -1031,8 +1094,31 @@ class MainWindow(QMainWindow):
         if self.is_bleed:  # the status bar is hidden in full-bleed; use the strip
             self.viewer.strip.show_note(text, 5000)
             self.viewer.reveal_strip()
+        elif self.lights_out:  # ... and in Lights out: a note over the photo, above the pill, for five seconds
+            self._show_toast(text)
         else:
             self.statusBar().showMessage(text, 5000)
+
+    TOAST_MS = 5000  # how long a status message stays over the photo in Lights out (the status bar's own 5 s)
+
+    def _show_toast(self, text: str) -> None:
+        t = self._toast
+        t.setText(text)
+        t.show()
+        self._place_toast()
+        t.raise_()
+        self._toast_timer.start(self.TOAST_MS)
+
+    def _place_toast(self) -> None:
+        t = self._toast
+        if not t.isVisible():
+            return
+        room = max(200, self.stack.width() - 80)  # one line when it fits, else wrapped to the room there is
+        t.setFixedWidth(min(room, t.fontMetrics().horizontalAdvance(t.text()) + 40))
+        t.setFixedHeight(t.heightForWidth(t.width()))
+        x = max(0, (self.stack.width() - t.width()) // 2)
+        y = max(0, self.stack.height() - t.height() - self.pill.height() - 24 - 8)  # above the pill's place
+        t.move(x, y)
 
     # -- modes ------------------------------------------------------------------------------------
     def set_bleed(self, on: bool) -> None:
@@ -1040,9 +1126,7 @@ class MainWindow(QMainWindow):
             self.buttons["fullscreen"].setChecked(self.is_bleed)  # full-bleed is inert in review
             return
         self.is_bleed = on
-        for w in (self.toolbar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
-            w.setVisible(not on)
-        self.toolbar2.setVisible(not on and self._next_row_wanted())
+        self._sync_chrome()
         self.viewer.set_bleed(on)  # hidden; pointer movement reveals it
         if self._compare_strip is not None:
             self._compare_strip.setVisible(on)
@@ -1056,6 +1140,55 @@ class MainWindow(QMainWindow):
             self._focus_review()
         else:
             self.setFocus()
+
+    # -- layout: A (the quiet bar, default) and B (Lights out), independent of full screen --------------------------
+    def set_lights_out(self, on: bool) -> None:
+        """Switch between Direction A and B and remember it. Inside full screen only the saved mode flips: the screen
+        stays the photo alone, and the new mode's chrome appears when full screen ends."""
+        on = bool(on)
+        if on != self.lights_out:
+            self.lights_out = on
+            self.prefs.setValue(settings.LIGHTS_OUT, on)
+            self.prefs.sync()
+        self._sync_chrome()
+        self.refresh_actions()
+
+    def _overlay_open(self) -> bool:
+        return self._shortcuts is not None and self._shortcuts.isVisible()
+
+    def _pill_wanted(self) -> bool:
+        """The pill floats over the single view in B. It stays off review (the grid has its own header and the pill
+        would cover its bottom row), off compare (it would cover the cells) and off an open crop or story edit (it
+        would cover the handles and the frame), and off full screen, which shows the photo alone."""
+        return (self.lights_out and not self.is_bleed and self.stack.currentIndex() == 0
+                and not self._compare_shown() and self._edit is None)
+
+    def _sync_chrome(self) -> None:
+        """Show what the layout, full screen and the page ask for. Called wherever one of the three changes."""
+        chrome = not self.is_bleed and not self.lights_out  # A outside full screen
+        for w in (self.quiet_bar, self.sidebar, self.inspector, self.filmstrip, self.statusBar()):
+            w.setVisible(chrome)
+        self.toolbar.setVisible(False)  # the buttons stay for state; the quiet bar is what shows
+        self.toolbar2.setVisible(False)
+        if sys.platform != "darwin":  # the native macOS bar is not a window widget and hides itself in full screen
+            self.menuBar().setVisible(not self.is_bleed)
+        if not (self.lights_out and not self.is_bleed):
+            self._toast.hide()
+        show = self._pill_wanted()
+        self.pill.setVisible(show)
+        if show:
+            self.pill.reposition()
+            self.pill.raise_()
+
+    def _build_overflow(self) -> None:
+        """The bar's ellipsis menu holds the menu bar's own QActions (so label, key, check, enabled and the advanced
+        flags are the same objects as in the View menu)."""
+        menu = self.quiet_bar.overflow_menu()
+        for aid in OVERFLOW:
+            if aid is None:
+                menu.addSeparator()
+            else:
+                menu.addAction(self.menu_actions[aid])
 
     def toggle_review(self) -> None:
         if self._compare_shown():
@@ -1388,17 +1521,14 @@ class MainWindow(QMainWindow):
         if self.peaking is not None:
             self.peaking.set_on(False)
 
-    def _next_row_wanted(self) -> bool:
-        return any(features.enabled(flag) for _n, _l, _c, flag in NEXT_BUTTONS)
-
     def _sync_next_buttons(self) -> None:
         for name, _label, _cap, flag in NEXT_BUTTONS:
             self._next_actions[name].setVisible(features.enabled(flag))
-        self.toolbar2.setVisible(self._next_row_wanted() and not self.is_bleed)
         nb = self.next_buttons
         nb["compare"].setChecked(self._compare_shown())
         nb["peaking"].setChecked(self.peaking is not None and self.peaking.is_on())
         nb["afpoint"].setChecked(self.marker is not None and self.marker.is_on())
+        self.refresh_actions()
 
     # -- peaking (P) and the AF ring (O)
     def toggle_peaking(self) -> None:
@@ -1488,7 +1618,7 @@ class MainWindow(QMainWindow):
             cv = CompareView(self.catalog, self.prefetcher)
             cv.rotation_of = self._rotation_of
             strip = QLabel()
-            strip.setStyleSheet("background: rgba(0,0,0,150); color: #f2f2f4; padding: 6px 14px;")
+            self._style_compare_strip(strip)
             strip.setVisible(self.is_bleed)
             page = QWidget()
             lay = QVBoxLayout(page)
@@ -1510,6 +1640,11 @@ class MainWindow(QMainWindow):
             self._cmp_pool.setMaxThreadCount(1)
             self.compare, self._compare_page, self._compare_strip = cv, page, strip
         return self.compare
+
+    @staticmethod
+    def _style_compare_strip(strip) -> None:
+        c = theme.current()
+        strip.setStyleSheet(f"background: {c.hud}; color: {tk.DARK['text']}; padding: 6px 14px;")  # the HUD is dark in both themes
 
     def _review_picks(self) -> list[int]:
         fn = getattr(self.review, "selected_indices", None)
@@ -1649,6 +1784,172 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._sync_compare)  # N may have added a cell: the highlight follows
         return super().eventFilter(obj, ev)
 
+    # -- menu bar (ui/actions.py is the one table) -------------------------------------------------
+    def _build_menus(self) -> None:
+        """File / Edit / View / Picture / Help. The QActions DISPLAY their keys (so the native macOS bar shows them
+        too) but their shortcut context is WidgetShortcut and they belong to no widget that takes focus, so a key
+        press is still handled once, by keyPressEvent or a QShortcut; clicking one runs the same act_* method."""
+        self.menu_actions: dict[str, QAction] = {}
+        menus = {}
+        for name in act.MENUS:
+            menus[name] = self.menuBar().addMenu(name)
+            menus[name].aboutToShow.connect(self.refresh_actions)
+        for a in act.ACTIONS:
+            qa = QAction(a.label, self)
+            qa.setShortcuts([QKeySequence(k) for k in a.keys])
+            qa.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+            qa.setShortcutVisibleInContextMenu(True)
+            qa.setCheckable(a.checkable)
+            qa.triggered.connect(lambda _checked=False, h=a.handler: self._run_action(h))
+            menus[a.menu].addAction(qa)
+            self.menu_actions[a.id] = qa
+        for btn in (*self.buttons.values(), *self.next_buttons.values()):
+            btn.toggled.connect(lambda _on=False: self.refresh_actions())
+        self.refresh_actions()
+
+    def _run_action(self, handler: str) -> None:
+        getattr(self, handler)()
+        self.refresh_actions()
+
+    def refresh_actions(self) -> None:
+        """Visible (advanced-only flags), enabled and checked in step with the toolbar buttons and the mode."""
+        menu_actions = getattr(self, "menu_actions", None)
+        if not menu_actions:  # a toolbar toggle during construction, before the menus exist
+            return
+        has = len(self.catalog) > 0
+        in_review = self.stack.currentIndex() == 1
+        for a in act.ACTIONS:
+            qa = menu_actions[a.id]
+            qa.setVisible(not a.flag or features.enabled(a.flag))
+            btn = None
+            if a.state.startswith("next:"):
+                btn = self.next_buttons.get(a.state[5:])
+            elif a.state:
+                btn = self.buttons.get(a.state)
+            ok = (has or not a.needs_picture) and not (a.needs_viewer and in_review)
+            qa.setEnabled(ok and (btn is None or btn.isEnabled()))
+            if a.checkable and btn is not None:
+                qa.blockSignals(True)  # a mirrored state, not a click
+                qa.setChecked(btn.isChecked())
+                qa.blockSignals(False)
+        for aid, on in (("lights_out", self.lights_out), ("dark_theme", theme.current().dark)):
+            qa = menu_actions[aid]  # no button mirrors these two: the window's own state is the truth
+            qa.blockSignals(True)
+            qa.setChecked(on)
+            qa.blockSignals(False)
+
+    def act_back(self) -> None:
+        self._control(Qt.Key_Left, lambda: self.step(-1))
+
+    def act_next(self) -> None:
+        self._control(Qt.Key_Right, lambda: self.step(1))
+
+    def act_mark(self) -> None:
+        self._control(Qt.Key_Space, self.toggle_mark)
+
+    def act_advance(self) -> None:
+        self.set_advance_on_mark(not self.advance_on_mark)
+
+    def act_zoom(self) -> None:
+        self._control(Qt.Key_Z, self.viewer.toggle_zoom)
+
+    def act_zoom_in(self) -> None:
+        self.viewer.zoom_in()
+
+    def act_zoom_out(self) -> None:
+        self.viewer.zoom_out()
+
+    def act_fullscreen(self) -> None:
+        self.set_bleed(not self.is_bleed)
+
+    def act_review(self) -> None:
+        self.toggle_review()
+
+    def act_copy(self) -> None:
+        self.open_copy()
+
+    def act_prefs(self) -> None:
+        self.open_prefs()
+
+    def act_quit(self) -> None:
+        self.close()
+
+    def act_mark_all(self) -> None:
+        self.mark_all(True)
+
+    def act_unmark_all(self) -> None:
+        self.mark_all(False)
+
+    def act_undo_mark_all(self) -> None:
+        self.undo_mark_all()
+
+    def act_start_fresh(self) -> None:
+        self.start_fresh()
+
+    def act_compare(self) -> None:
+        self._compare_button()
+
+    def act_peaking(self) -> None:
+        self.toggle_peaking()
+
+    def act_afpoint(self) -> None:
+        self.toggle_marker()
+
+    def act_rotate_left(self) -> None:
+        self.rotate(-1)
+
+    def act_rotate_right(self) -> None:
+        self.rotate(1)
+
+    def act_crop(self) -> None:
+        self.start_crop()
+
+    def act_story(self) -> None:
+        self.start_story()
+
+    def act_remove(self) -> None:
+        self.remove_derived()
+
+    def act_help(self) -> None:
+        self.toggle_shortcuts()
+
+    def act_lights_out(self) -> None:
+        self.set_lights_out(not self.lights_out)
+
+    def act_dark_theme(self) -> None:
+        """Flip between the dark and light theme and save the pick (theme.choose); Ctrl+T, not T, so a stray key
+        while culling cannot change a saved preference."""
+        theme.choose(QApplication.instance(), self.prefs, not theme.current().dark, self.retheme)
+        self.refresh_actions()
+
+    # -- the `?` overlay
+    def toggle_shortcuts(self) -> None:
+        ov = self._shortcuts
+        if ov is not None and ov.isVisible():
+            ov.close_overlay()
+            return
+        if ov is not None:
+            ov.deleteLater()
+        from spuza.ui.shortcut_overlay import ShortcutOverlay  # built fresh each time: it reads the theme and the mode
+
+        self._shortcuts = ov = ShortcutOverlay(self.stack)
+        ov.setGeometry(self.stack.rect())
+        ov.show()
+        ov.raise_()
+        ov.setFocus()
+
+    def _overlay_closed(self) -> None:
+        if self.stack.currentIndex() == 1:
+            self._focus_review()
+        else:
+            self.setFocus()
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        if self._shortcuts is not None and self._shortcuts.isVisible():
+            self._shortcuts.setGeometry(self.stack.rect())
+        self._place_toast()
+
     # -- keys, theme, close -----------------------------------------------------------------------
     def keyPressEvent(self, e) -> None:
         if e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
@@ -1662,7 +1963,7 @@ class MainWindow(QMainWindow):
                 self._forward_to_compare(e)
                 e.accept()
                 return
-            if k not in (Qt.Key_F, Qt.Key_C, Qt.Key_P, Qt.Key_O):
+            if k not in (Qt.Key_F, Qt.Key_C, Qt.Key_P, Qt.Key_O, Qt.Key_Question):
                 return super().keyPressEvent(e)
         if self.stack.currentIndex() == 1:
             if k in GRID_KEYS and not self._forwarding:
@@ -1714,6 +2015,9 @@ class MainWindow(QMainWindow):
         elif k == Qt.Key_U and features.enabled("resume_session") and self.stack.currentIndex() == 0:
             if not e.isAutoRepeat():
                 self.start_fresh()
+        elif k == Qt.Key_Question:
+            if not e.isAutoRepeat():
+                self.toggle_shortcuts()
         elif k == Qt.Key_Escape:
             if self.stack.currentIndex() == 1:
                 self.close_review()
@@ -1725,15 +2029,15 @@ class MainWindow(QMainWindow):
 
     def retheme(self) -> None:
         c = theme.current()
-        bar_css = (
-            f"QToolBar {{ spacing: 6px; padding: 4px 8px; border: 0; border-bottom: 1px solid {c.border}; }}"
-            f"QToolButton {{ padding: 6px 12px; border: 1px solid {c.border}; border-radius: 6px;"
-            f" background: {c.panel}; }}"
-            f"QToolButton:hover {{ border-color: {c.accent}; }}"
-            f"QToolButton:checked {{ background: {c.accent}; color: #ffffff; border-color: {c.accent}; }}"
-            f"#btn_copy {{ background: {c.accent}; color: #ffffff; font-weight: 600; border-color: {c.accent}; }}")
-        self.toolbar.setStyleSheet(bar_css)
-        self.toolbar2.setStyleSheet(bar_css)
+        self.quiet_bar.retheme()  # also re-tints the icons
+        self.pill.retheme()
+        self._toast.setStyleSheet(f"background: {c.hud}; color: {tk.DARK['text']}; border-radius: {tk.RADIUS['sheet']}px;"
+                                  " padding: 6px 14px;")
+        self.advanced_tag.setStyleSheet(f"font-weight: bold; padding: 0 8px; color: {c.text_dim};")
+        if self._compare_strip is not None:
+            self._style_compare_strip(self._compare_strip)
+        if self.compare is not None:
+            self.compare.retheme()
         self.sidebar.retheme()
         self.viewer.retheme()
         self.filmstrip.retheme()
@@ -1744,9 +2048,7 @@ class MainWindow(QMainWindow):
                                     self.catalog.current.stem if self.catalog.current else "",
                                     self.catalog.current.kind if self.catalog.current else "",
                                     self._marked_total())
-
-    def follow_system_theme(self, app) -> None:
-        theme.follow(app, self.retheme)
+        self.refresh_actions()  # the Dark theme check follows the theme, also after an OS follow on macOS
 
     def closeEvent(self, e) -> None:
         if self.resume is not None:

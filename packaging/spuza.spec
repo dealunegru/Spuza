@@ -24,7 +24,7 @@ datas += [(str(HERE.parent / "src" / "spuza" / "assets"), "spuza/assets")]
 UNUSED_QT = [
     "QtNetwork", "QtQml", "QtQuick", "QtQuickWidgets", "QtQuickControls2", "QtWebEngineCore",
     "QtWebEngineWidgets", "QtWebChannel", "QtMultimedia", "QtMultimediaWidgets", "QtPdf",
-    "QtPdfWidgets", "QtSql", "QtTest", "QtSvg", "QtSvgWidgets", "QtOpenGL", "QtOpenGLWidgets",
+    "QtPdfWidgets", "QtSql", "QtTest", "QtSvgWidgets", "QtOpenGL", "QtOpenGLWidgets",
     "QtDesigner", "QtHelp", "QtCharts", "QtDataVisualization", "Qt3DCore", "Qt3DRender",
     "QtBluetooth", "QtNfc", "QtPositioning", "QtSensors", "QtSerialPort", "QtRemoteObjects",
     "QtScxml", "QtStateMachine", "QtTextToSpeech", "QtWebSockets", "QtXml", "QtConcurrent",
@@ -37,7 +37,7 @@ a = Analysis(  # noqa: F821
     pathex=[str(HERE.parent / "src")],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets"],
+    hiddenimports=hiddenimports + ["PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", "PySide6.QtSvg"],
     excludes=excludes,
 )
 pyz = PYZ(a.pure)  # noqa: F821

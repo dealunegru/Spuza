@@ -74,7 +74,7 @@ class _Delegate(QStyledItemDelegate):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(cell.adjusted(-2, -2, 2, 2))
         if i == s.current and did == s.current_id:
-            p.setPen(QPen(QColor(c.accent), 3))
+            p.setPen(QPen(QColor(c.text), 3))  # neutral: the picture is the colour here
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(box.adjusted(1, 1, -1, -1))
         f = QFont(p.font())
@@ -86,36 +86,36 @@ class _Delegate(QStyledItemDelegate):
             tw = p.fontMetrics().horizontalAdvance(pic.kind) + 8
             badge = QRect(box.x() + 2, box.bottom() - 15, tw, 13)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(c.amber if amber else "#000000"))
+            p.setBrush(theme.qcolor(c.warning) if amber else theme.qcolor(c.hud, 255))
             if not amber:
                 p.setOpacity(0.6)
             p.drawRoundedRect(badge, 3, 3)
             p.setOpacity(1.0)
-            p.setPen(QColor("#1a1000" if amber else "#ffffff"))
+            p.setPen(theme.qcolor(c.hud, 255) if amber else QColor(c.on_focus))
             p.drawText(badge, Qt.AlignmentFlag.AlignCenter, pic.kind)
         tx = box.x() + 2  # the edit tags, top left, in the kind badge's style, side by side
         for text, kind in (s.edit_tags(i) if d is None else s.derived_tags(d)):
             tw = p.fontMetrics().horizontalAdvance(text) + 8
             tb = QRect(tx, box.y() + 3, tw, 13)
             if kind == "story":  # an outline: the story fit is a different edit from the crop
-                p.setPen(QPen(QColor(c.accent), 1))
+                p.setPen(QPen(QColor(c.focus), 1))
                 p.setBrush(QColor(c.panel))
                 p.drawRoundedRect(tb.adjusted(0, 0, -1, -1), 3, 3)
-                p.setPen(QColor(c.accent))
+                p.setPen(QColor(c.focus))
             else:
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(c.accent))
+                p.setBrush(QColor(c.focus))
                 p.drawRoundedRect(tb, 3, 3)
-                p.setPen(QColor("#ffffff"))
+                p.setPen(QColor(c.on_focus))
             p.drawText(tb, Qt.AlignmentFlag.AlignCenter, text)
             tx += tw + 3
         # mark check
         if s.catalog.is_marked(i) if d is None else d.marked:
             dot = QRect(box.right() - 17, box.y() + 3, 14, 14)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(c.green))
+            p.setBrush(QColor(c.marked))
             p.drawEllipse(dot)
-            p.setPen(QPen(QColor("#ffffff"), 2))
+            p.setPen(QPen(QColor(c.on_focus), 2))
             p.drawLine(dot.x() + 3, dot.y() + 7, dot.x() + 6, dot.y() + 10)
             p.drawLine(dot.x() + 6, dot.y() + 10, dot.x() + 11, dot.y() + 4)
         p.restore()

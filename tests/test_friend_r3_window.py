@@ -208,9 +208,11 @@ def test_undo_says_when_hand_marks_since_the_action_are_replaced(w):
 
 def test_every_classic_control_is_on_the_one_classic_row(w):
     """Round 4 put Mark all and the turns back on row 1 (the second row is gone); the measured width rule lives in
-    test_friend_r4_toolbar.py and scripts on the real platform."""
-    row = list(w.buttons.values()) + [w.prefs_button]
-    assert all(b.parent() is w.toolbar for b in row)
+    test_friend_r4_toolbar.py and scripts on the real platform. Design round 2: the quiet bar holds Back, Next, Mark,
+    Zoom, Review and Copy; Move on mark, Full screen and Preferences are in its overflow menu (their buttons stay on
+    the hidden toolbar, in step)."""
+    assert all(w.buttons[n].parent() is w.quiet_bar for n in ("back", "next", "mark", "zoom", "review", "copy"))
+    assert all(w.buttons[n].parent() is w.toolbar for n in ("advance", "fullscreen")) and w.prefs_button.parent() is w.toolbar
     assert not hasattr(w, "toolbar3") and not {"markall", "rotl", "rotr"} & set(w.buttons)
 
 

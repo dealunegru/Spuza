@@ -40,7 +40,7 @@ DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 # Qt key names (after "Key_") -> the canonical token; anything else is lowercased as is.
 _QT_NAMES = {"right": "right", "left": "left", "up": "up", "down": "down", "escape": "esc",
              "return": "enter", "enter": "enter", "space": "space",
-             "plus": "plus", "equal": "equal", "minus": "minus"}
+             "plus": "plus", "equal": "equal", "minus": "minus", "question": "?"}
 # README spellings -> canonical.
 _README_NAMES = {"→": "right", "←": "left", "↑": "up", "↓": "down", "esc": "esc", "escape": "esc",
                  "enter": "enter", "return": "enter", "space": "space", "+": "plus", "=": "equal", "-": "minus",
@@ -84,6 +84,17 @@ def _sequences(node: ast.AST) -> set[str]:
     return out
 
 
+def action_keys(tree: ast.AST) -> set[str]:
+    """Key strings of every ``Action(..., keys=(...))`` / fourth-positional call in ui/actions.py."""
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "Action":
+            tup = next((k.value for k in n.keywords if k.arg == "keys"), n.args[3] if len(n.args) > 3 else None)
+            if isinstance(tup, ast.Tuple):
+                out |= {_seq_key(e.value) for e in tup.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+    return out
+
+
 def code_keys(root: Path) -> tuple[set[str], set[str], list[str]]:
     """(required, allowed, problems): keys that must be documented, keys that may be."""
     problems: list[str] = []
@@ -100,6 +111,14 @@ def code_keys(root: Path) -> tuple[set[str], set[str], list[str]]:
     required |= _sequences(win)
     if not required:
         problems.append("found no keys in window.py: the parser is out of date")
+    acts, err = _parse(ui / "actions.py")  # the menu's table: every key it shows must be documented too
+    if err:
+        problems.append(err)
+    else:
+        keys = action_keys(acts)
+        if not keys:
+            problems.append("found no keys in actions.py: the parser is out of date")
+        required |= keys
     allowed = set(required) | _key_attrs(win) | _sequences(win)
     for name in ("review.py", "compare.py"):
         tree, err = _parse(ui / name)
