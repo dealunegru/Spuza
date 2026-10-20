@@ -142,7 +142,8 @@ def test_toolbar_button_has_its_cap_and_opens_the_sheet(win):
     # on the toolbar, left of copy (copy stays rightmost); not asserting isVisible: under the test style the
     # toolbar is wider than the window and even copy folds into the overflow chevron
     order = [win.toolbar.widgetForAction(a) for a in win.toolbar.actions()]
-    assert b in order and order.index(b) < order.index(win.buttons["copy"]) == len(order) - 1
+    # 0.11.0: Preferences stays on the (hidden) toolbar and is reached from the quiet bar's overflow; Copy is on the quiet bar
+    assert b in order and win.buttons["copy"].parent() is win.quiet_bar
     b.click()
     assert isinstance(win._prefs_sheet, PrefsSheet)
     win._prefs_sheet.reject()

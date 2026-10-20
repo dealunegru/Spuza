@@ -14,6 +14,7 @@ from PySide6.QtCore import QSettings
 ORG, APP = "fungimasters", "Spuza"
 ADVANCE_ON_MARK = "advance_on_mark"
 THEME = "view/theme"  # "dark" or "light": a manual pick; absent means no pick yet
+LIGHTS_OUT = "view/lights_out"  # bool: Direction B (Tab) is the saved layout; absent means the Quiet bar (A)
 
 
 def open_settings() -> QSettings:

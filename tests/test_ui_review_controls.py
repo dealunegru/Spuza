@@ -38,6 +38,10 @@ REVIEW_TABLE = {
     "review:Unmark": "grid", "review:Zoom": "grid",
     # advanced-only (hidden, never absent, in classic): N acts on the grid selection; P and O are global switches
     "compare": "grid", "peaking": "global", "afpoint": "global",
+    # design round 2: Tab (Lights out) and Ctrl+T (theme) are window layout/look switches, global; the bar's overflow
+    # button opens the menu's own actions; the pill (shown only in Lights out, never over the review) calls act_help / act_copy
+    "shortcut:Tab": "global", "shortcut:Ctrl+T": "global",
+    "quietMore": "global", "pillHelp": "global", "pillCopy": "global",
 }
 
 
@@ -100,6 +104,8 @@ def _control_key(b, w):
         return None
     if name.startswith("btn_"):
         return name[4:]
+    if name in ("quietMore", "pillHelp", "pillCopy"):
+        return name
     if w.sidebar.isAncestorOf(b):
         return f"sidebar:{b.text()}"
     if w.review is not None and w.review.isAncestorOf(b):

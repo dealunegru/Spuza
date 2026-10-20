@@ -1,6 +1,6 @@
 """Direction A, the Quiet top bar: slim, icon-only buttons, a filled Copy, an overflow menu.
 
-Standalone and not yet wired into the window. The window supplies its existing buttons
+Wired into MainWindow (``window.quiet_bar``). The window supplies its existing buttons
 (``add_button``) so their objects, signals and shortcuts stay as they are.
 """
 
@@ -83,7 +83,7 @@ class QuietBar(QWidget):
             self._icon_names.pop(self._copy, None)
         self._copy = btn
         self._icon_names[btn] = "copy"
-        btn.setObjectName("quietCopy")
+        btn.setProperty("primary", True)  # the stylesheet's hook; the button keeps its own object name
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         btn.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
@@ -120,9 +120,9 @@ class QuietBar(QWidget):
             #quietBar QToolButton:checked {{ background: {hover}; border-bottom: 2px solid {focus}; }}
             #quietBar QToolButton:disabled {{ color: {_col(c, "text_disabled")}; }}
             #quietBar QToolButton::menu-indicator {{ image: none; width: 0; }}
-            #quietBar #quietCopy {{ background: {focus}; color: {on_focus}; padding: 4px 12px;
+            #quietBar QToolButton[primary="true"] {{ background: {focus}; color: {on_focus}; padding: 4px 12px;
                 margin-left: 6px; font-weight: 600; }}
-            #quietBar #quietCopy:hover {{ background: {focus}; }}
+            #quietBar QToolButton[primary="true"]:hover {{ background: {focus}; }}
         """)
 
     # ---- internals --------------------------------------------------------------------------
