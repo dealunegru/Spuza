@@ -105,7 +105,7 @@ Right-click a picture in the filmstrip, the viewer or the review to show it in F
 </p>
 
 <p align="center">
-  <img src="docs/img/bleed.png" alt="Full screen: the picture alone, with a one-line status strip" width="900">
+  <img src="docs/img/bleed.png" alt="Full screen: the picture alone; a one-line strip appears when the mouse moves" width="900">
 </p>
 
 ## Keys
