@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.10.0-informational" alt="Version 0.10.0">
+  <img src="https://img.shields.io/badge/version-0.11.0-informational" alt="Version 0.11.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -44,6 +44,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## What's new
 
+- **0.11.0**: Eighth round: a quieter, darker Spuza. Spuza is dark by default on Windows and Linux; on a Mac it follows the system's light or dark appearance until you pick one. `Ctrl+T` (or View, Dark theme) flips it, and the pick is remembered. The bar above the picture is quieter: icon buttons for Back, Next, Mark, Zoom and Review, a filled Copy button, and a `⋯` menu holding Move on mark, Full screen, Preferences, Lights out and the advanced tools. Hover a button for its name and key. `Tab` is Lights out: the bar, sidebar, inspector, filmstrip and status line hide, and a small pill floats over the picture with the mark, `n / N`, `keys ?` and Copy. It is remembered between runs, and `F` full screen stays independent of it. There is now a menu bar (File, Edit, View, Picture, Help) that lists every action with its key, `?` opens a keyboard shortcut overlay, and `Ctrl+Q` quits. The keys and features are otherwise the same.
 - **0.10.0**: Seventh feedback round. A crop or a story fit is now a picture of its own on the filmstrip. `Enter` in a crop (`X`) or a story fit (`S`) adds a new picture right after the original, with its own thumbnail and a tag (the ratio, `crop` for Free, an outlined `9:16` for a story). The original is not touched, so `X` on it again cuts another crop: one original, any number of crops and story fits. A crop picture can be viewed, zoomed, marked and stepped through like any other, and `Backspace` removes it. Mark all counts them. Copy writes each marked one to `ed`. A session from 0.9.0 turns its crops and story fits into these pictures.
 
 - **0.9.0**: Sixth feedback round. Crop (`X`) has a ratio strip above the picture. `1` to `8` pick Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16 or 1.91:1, `V` turns the ratio (4:5 becomes 5:4) and `0` resets the rectangle. A locked ratio has four corner handles and a label with the ratio and pixels. The copy names the file after the ratio, `<name>_4x5.jpg`. A picture can now have a crop and a story fit together. The inspector shows the crop in pixels, and the filmstrip tag shows the ratio.
@@ -76,7 +77,7 @@ Spuza is built for the first pass over a shoot: hundreds of frames and a handful
 4. **Review.** `R` puts every marked picture on one contact sheet for a second look.
 5. **Copy.** `C` copies the marked pictures to a folder, sorted into `raw`, `soc` and `ed`. Then Spuza can eject the card and quit.
 
-With two cards in (a camera with two slots, say), Spuza lists both and opens the first. The status bar names the other and how many of its pictures are copies of this card's. `spuza --card 2` opens the second.
+With two cards in (a camera with two slots, say), Spuza lists both and opens the first. The status line names the other and how many of its pictures are copies of this card's. `spuza --card 2` opens the second.
 
 <p align="center">
   <img src="docs/img/workbench.png" alt="The workbench: the picture, the filmstrip, the inspector and the marked count" width="900">
@@ -96,12 +97,20 @@ Right-click a picture in the filmstrip, the viewer or the review to show it in F
 **Marks never touch your files.** Spuza never writes to a picture, its EXIF or the card. It writes only four things: the copies you ask for (and the `raw`, `soc` and `ed` folders they go in), a log of each copy in its own app-data folder (never in your destination), its own preferences, and, with Resume in advanced mode, a small session file in its app-data folder.
 
 <p align="center">
+  <img src="docs/img/lights-out.png" alt="Lights out: the picture with a small pill showing the mark, the position and Copy" width="900">
+</p>
+
+<p align="center">
+  <img src="docs/img/shortcuts.png" alt="The ? overlay: every key, grouped by task" width="900">
+</p>
+
+<p align="center">
   <img src="docs/img/bleed.png" alt="Full screen: the picture alone, with a one-line status strip" width="900">
 </p>
 
 ## Keys
 
-Every key in one table. Most also have a toolbar button with the shortcut printed on it. Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only, to keep the toolbar on one row.
+Every key in one table. The bar above the picture has icon buttons for the common ones (hover a button for its name and key), and the menu bar (File, Edit, View, Picture, Help) lists every action with its key. Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only. `?` shows the same list over the picture.
 
 | Key | Where | Does |
 |---|---|---|
@@ -218,7 +227,7 @@ Other rules:
 
 ## Preferences
 
-`Cmd-,` (`Ctrl-,` on Windows) or the toolbar button opens Preferences:
+`Cmd-,` (`Ctrl-,` on Windows) or Preferences in the `⋯` menu opens it:
 
 - **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
 - **Copy into raw / soc / ed folders**, **Eject the card after copying**, **Quit Spuza after copying** and **Write rotation to copies (EXIF)** (all default on): see [Copying](#copying).
