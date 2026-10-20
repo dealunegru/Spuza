@@ -122,6 +122,8 @@ Every key in one table. Most also have a toolbar button with the shortcut printe
 | `C` | viewer | copy the marked pictures to a folder |
 | `Cmd-,` or `Ctrl-,` | anywhere | Preferences (`Cmd` on a Mac, `Ctrl` on Windows) |
 | `Ctrl+Q` | anywhere | Quit (`Cmd+Q` on a Mac) |
+| `Tab` | anywhere | Lights out: hide the bar, sidebar, inspector, filmstrip and status line, and float a small pill (marked, `n / N`, `keys ?`, Copy) over the picture. `Tab` again brings the bar back. Remembered between runs. Also View, Lights out. Inside the Copy or Preferences sheet `Tab` still moves between fields |
+| `Ctrl+T` | anywhere | switch between the dark and the light theme (`Cmd+T` on a Mac). Remembered between runs. Also View, Dark theme |
 | `?` | anywhere | the keyboard shortcut overlay: every key, grouped by task. `Esc` or `?` closes it. The same list is in the menu bar (File, Edit, View, Picture, Help) |
 | `X` | viewer | **crop**: drag a rectangle on the picture, with a ratio strip above it. `Enter` adds the result as a new picture after the original. On a crop picture, `X` re-crops it from the original |
 | `1` to `8` | crop | pick the ratio: Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16, 1.91:1. Clicking a chip on the strip does the same. Nothing outside the crop |

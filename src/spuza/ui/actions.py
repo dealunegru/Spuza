@@ -6,7 +6,8 @@ parses it with ``ast`` (so keep ``ACTIONS`` a list of literal ``Action(...)`` ca
 
 ``handler`` names a MainWindow method that takes no arguments. ``flag`` is a ``features`` flag: the action is
 hidden while that flag is off (advanced-only). ``state`` names the toolbar button whose checked / enabled state the
-action mirrors ("" for none; "next:<name>" is one of the advanced row's buttons).
+action mirrors ("" for none; "next:<name>" is one of the advanced row's buttons). Checkable actions with no button
+(lights_out, dark_theme) are kept in step by MainWindow.refresh_actions from the window's own state.
 """
 
 from __future__ import annotations
@@ -57,6 +58,10 @@ ACTIONS = [
            state="next:peaking"),
     Action("afpoint", "View", "AF point", ("O",), "act_afpoint", "View", flag="focus_point", checkable=True,
            state="next:afpoint"),
+    # layout and look: not mirrored by a toolbar button; their checked state is the window's (lights_out, theme)
+    Action("lights_out", "View", "Lights out", ("Tab",), "act_lights_out", "View", checkable=True, needs_picture=False),
+    Action("dark_theme", "View", "Dark theme", ("Ctrl+T",), "act_dark_theme", "View", checkable=True,
+           needs_picture=False),  # a modifier key: a stray T while culling must not flip a saved preference
     Action("rotate_left", "Picture", "Rotate left", ("[",), "act_rotate_left", "Picture"),
     Action("rotate_right", "Picture", "Rotate right", ("]",), "act_rotate_right", "Picture"),
     Action("crop", "Picture", "Crop", ("X",), "act_crop", "Picture", needs_viewer=True),

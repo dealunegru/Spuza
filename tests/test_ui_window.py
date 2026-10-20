@@ -174,7 +174,7 @@ def test_prefetch_still_runs(win):
 def test_full_bleed_toggle_and_esc(win):
     key(win, Qt.Key_F)
     assert win.is_bleed
-    for part in (win.toolbar, win.sidebar, win.inspector, win.filmstrip, win.statusBar()):
+    for part in (win.quiet_bar, win.sidebar, win.inspector, win.filmstrip, win.statusBar()):  # the quiet bar is the toolbar now
         assert part.isHidden()
     assert win.viewer.strip.isHidden()  # hidden at rest; pointer movement reveals it
     win.viewer.reveal_strip()
@@ -182,7 +182,7 @@ def test_full_bleed_toggle_and_esc(win):
     assert "1 of 6" in win.viewer.strip.text()
     key(win, Qt.Key_Escape)
     assert not win.is_bleed
-    for part in (win.toolbar, win.sidebar, win.inspector, win.filmstrip, win.statusBar()):
+    for part in (win.quiet_bar, win.sidebar, win.inspector, win.filmstrip, win.statusBar()):
         assert not part.isHidden()
     assert win.viewer.strip.isHidden()
 

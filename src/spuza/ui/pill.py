@@ -1,6 +1,7 @@
 """Direction B, Lights out: a floating translucent pill over the photo.
 
-Standalone and not yet wired. Never takes keyboard focus, so window keys keep working.
+Wired into MainWindow (``window.pill``, shown only in Lights out over the single view). Never takes keyboard focus,
+so window keys keep working.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget
 
 from . import icons, theme
+from . import tokens as tk
 from .icons import parse_color
 
 # tokens.json dark values, used when theme.Colors predates the new fields.
@@ -84,6 +86,12 @@ class LightsOutPill(QWidget):
         self.adjustSize()
         self.reposition()
 
+    def help_button(self) -> QPushButton:
+        return self._help
+
+    def copy_button(self) -> QToolButton:
+        return self._copy
+
     def marked_text(self) -> str:
         return self._mark.text()
 
@@ -109,9 +117,13 @@ class LightsOutPill(QWidget):
 
     def retheme(self) -> None:
         c = theme.current()
-        text, dim, marked = _col(c, "text"), _col(c, "text_dim"), _col(c, "marked")
+        # The HUD is dark in both themes (tokens.json: rgba(16..24)), so its text, marked green and key chip are the
+        # dark theme's; only the HUD itself and the Copy blue follow the current theme. (Real-platform grab, light B:
+        # the light theme's dim grey on the dark HUD was unreadable.)
+        d = tk.DARK
+        text, dim, marked = d["text"], d["text_dim"], d["marked"]
         focus, on_focus = _col(c, "focus"), _col(c, "on_focus")
-        chip_bg, chip_fg = _col(c, "key_chip_bg"), _col(c, "key_chip_text")
+        chip_bg, chip_fg = d["key_chip_bg"], d["key_chip_text"]
         self._hud = parse_color(_col(c, "hud"))
         self._copy.setIcon(icons.icon("copy", on_focus, 16))
         self.setStyleSheet(f"""

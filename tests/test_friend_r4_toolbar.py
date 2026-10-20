@@ -33,7 +33,9 @@ def test_one_classic_row_and_the_three_actions_are_hotkeys_only():
     try:
         assert not hasattr(win, "toolbar3") and not hasattr(window_mod, "ROW2_BUTTONS")
         assert not {"markall", "rotl", "rotr"} & set(win.buttons)
-        assert all(b.parent() is win.toolbar for b in win.buttons.values())
+        bar = {"back", "next", "mark", "zoom", "review", "copy"}  # design round 2: the quiet bar; the rest are in its overflow
+        assert all(win.buttons[n].parent() is win.quiet_bar for n in bar)
+        assert all(win.buttons[n].parent() is win.toolbar for n in set(win.buttons) - bar)
         keys = {s.key().toString() for s in win.findChildren(QShortcut)}
         assert {QKeySequence(k).toString() for k in ("Ctrl+A", "Ctrl+Shift+A", "Ctrl+Z", "[", "]")} <= keys
         QTest.keyClick(win, Qt.Key_A, Qt.KeyboardModifier.ControlModifier)
