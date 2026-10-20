@@ -13,6 +13,7 @@ from PySide6.QtCore import QSettings
 
 ORG, APP = "fungimasters", "Spuza"
 ADVANCE_ON_MARK = "advance_on_mark"
+THEME = "view/theme"  # "dark" or "light": a manual pick; absent means no pick yet
 
 
 def open_settings() -> QSettings:

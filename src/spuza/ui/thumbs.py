@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from PySide6.QtCore import QObject, QRectF, QRunnable, QThread, QThreadPool, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QTransform
+from PySide6.QtCore import QObject, QRectF, QRunnable, Qt, QThread, QThreadPool, Signal
+from PySide6.QtGui import QImage, QPainter, QTransform
 
 THUMB_CACHE_MAX = 400  # decoded thumbnails kept; least recently used dropped first
 MAX_INFLIGHT = 4  # tasks submitted to the pool at once; the rest wait here and can still be dropped
@@ -36,7 +36,7 @@ def story_frame(img: QImage, turns: int, story, fw: int, fh: int) -> QImage:
     from spuza import story as st
 
     out = QImage(max(1, int(fw)), max(1, int(fh)), QImage.Format.Format_RGB32)
-    out.fill(QColor("#000000"))
+    out.fill(Qt.GlobalColor.black)  # the story export's own black, not a theme colour
     if img is None or img.isNull():
         return out
     t = int(turns) % 4

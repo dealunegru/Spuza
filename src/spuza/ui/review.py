@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QPointF, QRect, QRunnable, QSize, Qt, QThreadPool, Signal
-from PySide6.QtGui import (QColor, QImage, QKeyEvent, QPainter, QPixmap, QStandardItem, QStandardItemModel,
+from PySide6.QtGui import (QImage, QKeyEvent, QPainter, QPixmap, QStandardItem, QStandardItemModel,
                            QTransform)
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from spuza import features
 from spuza.copy import human_size
 from spuza.reveal import reveal_menu
+from spuza.ui import theme
 from spuza.ui.viewer import info_native_size, step_scale
 
 THUMB_SIDE = 480  # decode size for the worker
@@ -46,7 +47,6 @@ THUMB_BOX = QSize(196, 130)
 ZOOM_SIDE = 2560
 NATIVE = 0  # the "side" of a native-size decode (the loader gets max_side None)
 MAX_INFLIGHT = 8  # decodes queued at once
-AMBER = QColor("#d98a00")
 IDX_ROLE = Qt.ItemDataRole.UserRole + 1
 KIND_ROLE = Qt.ItemDataRole.UserRole + 2
 
@@ -120,9 +120,9 @@ class _Delegate(QStyledItemDelegate):
         badge_rect = QRect(r.x(), box.bottom() + 8 + fm.height(), fm.horizontalAdvance(kind) + 14, fm.height() + 2)
         if _single_raw(kind):
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(AMBER)
+            p.setBrush(theme.qcolor(theme.current().warning))
             p.drawRoundedRect(badge_rect, 4, 4)
-            p.setPen(QColor("black"))
+            p.setPen(theme.qcolor(theme.current().hud, 255))
         else:
             p.setPen(text_col)
             p.setBrush(Qt.BrushStyle.NoBrush)
