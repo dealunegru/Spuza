@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
@@ -34,6 +34,7 @@ from spuza import features
 from spuza import ratio as ratio_mod
 from spuza.cards import catalog_note
 from spuza.copy import human_size
+from spuza.ui import actions as act
 from spuza.ui import settings, theme
 from spuza.ui.filmstrip import Filmstrip
 from spuza.ui.inspector import Inspector, derived_lines
@@ -280,19 +281,20 @@ class MainWindow(QMainWindow):
             self.buttons[name] = b
             self.toolbar.addWidget(b)
         b = self.buttons
-        b["back"].clicked.connect(lambda: self._control(Qt.Key_Left, lambda: self.step(-1)))
-        b["next"].clicked.connect(lambda: self._control(Qt.Key_Right, lambda: self.step(1)))
-        b["mark"].clicked.connect(lambda: self._control(Qt.Key_Space, self.toggle_mark))
-        b["advance"].clicked.connect(lambda: self.set_advance_on_mark(not self.advance_on_mark))
-        b["zoom"].clicked.connect(lambda: self._control(Qt.Key_Z, self.viewer.toggle_zoom))
-        b["fullscreen"].clicked.connect(lambda: self.set_bleed(not self.is_bleed))
-        b["review"].clicked.connect(lambda: self.toggle_review())
-        b["copy"].clicked.connect(lambda: self.open_copy())
-        self.prefs_button.clicked.connect(lambda: self.open_prefs())
+        # the toolbar buttons and the menu actions (ui/actions.py) run the same act_* methods
+        b["back"].clicked.connect(lambda: self.act_back())
+        b["next"].clicked.connect(lambda: self.act_next())
+        b["mark"].clicked.connect(lambda: self.act_mark())
+        b["advance"].clicked.connect(lambda: self.act_advance())
+        b["zoom"].clicked.connect(lambda: self.act_zoom())
+        b["fullscreen"].clicked.connect(lambda: self.act_fullscreen())
+        b["review"].clicked.connect(lambda: self.act_review())
+        b["copy"].clicked.connect(lambda: self.act_copy())
+        self.prefs_button.clicked.connect(lambda: self.act_prefs())
         nb = self.next_buttons
-        nb["compare"].clicked.connect(lambda: self._compare_button())
-        nb["peaking"].clicked.connect(lambda: self.toggle_peaking())
-        nb["afpoint"].clicked.connect(lambda: self.toggle_marker())
+        nb["compare"].clicked.connect(lambda: self.act_compare())
+        nb["peaking"].clicked.connect(lambda: self.act_peaking())
+        nb["afpoint"].clicked.connect(lambda: self.act_afpoint())
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.sidebar)
@@ -363,6 +365,11 @@ class MainWindow(QMainWindow):
                         (QKeySequence("["), lambda: self.rotate(-1)), (QKeySequence("]"), lambda: self.rotate(1))):
             sc = QShortcut(seq, self, context=Qt.ShortcutContext.WindowShortcut, activated=fn)
             sc.setAutoRepeat(False)  # a held key must not mark, undo or turn repeatedly
+        quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self, context=Qt.ShortcutContext.WindowShortcut,
+                            activated=lambda: self.act_quit())  # StandardKey.Quit is empty on Windows
+        quit_sc.setAutoRepeat(False)
+        self._shortcuts = None  # the `?` overlay, built on each open
+        self._build_menus()
 
         self.retheme()
         self.buttons["advance"].setChecked(self.advance_on_mark)
@@ -1399,6 +1406,7 @@ class MainWindow(QMainWindow):
         nb["compare"].setChecked(self._compare_shown())
         nb["peaking"].setChecked(self.peaking is not None and self.peaking.is_on())
         nb["afpoint"].setChecked(self.marker is not None and self.marker.is_on())
+        self.refresh_actions()
 
     # -- peaking (P) and the AF ring (O)
     def toggle_peaking(self) -> None:
@@ -1649,6 +1657,157 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._sync_compare)  # N may have added a cell: the highlight follows
         return super().eventFilter(obj, ev)
 
+    # -- menu bar (ui/actions.py is the one table) -------------------------------------------------
+    def _build_menus(self) -> None:
+        """File / Edit / View / Picture / Help. The QActions DISPLAY their keys (so the native macOS bar shows them
+        too) but their shortcut context is WidgetShortcut and they belong to no widget that takes focus, so a key
+        press is still handled once, by keyPressEvent or a QShortcut; clicking one runs the same act_* method."""
+        self.menu_actions: dict[str, QAction] = {}
+        menus = {}
+        for name in act.MENUS:
+            menus[name] = self.menuBar().addMenu(name)
+            menus[name].aboutToShow.connect(self.refresh_actions)
+        for a in act.ACTIONS:
+            qa = QAction(a.label, self)
+            qa.setShortcuts([QKeySequence(k) for k in a.keys])
+            qa.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+            qa.setShortcutVisibleInContextMenu(True)
+            qa.setCheckable(a.checkable)
+            qa.triggered.connect(lambda _checked=False, h=a.handler: self._run_action(h))
+            menus[a.menu].addAction(qa)
+            self.menu_actions[a.id] = qa
+        for btn in (*self.buttons.values(), *self.next_buttons.values()):
+            btn.toggled.connect(lambda _on=False: self.refresh_actions())
+        self.refresh_actions()
+
+    def _run_action(self, handler: str) -> None:
+        getattr(self, handler)()
+        self.refresh_actions()
+
+    def refresh_actions(self) -> None:
+        """Visible (advanced-only flags), enabled and checked in step with the toolbar buttons and the mode."""
+        menu_actions = getattr(self, "menu_actions", None)
+        if not menu_actions:  # a toolbar toggle during construction, before the menus exist
+            return
+        has = len(self.catalog) > 0
+        in_review = self.stack.currentIndex() == 1
+        for a in act.ACTIONS:
+            qa = menu_actions[a.id]
+            qa.setVisible(not a.flag or features.enabled(a.flag))
+            btn = None
+            if a.state.startswith("next:"):
+                btn = self.next_buttons.get(a.state[5:])
+            elif a.state:
+                btn = self.buttons.get(a.state)
+            ok = (has or not a.needs_picture) and not (a.needs_viewer and in_review)
+            qa.setEnabled(ok and (btn is None or btn.isEnabled()))
+            if a.checkable and btn is not None:
+                qa.blockSignals(True)  # a mirrored state, not a click
+                qa.setChecked(btn.isChecked())
+                qa.blockSignals(False)
+
+    def act_back(self) -> None:
+        self._control(Qt.Key_Left, lambda: self.step(-1))
+
+    def act_next(self) -> None:
+        self._control(Qt.Key_Right, lambda: self.step(1))
+
+    def act_mark(self) -> None:
+        self._control(Qt.Key_Space, self.toggle_mark)
+
+    def act_advance(self) -> None:
+        self.set_advance_on_mark(not self.advance_on_mark)
+
+    def act_zoom(self) -> None:
+        self._control(Qt.Key_Z, self.viewer.toggle_zoom)
+
+    def act_zoom_in(self) -> None:
+        self.viewer.zoom_in()
+
+    def act_zoom_out(self) -> None:
+        self.viewer.zoom_out()
+
+    def act_fullscreen(self) -> None:
+        self.set_bleed(not self.is_bleed)
+
+    def act_review(self) -> None:
+        self.toggle_review()
+
+    def act_copy(self) -> None:
+        self.open_copy()
+
+    def act_prefs(self) -> None:
+        self.open_prefs()
+
+    def act_quit(self) -> None:
+        self.close()
+
+    def act_mark_all(self) -> None:
+        self.mark_all(True)
+
+    def act_unmark_all(self) -> None:
+        self.mark_all(False)
+
+    def act_undo_mark_all(self) -> None:
+        self.undo_mark_all()
+
+    def act_start_fresh(self) -> None:
+        self.start_fresh()
+
+    def act_compare(self) -> None:
+        self._compare_button()
+
+    def act_peaking(self) -> None:
+        self.toggle_peaking()
+
+    def act_afpoint(self) -> None:
+        self.toggle_marker()
+
+    def act_rotate_left(self) -> None:
+        self.rotate(-1)
+
+    def act_rotate_right(self) -> None:
+        self.rotate(1)
+
+    def act_crop(self) -> None:
+        self.start_crop()
+
+    def act_story(self) -> None:
+        self.start_story()
+
+    def act_remove(self) -> None:
+        self.remove_derived()
+
+    def act_help(self) -> None:
+        self.toggle_shortcuts()
+
+    # -- the `?` overlay
+    def toggle_shortcuts(self) -> None:
+        ov = self._shortcuts
+        if ov is not None and ov.isVisible():
+            ov.close_overlay()
+            return
+        if ov is not None:
+            ov.deleteLater()
+        from spuza.ui.shortcut_overlay import ShortcutOverlay  # built fresh each time: it reads the theme and the mode
+
+        self._shortcuts = ov = ShortcutOverlay(self.stack)
+        ov.setGeometry(self.stack.rect())
+        ov.show()
+        ov.raise_()
+        ov.setFocus()
+
+    def _overlay_closed(self) -> None:
+        if self.stack.currentIndex() == 1:
+            self._focus_review()
+        else:
+            self.setFocus()
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        if self._shortcuts is not None and self._shortcuts.isVisible():
+            self._shortcuts.setGeometry(self.stack.rect())
+
     # -- keys, theme, close -----------------------------------------------------------------------
     def keyPressEvent(self, e) -> None:
         if e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
@@ -1662,7 +1821,7 @@ class MainWindow(QMainWindow):
                 self._forward_to_compare(e)
                 e.accept()
                 return
-            if k not in (Qt.Key_F, Qt.Key_C, Qt.Key_P, Qt.Key_O):
+            if k not in (Qt.Key_F, Qt.Key_C, Qt.Key_P, Qt.Key_O, Qt.Key_Question):
                 return super().keyPressEvent(e)
         if self.stack.currentIndex() == 1:
             if k in GRID_KEYS and not self._forwarding:
@@ -1714,6 +1873,9 @@ class MainWindow(QMainWindow):
         elif k == Qt.Key_U and features.enabled("resume_session") and self.stack.currentIndex() == 0:
             if not e.isAutoRepeat():
                 self.start_fresh()
+        elif k == Qt.Key_Question:
+            if not e.isAutoRepeat():
+                self.toggle_shortcuts()
         elif k == Qt.Key_Escape:
             if self.stack.currentIndex() == 1:
                 self.close_review()

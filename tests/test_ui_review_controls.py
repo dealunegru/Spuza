@@ -30,7 +30,7 @@ REVIEW_TABLE = {
     "fullscreen": "disabled", "review": "global", "copy": "global",
     "sidebar:All": "global", "sidebar:Marked": "global",
     "shortcut:F11": "disabled", "shortcut:A": "global", "filmstrip": "grid",
-    "prefs": "global", "shortcut:Ctrl+,": "global",
+    "prefs": "global", "shortcut:Ctrl+,": "global", "shortcut:Ctrl+Q": "global",
     # friend round 3: Mark all acts on the whole card from anywhere; the turns act on the grid's selected pictures
     # (round 4: hotkeys only, no buttons)
     "shortcut:Ctrl+A": "global", "shortcut:Ctrl+Shift+A": "global", "shortcut:Ctrl+Z": "global",
@@ -91,7 +91,7 @@ def in_review(w):
 
 
 # Widgets that are Qt internals, not controls of ours. Anything else a window owns must be in the table.
-INTERNAL_BUTTONS = {"qt_toolbar_ext_button"}  # the toolbar's overflow chevron
+INTERNAL_BUTTONS = {"qt_toolbar_ext_button", "qt_menubar_ext_button"}  # the toolbar's and menu bar's overflow chevrons
 
 
 def _control_key(b, w):
@@ -115,8 +115,9 @@ def test_table_covers_every_control(w):
         if k is not None:
             found.add(k)
     found |= {f"shortcut:{s.key().toString()}" for s in w.findChildren(QShortcut)}
+    # the menu bar's QActions only display keys (WidgetShortcut, never fire): test_design_menu.py covers them
     found |= {f"shortcut:{a.shortcut().toString()}" for a in w.findChildren(QAction)
-              if not a.shortcut().isEmpty()}
+              if not a.shortcut().isEmpty() and a not in w.menu_actions.values()}
     assert found == set(REVIEW_TABLE), f"unlisted: {found - set(REVIEW_TABLE)}, stale: {set(REVIEW_TABLE) - found}"
 
 
