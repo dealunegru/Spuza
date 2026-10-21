@@ -54,6 +54,12 @@ def isolated_sessions(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolated_pills(tmp_path, monkeypatch):
+    """Pills (the book and the per-app index) go to a per-test folder: no test reads or writes the real ones."""
+    monkeypatch.setenv("SPUZA_PILLS_DIR", str(tmp_path / "spuza-pills"))
+
+
+@pytest.fixture(autouse=True)
 def classic_mode():
     """Mode is module state: every test starts and ends in classic."""
     from spuza import features

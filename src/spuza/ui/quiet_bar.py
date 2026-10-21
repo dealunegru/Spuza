@@ -48,7 +48,9 @@ class QuietBar(QWidget):
         self._title = QLabel("")
         self._title.setObjectName("quietTitle")
         self._title.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._title.setMinimumWidth(48)  # the title gives way first when the pill tray needs the room
         self._lay.addWidget(self._title)
+        self._tray: QWidget | None = None
         self._lay.addStretch(1)
         self._more = QToolButton()
         self._more.setObjectName("quietMore")
@@ -64,6 +66,16 @@ class QuietBar(QWidget):
     # ---- public API -------------------------------------------------------------------------
     def set_title(self, folder: str, count: int | None = None) -> None:
         self._title.setText(folder if count is None else f"{folder}  ·  {count}")
+
+    def set_tray(self, tray: QWidget) -> QWidget:
+        """The pill tray, right after the title (before the stretch, so it takes room only up to what it needs)."""
+        self._tray = tray
+        self._lay.insertSpacing(1, 8)
+        self._lay.insertWidget(2, tray)
+        return tray
+
+    def tray(self) -> QWidget | None:
+        return self._tray
 
     def title(self) -> str:
         return self._title.text()

@@ -15,6 +15,7 @@ is ejected and nothing quits.
 
 from __future__ import annotations
 
+import html
 import threading
 import time
 from collections.abc import Callable
@@ -25,6 +26,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -43,6 +45,7 @@ from spuza import story as story_mod
 from spuza.catalog import KNOWN_EXTS
 from spuza.copy import human_size
 from spuza.ui import theme
+from spuza.xmp import PillTag
 
 MIN_PROGRESS_INTERVAL = 1 / 30  # seconds between progress emits (about 30 per second)
 BAR_STEPS = 1000
@@ -121,8 +124,23 @@ class CopySheet(QDialog):
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
                  eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
-                 stories=None, crop_ratios=None, derived=None):
+                 stories=None, crop_ratios=None, derived=None, pills=None, write_pills: bool = True):
         super().__init__(parent)
+        # contract spp-copy: Picture.primary -> the pills (xmp.PillTag) that picture carries. They are written into its
+        # copies (see copy.plan_copy) and shown as a block with one chip per pill; a value that is not a PillTag is dropped.
+        self.write_pills = bool(write_pills)
+        self.pills: dict[Path, tuple[PillTag, ...]] = {}
+        try:
+            items = list(dict(pills or {}).items())
+        except (TypeError, ValueError):
+            items = []
+        for k, v in items:
+            try:
+                tags = tuple(t for t in v if isinstance(t, PillTag))
+            except TypeError:
+                continue
+            if tags:
+                self.pills[k] = tags
         # contract fr7: (Picture, derived.Derived) pairs, the marked derived pictures only; each exports to ed/ whether or
         # not its original is in `pictures`, with the source's turns (from `rotations`) baked in. A malformed pair is dropped.
         self.derived = []
@@ -222,6 +240,7 @@ class CopySheet(QDialog):
         self.notes_label.setWordWrap(True)
         self.notes_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._fill_notes()
+        self._build_pills_block()
         self.dest_label = QLabel()
         self.dest_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.dest_label.setWordWrap(True)
@@ -278,6 +297,7 @@ class CopySheet(QDialog):
         lay.addWidget(self.list, 1)
         lay.addWidget(self.total_label)
         lay.addWidget(self.notes_label)
+        lay.addWidget(self.pills_block)
         lay.addWidget(self.free_label)
         lay.addWidget(self.plan_label)
         lay.addWidget(self.bar)
@@ -309,6 +329,67 @@ class CopySheet(QDialog):
             tips.append("Could not be read:" + NL + _paths_tip(self.unreadable))
         self.notes_label.setText(NL.join(parts))
         self.notes_label.setToolTip((NL + NL).join(tips))
+
+    def pill_counts(self) -> list[tuple[PillTag, int]]:
+        """Each pill that a marked picture carries, with how many marked pictures carry it (first seen first)."""
+        counts: dict[PillTag, int] = {}
+        for p in self.pictures:
+            for t in dict.fromkeys(self.pills.get(getattr(p, "primary", None), ())):
+                counts[t] = counts.get(t, 0) + 1
+        return list(counts.items())
+
+    def _pill_pictures(self) -> int:
+        return sum(1 for p in self.pictures if self.pills.get(getattr(p, "primary", None)))
+
+    def _build_pills_block(self) -> None:
+        """The Pills block (mockup A): what is written, one chip per pill with its count, how many pictures carry pills.
+        Hidden when no marked picture has a pill (or the write is off). Styled from the theme, so both modes work."""
+        c = theme.current()
+        counts = self.pill_counts() if self.write_pills else []
+        self.pills_block = QFrame()
+        self.pills_block.setObjectName("pillsBlock")
+        self.pills_block.setStyleSheet(
+            f"QFrame#pillsBlock {{ border: 1px solid {c.border}; border-radius: 4px; }}"
+            f" QFrame#pillsBlock QLabel {{ border: none; }}"
+        )
+        box = QVBoxLayout(self.pills_block)
+        box.setContentsMargins(8, 6, 8, 6)
+        box.setSpacing(4)
+        self.pills_intro = QLabel("Pills: written to copies as keywords + colour label (XMP); Finder tags on Mac")
+        self.pills_intro.setWordWrap(True)
+        box.addWidget(self.pills_intro)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self.pill_chips: list[QLabel] = []
+        for tag, n in counts:
+            chip = QLabel(f'<span style="color:{tag.hex}">&#9679;</span> {html.escape(tag.name)} &times;{n}')
+            chip.setTextFormat(Qt.TextFormat.RichText)
+            chip.setStyleSheet(
+                f"QLabel {{ border: 1px solid {tag.hex}; border-radius: 10px; padding: 2px 8px; color: {c.text}; }}"
+            )
+            chip.setToolTip(f"{tag.name}: {_n(n, 'marked picture', 'marked pictures')}")
+            self.pill_chips.append(chip)
+            row.addWidget(chip)
+        row.addStretch(1)
+        box.addLayout(row)
+        n_pics = self._pill_pictures() if counts else 0
+        self.pills_count_label = QLabel(f"{n_pics} {'picture carries' if n_pics == 1 else 'pictures carry'} pills")
+        self.pills_count_label.setStyleSheet(f"color: {c.text_dim};")
+        box.addWidget(self.pills_count_label)
+        self.pills_block.setVisible(bool(counts))
+
+    def _pills_map(self) -> dict[Path, tuple[PillTag, ...]]:
+        """Source picture file -> pills for plan_copy: a picture's pills go to its picture files (a raw and its JPEG
+        twin), never to its companions (empty when the write is off)."""
+        out: dict[Path, tuple[PillTag, ...]] = {}
+        if not self.write_pills:
+            return out
+        for p in self.pictures:
+            tags = self.pills.get(getattr(p, "primary", None))
+            if tags:
+                skip = set(getattr(p, "companions", ()))
+                out.update({f: tags for f in p.files if f not in skip and f.suffix.lower() in KNOWN_EXTS})
+        return out
 
     # ---- destination ---------------------------------------------------------------------------
     def pick_folder(self) -> None:
@@ -439,7 +520,7 @@ class CopySheet(QDialog):
 
     def _plan(self):
         return copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise, self._turns(),
-                                  self._crop_jobs(), self._story_jobs())
+                                  self._crop_jobs(), self._story_jobs(), self._pills_map())
 
     def _show_plan(self, plan=None) -> None:
         self.plan = plan or self._plan()

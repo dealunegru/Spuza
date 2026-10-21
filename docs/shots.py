@@ -3,7 +3,7 @@
     uv run python docs/shots.py [SOURCE] [OUT]        (defaults: docs/samples, docs/img)
 
 Runs on the real platform (windows / cocoa), not offscreen: offscreen on Windows draws every glyph as a
-box. Preferences and resume sessions go to a temp folder, so the script never touches yours.
+box. Preferences, resume sessions and pills go to a temp folder, so the script never touches yours.
 Writes the files named in SHOTS.
 """
 
@@ -39,6 +39,7 @@ def main(argv: list[str]) -> int:
     scratch = Path(tempfile.mkdtemp(prefix="spuza-shots-"))
     os.environ["SPUZA_SETTINGS_FILE"] = str(scratch / "prefs.ini")  # before any spuza import reads settings
     os.environ["SPUZA_SESSIONS_DIR"] = str(scratch / "sessions")
+    os.environ["SPUZA_PILLS_DIR"] = str(scratch / "pills")
     try:
         return _run(source, out)
     finally:
@@ -78,6 +79,18 @@ def _run(root: Path, out: Path) -> int:
     window.sidebar.set_root(Path("D:/Photos/Card"))
     keepers = Path(os.path.normpath(Path(Path.home().anchor) / "Selects"))  # a drive that exists, so free space shows
     win_mod.default_copy_dest = lambda: keepers
+
+    # Pills: four of them, put on the first four pictures with the real digit keys' handler.
+    window.wait_pill_readback()  # the startup read-back must finish first, or it could land over these
+    for name, colour in (("Hero", "Blue"), ("Delivered", "Green"), ("Edit", "Orange"), ("Print", "Purple")):
+        window.pill_book.create(name, colour)
+    window._pills_edited()
+    for i, digits in enumerate(((1,), (1, 2), (3,), (1, 4))):
+        window.go_to(i)
+        for d in digits:
+            window._pill_key(d)
+    window.go_to(0)
+    window.statusBar().clearMessage()  # not the last pill's "Print on"
 
     def pump(seconds: float) -> None:
         end = time.monotonic() + seconds

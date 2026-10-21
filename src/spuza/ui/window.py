@@ -23,18 +23,20 @@ landing on it (focus_point), and resume (resume_session; U starts fresh). Their 
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QAction, QIcon, QKeyEvent, QKeySequence, QPixmap, QShortcut, QPainter
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSplitter,
                                QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from spuza import derived as dv
 from spuza import features
+from spuza import pills as pills_mod
 from spuza import ratio as ratio_mod
 from spuza.cards import catalog_note
 from spuza.copy import human_size
@@ -44,11 +46,18 @@ from spuza.ui import tokens as tk
 from spuza.ui.filmstrip import Filmstrip
 from spuza.ui.inspector import Inspector, derived_lines
 from spuza.ui.pill import LightsOutPill
+from spuza.ui.pill_tray import MANAGE_SEQ, PillTray, draw_dot, native
 from spuza.ui.quiet_bar import QuietBar, tooltip_text
 from spuza.ui.ratio_strip import RatioStrip
 from spuza.ui.viewer import Viewer, info_native_size
 
 DOT = "·"
+log = logging.getLogger(__name__)
+
+PILL_READ_MAX = 20000  # the read-back looks at this many pictures of a folder at most (each read is bounded in xmp.py)
+PILL_READ_BATCH = 32  # pictures per hand-back to the UI thread
+PILL_SAVE_MS = 800  # a pill change is written this long after the last one (and always on close)
+PILL_JOIN_MS = 2000  # the longest closeEvent waits for the read-back and a save in flight
 
 
 class _MaskSignals(QObject):
@@ -74,6 +83,69 @@ class _MaskJob(QRunnable):
             self.sig.done.emit(self.gen, self.index, out)
         except RuntimeError:  # the window was destroyed meanwhile
             pass
+
+
+class _PillSignals(QObject):
+    batch = Signal(int, list)  # generation, [(picture index, [PillTag])] for the pictures that carry a spuza:pills bag
+    finished = Signal(int, int)  # generation, pictures looked at
+
+
+class _PillReadJob(QRunnable):
+    """Reads every picture's pills from its XMP off the GUI thread (xmp.read_picture_pills), and warms the index's
+    per-file keys so the UI thread never has to open a file to draw a dot. Stops at once when `cancel` is set (another
+    folder loaded, or the window closes) and after PILL_READ_MAX pictures."""
+
+    def __init__(self, sig: _PillSignals, gen: int, pictures, index, cancel: threading.Event):
+        super().__init__()
+        self.sig, self.gen, self.pictures, self.index, self.cancel = sig, gen, pictures, index, cancel
+        self.setAutoDelete(True)
+
+    def _emit(self, signal, *args) -> None:
+        try:
+            signal.emit(*args)
+        except RuntimeError:  # the window was destroyed meanwhile
+            pass
+
+    def run(self) -> None:
+        from spuza import xmp
+
+        batch, seen = [], 0
+        for k, pic in enumerate(self.pictures[:PILL_READ_MAX]):
+            if self.cancel.is_set():
+                return
+            seen = k + 1
+            try:
+                self.index.key(pic)
+            except Exception:  # noqa: BLE001 - a key we cannot make is made again on use
+                pass
+            try:
+                tags = xmp.read_picture_pills(pic)
+            except Exception:  # noqa: BLE001 - an unreadable file has no pills
+                tags = None
+            if tags is not None:
+                batch.append((k, tags))
+            if len(batch) >= PILL_READ_BATCH:
+                self._emit(self.sig.batch, self.gen, batch)
+                batch = []
+        if batch and not self.cancel.is_set():
+            self._emit(self.sig.batch, self.gen, batch)
+        if not self.cancel.is_set():
+            self._emit(self.sig.finished, self.gen, seen)
+
+
+class _PillSaveJob(QRunnable):
+    """Writes the pill index (it takes its own lock, so the UI may keep changing it). Never raises."""
+
+    def __init__(self, index):
+        super().__init__()
+        self.index = index
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            self.index.save()
+        except Exception as e:  # noqa: BLE001 - a failed save must never reach the UI
+            log.warning("could not save the pill index: %s", e)
 
 
 def default_copy_dest() -> Path:
@@ -256,11 +328,33 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Spuza — {self.root}")
         self.resize(1280, 800)
 
+        # pills: the model (the user's book, and which pills each picture carries), kept in app data (SPUZA_PILLS_DIR)
+        self.pill_book = pills_mod.PillBook.load()
+        self.pill_index = pills_mod.PillIndex.load()
+        self._pill_mgr = None
+        self._pill_dirty = False
+        self._pill_ready = False  # the read-back has finished: the strip and the review may draw every picture's dots
+        self._pill_touched: set = set()  # pictures changed by hand before then (their dots show at once)
+        self._pill_counts: dict[str, int] | None = None
+        self._pill_gen = 0
+        self._pill_cancel = threading.Event()
+        self._pill_sig = _PillSignals()
+        self._pill_sig.batch.connect(self._on_pill_batch)
+        self._pill_sig.finished.connect(self._on_pill_finished)
+        self._pill_read_pool = QThreadPool()
+        self._pill_read_pool.setMaxThreadCount(1)
+        self._pill_save_pool = QThreadPool()
+        self._pill_save_pool.setMaxThreadCount(1)
+        self._pill_save_timer = QTimer(self)
+        self._pill_save_timer.setSingleShot(True)
+        self._pill_save_timer.timeout.connect(self._flush_pill_save)
+
         self.viewer = Viewer()
         self.sidebar = Sidebar(self.root)
         self.inspector = Inspector()
         self.filmstrip = Filmstrip(catalog, prefetcher, band=self.band)
         self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
+        self.filmstrip.pills_of = self._pill_colors_of
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -287,6 +381,11 @@ class MainWindow(QMainWindow):
         # Preferences is not in `buttons` (those are the key-driven picture controls, kept in step by review mode).
         self.quiet_bar = QuietBar()
         self.quiet_bar.set_title(self.root.name or str(self.root), len(catalog))
+        self.pill_tray = PillTray(lambda: self.pill_book.pills(), self._current_pill_names)
+        self.pill_tray.toggled.connect(self._tray_toggled)
+        self.pill_tray.manage.connect(lambda: self.open_pill_manager())
+        self.pill_tray.more.connect(self._tray_more)
+        self.quiet_bar.set_tray(self.pill_tray)
         self.prefs_button = KeyButton("prefs", "Preferences…", PREFS_CAP, False)
         for name, label, cap, checkable in BUTTONS:
             b = KeyButton(name, label, cap, checkable)
@@ -405,6 +504,9 @@ class MainWindow(QMainWindow):
                         (QKeySequence("["), lambda: self.rotate(-1)), (QKeySequence("]"), lambda: self.rotate(1))):
             sc = QShortcut(seq, self, context=Qt.ShortcutContext.WindowShortcut, activated=fn)
             sc.setAutoRepeat(False)  # a held key must not mark, undo or turn repeatedly
+        pills_sc = QShortcut(QKeySequence("Ctrl+Shift+P"), self, context=Qt.ShortcutContext.WindowShortcut,
+                             activated=lambda: None if self._overlay_open() else self.open_pill_manager())
+        pills_sc.setAutoRepeat(False)  # a held key must not stack managers
         quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self, context=Qt.ShortcutContext.WindowShortcut,
                             activated=lambda: self.act_quit())  # StandardKey.Quit is empty on Windows
         quit_sc.setAutoRepeat(False)
@@ -434,6 +536,7 @@ class MainWindow(QMainWindow):
             self._banner = ctl.restore() if ctl is not None else None
             self._band_changed()  # a restored session brings its derived pictures
         prefetcher.update(catalog.index)
+        self.start_pill_readback()
         self._enter_next_features(defer=True)  # after update(): importing numpy for peaking must not delay the first decodes
         self._render_current()
 
@@ -966,6 +1069,8 @@ class MainWindow(QMainWindow):
             self._story_editor.zoom_step(-1)
         elif not crop and k == Qt.Key_0:
             self._story_editor.reset()
+        elif not crop and Qt.Key_1 <= k <= Qt.Key_9:
+            pass  # the story fit has no use for them, and a pill must not take them while it is open
         else:
             if k in (Qt.Key_Right, Qt.Key_J, Qt.Key_Left, Qt.Key_K):
                 self._end_edit(restore=False)  # the move that follows renders
@@ -1035,6 +1140,7 @@ class MainWindow(QMainWindow):
         self.sidebar.set_counts(len(cat) + len(self.band), total_marked)
         self.pill.set_state(marked, f"{i + 1} / {len(cat)}" if pic is not None else "0 / 0")
         self._sync_chrome()  # the page, an edit or compare may have changed whether the pill belongs
+        self._pills_follow()
         if pic is not None:
             name, kind = (pic.stem, pic.kind) if d is None else (
                 f"{pic.stem} ({dv.tag(d, self._rotation_of(i))})", "story" if d.kind == dv.STORY else "crop")
@@ -1220,6 +1326,11 @@ class MainWindow(QMainWindow):
                 self._review_slot.deleteLater()
                 self._review_slot = None
             self.review.rotation_of = self._rotation_of
+            if hasattr(self.review, "pills_of"):  # a fake review in a test may not know about pills
+                self.review.pills_of = self._pill_colors_of
+            pill_key = getattr(self.review, "pill_key", None)
+            if pill_key is not None:
+                pill_key.connect(self._pill_key)
             self.stack.insertWidget(1, self.review)
             self.review.open_index.connect(self._review_open_index)
             self.review.marks_changed.connect(self._review_marks_changed)
@@ -1309,7 +1420,7 @@ class MainWindow(QMainWindow):
         self.filmstrip.viewport().update()
         self.refresh_marks()
 
-    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=()):
+    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=(), pills=None):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
         derived = list(derived)
@@ -1320,7 +1431,18 @@ class MainWindow(QMainWindow):
                          organise=settings.read_organise(self.prefs), eject_after=settings.read_eject_after(self.prefs),
                          quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount,
                          rotations=self._copy_rotations(turned), derived=derived,
-                         write_rotation=settings.read_write_rotation(self.prefs))
+                         write_rotation=settings.read_write_rotation(self.prefs),
+                         **({"pills": pills} if pills else {}))  # CopySheet takes pills= once spp-copy is merged
+
+    def _copy_pills(self, pictures) -> dict:
+        """Picture.primary -> the XMP tags (xmp.PillTag) of the pills it carries, for the pictures being copied that
+        carry any the book still knows. Empty when none does."""
+        out = {}
+        for p in pictures:
+            tags = [self.pill_book.tag(n) for n in self.pill_index.get(p) if self.pill_book.by_name(n)]
+            if tags:
+                out[p.primary] = tags
+        return out
 
     def open_copy(self) -> None:
         marked = self.catalog.marked()
@@ -1331,6 +1453,9 @@ class MainWindow(QMainWindow):
         factory = self.copy_sheet_factory or self._default_copy_sheet_factory
         try:
             extra = {"derived": pairs} if pairs else {}  # a factory that knows nothing of derived pictures is called as before
+            pills = self._copy_pills(marked)
+            if pills:  # same for pills: only a copy with some carries the kwarg (spp-copy: CopySheet(pills=...))
+                extra["pills"] = pills
             self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self, **extra)
             quit_signal = getattr(self._sheet, "quit_requested", None)
             if quit_signal is not None:
@@ -1785,6 +1910,218 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._sync_compare)  # N may have added a cell: the highlight follows
         return super().eventFilter(obj, ev)
 
+    # -- pills: 1-9 toggle, 0 clears, Ctrl+Shift+P manages (digits belong to crop / story while one is open)
+    def _pill_pictures(self, indices) -> list:
+        pics = self.catalog.pictures
+        return [pics[i] for i in indices if 0 <= i < len(pics)]
+
+    def _pill_names_of(self, pic) -> tuple[str, ...]:
+        """The names of the pills `pic` carries that the book still knows, in digit order."""
+        have = {n.casefold() for n in self.pill_index.get(pic)}
+        return tuple(p.name for p in self.pill_book.pills() if p.name.casefold() in have)
+
+    def _current_pill_names(self) -> tuple[str, ...]:
+        """The pills the picture(s) in view all carry: the viewer's picture, the review's selection, compare's cell."""
+        if not len(self.catalog):
+            return ()
+        try:
+            pics = self._pill_pictures(self._rotation_targets())
+        except Exception:  # noqa: BLE001 - a fake review
+            return ()
+        if not pics:
+            return ()
+        common = None
+        for pic in pics:
+            names = set(self._pill_names_of(pic))
+            common = names if common is None else common & names
+        return tuple(n for n in self._pill_names_of(pics[0]) if n in common)
+
+    def _pill_colors_of(self, i: int) -> list[str]:
+        """Catalog index -> colour names of its pills, for the strip's and the grid's dots. Until the read-back has
+        finished only pictures changed by hand answer (so painting never opens a file)."""
+        pics = self.catalog.pictures
+        if not 0 <= i < len(pics):
+            return []
+        pic = pics[i]
+        if not self._pill_ready and pic.primary not in self._pill_touched:
+            return []
+        return [self.pill_book.by_name(n).color for n in self._pill_names_of(pic)]
+
+    def _pills_follow(self) -> None:
+        """The current picture changed (or its pills did): the Lights out pill, the inspector and the tray follow."""
+        names = self._current_pill_names()
+        pairs = [(n, self.pill_book.by_name(n).color) for n in names]
+        self.pill.set_pills(pairs)
+        self.inspector.pills = pairs  # drawn by the set_picture that follows, or by set_pills when it is alone
+        self.pill_tray.refresh()
+
+    def _pill_hint(self, n: int) -> None:
+        self.say(f"No pill on {n} — {native(MANAGE_SEQ)} to make one")
+
+    def _pill_key(self, n: int) -> None:
+        """Digit n: 1-9 toggle pill n on the picture(s) in view, 0 clears them. Never reached while a crop or story edit
+        is open (keyPressEvent hands those digits to the editor)."""
+        if not len(self.catalog):
+            return
+        pics = self._pill_pictures(self._rotation_targets())
+        if n == 0:
+            had = [p for p in pics if self.pill_index.get(p)]
+            for p in had:
+                self.pill_index.clear(p)
+            self._pills_changed(pics)
+            what = "this picture" if len(pics) == 1 else f"{len(pics)} pictures"
+            self.say(f"Pills cleared on {what}" if had else "No pills to clear")
+            return
+        pill = self.pill_book.by_digit(n)
+        if pill is None:
+            self._pill_hint(n)
+            return
+        if not pics:
+            self.say("Select a picture first")
+            return
+        key = pill.name.casefold()
+        all_have = all(key in {x.casefold() for x in self.pill_index.get(p)} for p in pics)
+        for p in pics:
+            has = key in {x.casefold() for x in self.pill_index.get(p)}
+            if has == all_have:  # all have it: take it off; else put it on the ones that lack it
+                self.pill_index.toggle(p, pill.name)
+        self._pills_changed(pics)
+        state = "off" if all_have else "on"
+        self.say(f"{pill.name} {state}" if len(pics) == 1 else f"{pill.name} {state}: {len(pics)} pictures")
+
+    def _pills_changed(self, pics) -> None:
+        """Pictures' pills changed by hand: redraw everything that shows them and queue the (debounced) save."""
+        for pic in pics:
+            self._pill_touched.add(pic.primary)
+        self._pill_counts = None
+        self._mark_pills_dirty()
+        self._redraw_pills()
+
+    def _redraw_pills(self) -> None:
+        self._pills_follow()
+        if self.catalog.current is not None:
+            self.inspector.set_pills(self.inspector.pills)
+        self.filmstrip.viewport().update()
+        if self.review is not None and hasattr(self.review, "view"):
+            self.review.view.viewport().update()
+        self.refresh_actions()
+
+    def _mark_pills_dirty(self) -> None:
+        self._pill_dirty = True
+        self._pill_save_timer.start(PILL_SAVE_MS)
+
+    def _flush_pill_save(self) -> None:
+        """Timer slot: write the book now (nine rows) and the index on a worker. Never raises."""
+        if not self._pill_dirty:
+            return
+        self._pill_dirty = False
+        try:
+            self.pill_book.save()
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not save the pills: %s", e)
+        self._pill_save_pool.start(_PillSaveJob(self.pill_index))
+
+    def _save_pills_now(self) -> None:
+        """On close: stop the timer, let a save in flight finish (bounded), then write whatever is still unwritten."""
+        self._pill_save_timer.stop()
+        self._pill_save_pool.waitForDone(PILL_JOIN_MS)
+        if self._pill_dirty:
+            self._pill_dirty = False
+            for save in (self.pill_book.save, self.pill_index.save):
+                try:
+                    save()
+                except Exception as e:  # noqa: BLE001 - closing must not fail on a full disk
+                    log.warning("could not save the pills: %s", e)
+
+    def pill_counts(self) -> dict[str, int]:
+        """Pill name (case-folded) -> how many pictures of this folder carry it."""
+        if self._pill_counts is None:
+            counts: dict[str, int] = {}
+            for pic in self.catalog.pictures:
+                for n in self.pill_index.get(pic):
+                    counts[n.casefold()] = counts.get(n.casefold(), 0) + 1
+            self._pill_counts = counts
+        return self._pill_counts
+
+    def _pill_count(self, name: str) -> int:
+        return self.pill_counts().get(str(name).casefold(), 0)
+
+    def open_pill_manager(self) -> None:
+        mgr = self._pill_mgr
+        if mgr is not None and mgr.isVisible():
+            mgr.raise_()
+            mgr.activateWindow()
+            return
+        from spuza.ui.pill_manager import PillManager  # lazy: built on first use
+
+        self._pill_counts = None
+        mgr = self._pill_mgr = PillManager(self.pill_book, self.pill_index, self._pill_count, len(self.catalog),
+                                           parent=self)
+        mgr.changed.connect(self._pills_edited)
+        mgr.finished.connect(lambda _r: self._pills_edited())
+        mgr.open()
+
+    def _pills_edited(self) -> None:
+        """The manager made, renamed, recoloured or deleted a pill."""
+        self._pill_counts = None
+        self._mark_pills_dirty()
+        self._redraw_pills()
+
+    def _tray_toggled(self, name: str) -> None:
+        pill = self.pill_book.by_name(name)
+        if pill is not None:
+            self._pill_key(pill.digit)
+
+    def _tray_more(self) -> None:
+        """The tray's "+N": open the Pills menu under it."""
+        menu = getattr(self, "_pills_menu", None)
+        if menu is not None:
+            menu.popup(self.pill_tray.mapToGlobal(QPoint(0, self.pill_tray.height())))
+
+    # -- read-back: the pills a folder's pictures already carry in their XMP (the file wins over the index)
+    def start_pill_readback(self) -> None:
+        """(Re)start the read of every picture's pills on a worker. An older read is told to stop and its late results
+        are ignored (generation token). At most PILL_READ_MAX pictures, handed back PILL_READ_BATCH at a time."""
+        self._pill_cancel.set()
+        self._pill_cancel = cancel = threading.Event()
+        self._pill_gen += 1
+        self._pill_ready = False
+        self._pill_touched.clear()  # the file wins over the index for a folder that is loaded again
+        pics = list(self.catalog.pictures)
+        if not pics:
+            self._pill_ready = True
+            return
+        self._pill_read_pool.start(_PillReadJob(self._pill_sig, self._pill_gen, pics, self.pill_index, cancel))
+
+    def _on_pill_batch(self, gen: int, batch) -> None:
+        if gen != self._pill_gen:
+            return  # another folder loaded since
+        pics = self.catalog.pictures
+        changed = False
+        for k, tags in batch:
+            if not 0 <= k < len(pics) or pics[k].primary in self._pill_touched:
+                continue  # a pill changed by hand since this folder loaded wins over the older file
+            self.pill_book.adopt(tags)
+            self.pill_index.set(pics[k], [t.name for t in tags])
+            changed = True
+        if changed:
+            self._pill_counts = None
+            self._mark_pills_dirty()
+
+    def _on_pill_finished(self, gen: int, _seen: int) -> None:
+        if gen != self._pill_gen:
+            return
+        self._pill_ready = True
+        self._redraw_pills()
+
+    def wait_pill_readback(self, timeout_ms: int = 5000) -> bool:
+        """Block (up to timeout_ms) until the read-back has finished and its results are applied. For tests."""
+        end = time.monotonic() + timeout_ms / 1000
+        while not self._pill_ready and time.monotonic() < end:
+            QApplication.processEvents()
+            time.sleep(0.002)
+        return self._pill_ready
+
     # -- menu bar (ui/actions.py is the one table) -------------------------------------------------
     def _build_menus(self) -> None:
         """File / Edit / View / Picture / Help. The QActions DISPLAY their keys (so the native macOS bar shows them
@@ -1804,6 +2141,7 @@ class MainWindow(QMainWindow):
             qa.triggered.connect(lambda _checked=False, h=a.handler: self._run_action(h))
             menus[a.menu].addAction(qa)
             self.menu_actions[a.id] = qa
+        self._pills_menu = menus["Pills"]
         for btn in (*self.buttons.values(), *self.next_buttons.values()):
             btn.toggled.connect(lambda _on=False: self.refresh_actions())
         self.refresh_actions()
@@ -1833,11 +2171,39 @@ class MainWindow(QMainWindow):
                 qa.blockSignals(True)  # a mirrored state, not a click
                 qa.setChecked(btn.isChecked())
                 qa.blockSignals(False)
+        self._refresh_pill_actions()
         for aid, on in (("lights_out", self.lights_out), ("dark_theme", theme.current().dark)):
             qa = menu_actions[aid]  # no button mirrors these two: the window's own state is the truth
             qa.blockSignals(True)
             qa.setChecked(on)
             qa.blockSignals(False)
+
+    def _refresh_pill_actions(self) -> None:
+        """Each Pills menu row carries its pill's name and colour dot, is checked when the picture in view has the
+        pill, and is hidden while no pill owns its digit."""
+        has = len(self.catalog) > 0
+        names = {n.casefold() for n in self._current_pill_names()} if has else set()
+        dark = theme.current().dark
+        for aid, n in act.PILL_DIGITS.items():
+            qa = self.menu_actions[aid]
+            pill = self.pill_book.by_digit(n)
+            qa.setVisible(pill is not None)
+            qa.blockSignals(True)  # a mirrored state, not a click
+            if pill is None:
+                qa.setText(act.by_id()[aid].label)
+                qa.setIcon(QIcon())
+                qa.setChecked(False)
+            else:
+                qa.setText(pill.name.replace("&", "&&"))
+                pm = QPixmap(14, 14)
+                pm.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(pm)
+                draw_dot(painter, 7, 7, 5, pill.color, dark)
+                painter.end()
+                qa.setIcon(QIcon(pm))
+                qa.setChecked(pill.name.casefold() in names)
+            qa.blockSignals(False)
+        self.menu_actions["pill_clear"].setEnabled(has and bool(self.pill_book.pills()))
 
     def act_back(self) -> None:
         self._control(Qt.Key_Left, lambda: self.step(-1))
@@ -1911,6 +2277,39 @@ class MainWindow(QMainWindow):
     def act_remove(self) -> None:
         self.remove_derived()
 
+    def act_pill_1(self) -> None:
+        self._pill_key(1)
+
+    def act_pill_2(self) -> None:
+        self._pill_key(2)
+
+    def act_pill_3(self) -> None:
+        self._pill_key(3)
+
+    def act_pill_4(self) -> None:
+        self._pill_key(4)
+
+    def act_pill_5(self) -> None:
+        self._pill_key(5)
+
+    def act_pill_6(self) -> None:
+        self._pill_key(6)
+
+    def act_pill_7(self) -> None:
+        self._pill_key(7)
+
+    def act_pill_8(self) -> None:
+        self._pill_key(8)
+
+    def act_pill_9(self) -> None:
+        self._pill_key(9)
+
+    def act_pill_clear(self) -> None:
+        self._pill_key(0)
+
+    def act_pills_manage(self) -> None:
+        self.open_pill_manager()
+
     def act_help(self) -> None:
         self.toggle_shortcuts()
 
@@ -1976,7 +2375,10 @@ class MainWindow(QMainWindow):
         if self._edit is not None and self.stack.currentIndex() == 0 and self._edit_key(e):
             e.accept()
             return
-        if k in (Qt.Key_Space, Qt.Key_M):
+        if Qt.Key_0 <= k <= Qt.Key_9 and self._edit is None:  # 1-9 toggle a pill, 0 clears (crop / story keep their digits)
+            if not e.isAutoRepeat():  # a held digit must not flip a pill back and forth
+                self._pill_key(k - Qt.Key_0)
+        elif k in (Qt.Key_Space, Qt.Key_M):
             if not e.isAutoRepeat():  # a held key marks one picture, never a run (move on mark would)
                 self.toggle_mark()
         elif k in (Qt.Key_Right, Qt.Key_K):
@@ -2031,6 +2433,7 @@ class MainWindow(QMainWindow):
     def retheme(self) -> None:
         c = theme.current()
         self.quiet_bar.retheme()  # also re-tints the icons
+        self.pill_tray.update()
         self.pill.retheme()
         self._toast.setStyleSheet(f"background: {c.hud}; color: {tk.DARK['text']}; border-radius: {tk.RADIUS['sheet']}px;"
                                   " padding: 6px 14px;")
@@ -2052,6 +2455,12 @@ class MainWindow(QMainWindow):
         self.refresh_actions()  # the Dark theme check follows the theme, also after an OS follow on macOS
 
     def closeEvent(self, e) -> None:
+        self._pill_cancel.set()
+        self._pill_gen += 1  # a late result is ignored
+        self._pill_read_pool.waitForDone(PILL_JOIN_MS)
+        if self._pill_mgr is not None:
+            self._pill_mgr.reject()
+        self._save_pills_now()
         if self.resume is not None:
             self.resume.flush()  # first: a bounded (~1 s) write of the marks and place
         if self._prune_thread is not None:

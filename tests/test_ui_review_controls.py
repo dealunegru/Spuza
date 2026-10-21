@@ -33,7 +33,7 @@ REVIEW_TABLE = {
     "prefs": "global", "shortcut:Ctrl+,": "global", "shortcut:Ctrl+Q": "global",
     # friend round 3: Mark all acts on the whole card from anywhere; the turns act on the grid's selected pictures
     # (round 4: hotkeys only, no buttons)
-    "shortcut:Ctrl+A": "global", "shortcut:Ctrl+Shift+A": "global", "shortcut:Ctrl+Z": "global",
+    "shortcut:Ctrl+A": "global", "shortcut:Ctrl+Shift+A": "global", "shortcut:Ctrl+Shift+P": "global", "shortcut:Ctrl+Z": "global",
     "shortcut:[": "grid", "shortcut:]": "grid",
     "review:Unmark": "grid", "review:Zoom": "grid",
     # advanced-only (hidden, never absent, in classic): N acts on the grid selection; P and O are global switches
