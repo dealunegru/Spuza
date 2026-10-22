@@ -59,6 +59,17 @@ def isolated_pills(tmp_path, monkeypatch):
     monkeypatch.setenv("SPUZA_PILLS_DIR", str(tmp_path / "spuza-pills"))
 
 
+TEST_JOIN_SECONDS = 15.0  # bounded, generous: a slow CI runner must not turn a drain into a flake (bug-453)
+
+
+@pytest.fixture(autouse=True)
+def generous_resume_join(monkeypatch):
+    """The product closes the window within 1 s (JOIN_SECONDS); a test waiting for the writer has no such
+    budget. wait_idle() / flush() default to JOIN_SECONDS, so raise it for tests only; a test that wants the
+    short bound monkeypatches it again (test_flush_gives_up_on_a_stuck_write)."""
+    monkeypatch.setattr("spuza.ui.resume.JOIN_SECONDS", TEST_JOIN_SECONDS)
+
+
 @pytest.fixture(autouse=True)
 def classic_mode():
     """Mode is module state: every test starts and ends in classic."""
