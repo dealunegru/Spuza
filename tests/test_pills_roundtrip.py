@@ -136,9 +136,17 @@ def test_the_pills_come_from_the_files_not_the_index(journey, tmp_path, monkeypa
     w, card, dest, *_ = journey
     fresh = tmp_path / "a-fresh-empty-pills-dir"
     monkeypatch.setenv("SPUZA_PILLS_DIR", str(fresh))
+    # Hold the read-back until the empty start has been asserted: on a fast machine the worker would otherwise
+    # finish and have its batch applied before the assertion, which is a race, not a failure.
+    started = []
+    real_start = MainWindow.start_pill_readback
+    monkeypatch.setattr(MainWindow, "start_pill_readback", lambda self: started.append(self))
     w2 = open_window(dest)
     try:
+        assert started == [w2] and not w2._pill_ready
         assert w2.pill_book.pills() == []  # nothing known before the read-back
+        assert pills_of(w2, "A") == set()
+        real_start(w2)  # now let the read run
         assert_readback(w2)  # the book adopts both pills, colours snapped to the nearest swatch
         assert w2._pill_dirty
     finally:

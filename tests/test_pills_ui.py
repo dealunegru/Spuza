@@ -131,7 +131,8 @@ def test_zero_clears_every_pill_on_the_picture(hero):
 
 def test_a_digit_with_no_pill_says_how_to_make_one(hero):
     QTest.keyClick(hero, Qt.Key_4)
-    assert hero.last_message == "No pill on 4 — Ctrl+Shift+P to make one"
+    manage = act.native_keys(act.by_id()["pills_manage"])  # "Ctrl+Shift+P" here, the command-key glyphs on a Mac
+    assert hero.last_message == f"No pill on 4 — {manage} to make one"
     assert names_of(hero) == ()
 
 
@@ -620,7 +621,8 @@ def test_the_overlay_lists_the_pills_group(hero):
     assert "PILLS" in texts
     for n, name in ((1, "Hero"), (2, "Delivered"), (3, "Edit")):
         assert name in texts and act.native_keys(act.by_id()[f"pill_{n}"]) in texts
-    assert "Clear all pills" in texts and "Manage pills…" in texts and "Ctrl+Shift+P" in " ".join(texts)
+    assert "Clear all pills" in texts and "Manage pills…" in texts
+    assert act.native_keys(act.by_id()["pills_manage"]) in texts  # its key as this platform writes it
     assert "1 - 9 / 0" in texts and any("not in crop or story" in t for t in texts)
     assert "Pill 4" not in texts  # a digit with no pill has no row
     w.toggle_shortcuts()
