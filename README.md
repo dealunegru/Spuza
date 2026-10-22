@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
+  <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/version-0.13.0-informational" alt="Version 0.13.0">
 </p>
 
@@ -22,7 +22,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 then, in a new Terminal window:
 ```sh
-uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
+uv tool install --python 3.13 git+https://github.com/dealunegru/Spuza
 ```
 
 **Windows**, in PowerShell:
@@ -32,7 +32,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ```
 then, in a new PowerShell window:
 ```powershell
-uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
+uv tool install --python 3.13 git+https://github.com/dealunegru/Spuza
 ```
 
 Then run `spuza` with a card in.
@@ -336,7 +336,7 @@ These numbers have not been measured on a Mac yet. To set the prefetch window fo
 
 ## Mac app
 
-Every [release](https://github.com/fungimasters/Spuza/releases/latest) also has `Spuza-macos.zip`. It holds a self-contained `Spuza.app` that CI builds on a macOS runner. Unzip it and drag `Spuza.app` to Applications.
+Every [release](https://github.com/dealunegru/Spuza/releases/latest) also has `Spuza-macos.zip`. It holds a self-contained `Spuza.app` that CI builds on a macOS runner. Unzip it and drag `Spuza.app` to Applications.
 
 For Windows, the same release has `Spuza-windows.zip`: unzip it and run `Spuza.exe` from the folder (SmartScreen asks once: More info, then Run anyway). `spuza-cli.exe` beside it is the same app with a console, for `--version` and `--bench`.
 
@@ -370,7 +370,7 @@ Why uv and not an installer? Spuza is a Python application. `uv tool install` gi
 ## Development
 
 ```sh
-git clone https://github.com/fungimasters/Spuza
+git clone https://github.com/dealunegru/Spuza
 cd Spuza
 uv sync
 uv run spuza --demo docs/samples
