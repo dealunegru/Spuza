@@ -8,6 +8,9 @@ empty book or index, and a failed save returns False instead of raising (a full 
 
 The index is bounded: entries not CHANGED for PRUNE_DAYS (365; reading with get() does not refresh) are dropped and at most MAX_ENTRIES (200 000) are
 kept (the most recently touched), both applied on save; a file over MAX_BYTES is not read.
+
+Stars (1-5, 0 = cleared in Spuza) live in the same index entries as `stars` beside `names`: PillIndex.stars() /
+set_stars(). An entry with stars and no pills is kept; a bad `stars` value on load is dropped, the names stay.
 """
 
 from __future__ import annotations
@@ -276,6 +279,11 @@ class PillBook:
         return _write_json(self.path, doc)
 
 
+def _valid_stars(v) -> int | None:
+    """`v` when it is an int 0..5 (not a bool), else None."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 5 else None
+
+
 def _names(names) -> tuple[str, ...]:
     """Stripped, non-empty names without case-insensitive duplicates, first spelling kept."""
     seen, out = set(), []
@@ -292,7 +300,8 @@ class PillIndex:
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path is not None else pills_dir() / "index.json"
-        self._entries: dict[str, dict] = {}  # key -> {"names": [...], "at": epoch seconds of the last change}
+        # key -> {"names": [...], "stars": 0..5 (absent: never set in Spuza), "at": epoch seconds of the last change}
+        self._entries: dict[str, dict] = {}
         self._keys: dict[str, str] = {}  # primary path -> key, so a file is read once
         self._lock = threading.Lock()  # guards _entries: the UI mutates while a worker may save
 
@@ -328,10 +337,38 @@ class PillIndex:
 
     def _put(self, k: str, names) -> None:  # caller holds the lock
         kept = _names(names)
-        if kept:
-            self._entries[k] = {"names": list(kept), "at": _now()}
+        old = self._entries.get(k)
+        stars = old.get("stars") if old else None
+        if kept or stars is not None:
+            e = {"names": list(kept), "at": _now()}
+            if stars is not None:
+                e["stars"] = stars
+            self._entries[k] = e
         else:
             self._entries.pop(k, None)
+
+    def stars(self, picture) -> int | None:
+        """The stars set in Spuza: None = never set, 0 = cleared, 1..5."""
+        k = self.key(picture)
+        with self._lock:
+            e = self._entries.get(k)
+            return _valid_stars(e.get("stars")) if e else None
+
+    def set_stars(self, picture, n: int | None) -> None:
+        """Set 0..5, or None to forget the stars. Raises ValueError for anything else."""
+        if n is not None and _valid_stars(n) is None:
+            raise ValueError(f"stars must be None or 0..5, not {n!r}")
+        k = self.key(picture)
+        with self._lock:
+            e = self._entries.get(k)
+            names = list(e["names"]) if e else []
+            if n is None:
+                if names:
+                    self._entries[k] = {"names": names, "at": _now()}
+                else:
+                    self._entries.pop(k, None)
+            else:
+                self._entries[k] = {"names": names, "stars": n, "at": _now()}
 
     def set(self, picture, names) -> None:
         k = self.key(picture)
@@ -352,9 +389,10 @@ class PillIndex:
             return True
 
     def clear(self, picture) -> None:
+        """Clear the picture's pills (its stars stay)."""
         k = self.key(picture)
         with self._lock:
-            self._entries.pop(k, None)
+            self._put(k, [])
 
     def rename_pill(self, old: str, new: str) -> None:
         want = str(old).strip().casefold()
@@ -371,7 +409,7 @@ class PillIndex:
                 e = self._entries[k]
                 kept = [n for n in e["names"] if n.casefold() != want]
                 if len(kept) != len(e["names"]):
-                    if kept:
+                    if kept or e.get("stars") is not None:
                         e["names"], e["at"] = kept, _now()
                     else:
                         del self._entries[k]
@@ -392,8 +430,12 @@ class PillIndex:
             if not (isinstance(at, (int, float)) and not isinstance(at, bool) and math.isfinite(at)):
                 continue
             kept = _names(names)
-            if kept:
-                idx._entries[k] = {"names": list(kept), "at": float(at)}
+            stars = _valid_stars(e.get("stars"))  # a bad value is dropped; the names stay
+            if kept or stars is not None:
+                row = {"names": list(kept), "at": float(at)}
+                if stars is not None:
+                    row["stars"] = stars
+                idx._entries[k] = row
         return idx
 
     def save(self) -> bool:
@@ -405,5 +447,10 @@ class PillIndex:
                 live.sort(key=lambda ke: ke[1]["at"], reverse=True)
                 live = live[:MAX_ENTRIES]
             self._entries = dict(live)
-            snap = {k: {"names": list(e["names"]), "at": e["at"]} for k, e in live}
+            snap = {}
+            for k, e in live:
+                row = {"names": list(e["names"]), "at": e["at"]}
+                if e.get("stars") is not None:
+                    row["stars"] = e["stars"]
+                snap[k] = row
         return _write_json(self.path, {"version": VERSION, "entries": snap})

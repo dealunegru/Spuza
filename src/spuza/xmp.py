@@ -5,8 +5,10 @@ APP1 segment / iTXt chunk differs from the source, the pixel data is never decod
 else, RAW included, gets an Adobe-named `<stem>.xmp` sidecar beside the copy. Existing XMP is merged into and
 never overwritten: foreign namespaces, `dc:subject` keywords and a foreign `xmp:Label` survive.
 
-Fields Spuza owns: the private `spuza:pills` Seq (name + hex), the pill names in `dc:subject`, and `xmp:Label`
-(only while it is empty or still the value Spuza wrote, recorded in `spuza:label`).
+Fields Spuza owns: the private `spuza:pills` Seq (name + hex), the pill names in `dc:subject`, `xmp:Label`
+(only while it is empty or still the value Spuza wrote, recorded in `spuza:label`), and `xmp:Rating` but only when
+a caller passes a `rating`: 1..5 is written as integer text, 0 removes an existing 1..5, None leaves it alone, and
+a foreign -1 (reject) is never removed, only replaced by 1..5. Reading a rating is tolerant (`parse_rating`).
 
 Stdlib only; Pillow is imported inside the verify step alone. No Qt.
 """
@@ -32,7 +34,9 @@ __all__ = [
     "build_packet",
     "embed",
     "parse_pills",
+    "parse_rating",
     "read_embedded",
+    "read_picture_meta",
     "read_picture_pills",
     "read_sidecar",
     "write_sidecar",
@@ -83,7 +87,7 @@ def _q(ns: str, name: str) -> str:
 T_XMPMETA, T_RDF, T_DESC = _q(NS_X, "xmpmeta"), _q(NS_RDF, "RDF"), _q(NS_RDF, "Description")
 T_LI, T_BAG, T_SEQ = _q(NS_RDF, "li"), _q(NS_RDF, "Bag"), _q(NS_RDF, "Seq")
 T_ABOUT, T_PARSE = _q(NS_RDF, "about"), _q(NS_RDF, "parseType")
-T_SUBJECT, T_LABEL = _q(NS_DC, "subject"), _q(NS_XMP, "Label")
+T_SUBJECT, T_LABEL, T_RATING = _q(NS_DC, "subject"), _q(NS_XMP, "Label"), _q(NS_XMP, "Rating")
 T_PILLS, T_NAME, T_HEX, T_SLABEL = (_q(NS_SPUZA, n) for n in ("pills", "name", "hex", "label"))
 
 # Private on purpose: the pills model module keeps its own table.
@@ -241,8 +245,50 @@ def _subject_names(descs) -> list[str]:
     return [(li.text or "").strip() for li in _bag_items(_subject_element(descs)[1])]
 
 
-def _build(pills, existing: bytes | None, pad: int) -> bytes:
+def _rating_arg(rating) -> int | None:
+    """None (leave alone) or an int 0..5; anything else is a caller bug."""
+    if rating is None:
+        return None
+    if isinstance(rating, bool) or not isinstance(rating, int) or not 0 <= rating <= 5:
+        raise ValueError(f"rating must be None or 0..5, not {rating!r}")
+    return rating
+
+
+def _rating_num(text) -> int | None:
+    """The integer an xmp:Rating text means: -1..5, else None (junk, NaN, infinite, out of range). "3.0" -> 3."""
+    try:
+        v = float(str(text).strip())
+    except (ValueError, TypeError):
+        return None
+    if not math.isfinite(v):
+        return None
+    n = int(round(v))
+    return n if -1 <= n <= 5 else None
+
+
+def _rating_raw(descs) -> int | None:
+    """The existing xmp:Rating as -1..5 (None when absent or unreadable)."""
+    text = _value(descs, T_RATING)
+    return None if text is None else _rating_num(text)
+
+
+def _stars(n: int | None) -> int | None:
+    return n if n is not None and 1 <= n <= 5 else None
+
+
+def _edit_rating(descs, rating: int | None) -> None:
+    if rating is None:
+        return
+    if rating == 0:
+        if _stars(_rating_raw(descs)) is not None:
+            _set_value(descs, T_RATING, None)
+        return
+    _set_value(descs, T_RATING, str(rating))
+
+
+def _build(pills, existing: bytes | None, pad: int, rating: int | None = None) -> bytes:
     pills = _norm(pills)
+    rating = _rating_arg(rating)
     try:
         if existing is None:
             root = ET.Element(T_XMPMETA)
@@ -256,6 +302,7 @@ def _build(pills, existing: bytes | None, pad: int) -> bytes:
         _edit_pills(descs, pills)
         _edit_subject(descs, old_names, new_names, [p.name for p in pills])
         _edit_label(descs, pills)
+        _edit_rating(descs, rating)
         body = ET.tostring(root, encoding="utf-8", xml_declaration=False)
     except RecursionError:
         raise ValueError("XMP is nested too deeply") from None
@@ -317,14 +364,17 @@ def _edit_label(descs, pills: list[PillTag]) -> None:
         _set_value(descs, T_SLABEL, None)
 
 
-def _unchanged(existing: bytes, pills) -> bool:
+def _unchanged(existing: bytes, pills, rating: int | None = None) -> bool:
     """True when `existing` already holds exactly this state for everything Spuza owns, so no rewrite is due.
 
     Raises ValueError when `existing` does not parse."""
     want = _norm(pills)
+    rating = _rating_arg(rating)
     try:
         descs = _descriptions(_parse(existing), create=False)
         if not descs:
+            return False
+        if rating is not None and (_stars(_rating_raw(descs)) or 0) != rating:
             return False
         old = _pills_of(descs)
         current, mine = _value(descs, T_LABEL), _value(descs, T_SLABEL)
@@ -339,17 +389,27 @@ def _unchanged(existing: bytes, pills) -> bool:
         raise ValueError("XMP is nested too deeply") from None
 
 
-def build_packet(pills, existing: bytes | None = None) -> bytes:
+def build_packet(pills, existing: bytes | None = None, rating: int | None = None) -> bytes:
     """The full `<?xpacket ...?>` packet for `pills`, merged into `existing` (never replacing it).
 
-    Raises ValueError when `existing` does not parse or a pill is malformed."""
-    return _build(pills, existing, _PAD)
+    `rating`: None leaves any xmp:Rating alone; 1..5 writes it; 0 removes an existing 1..5 (a -1 reject stays).
+    Raises ValueError when `existing` does not parse, a pill is malformed or the rating is not None/0..5."""
+    return _build(pills, existing, _PAD, rating)
 
 
 def parse_pills(packet: bytes) -> list[PillTag] | None:
     """The pills in a packet, or None when it has no spuza:pills bag (or does not parse)."""
     try:
         return _pills_of(_descriptions(_parse(packet), create=False))
+    except (ValueError, RecursionError):
+        return None
+
+
+def parse_rating(packet) -> int | None:
+    """The star rating (1..5) in a packet, read tolerantly (attribute or element, "3.0"); -1, 0, junk, a packet that
+    does not parse -> None."""
+    try:
+        return _stars(_rating_raw(_descriptions(_parse(packet), create=False)))
     except (ValueError, RecursionError):
         return None
 
@@ -397,15 +457,15 @@ def _jpeg_scan(data: bytes) -> tuple[tuple[int, int] | None, int]:
     return (found[0] if found else None), insert_at
 
 
-def _embed_jpeg(data: bytes, pills) -> bytes:
+def _embed_jpeg(data: bytes, pills, rating: int | None = None) -> bytes:
     span, insert_at = _jpeg_scan(data)
     existing = data[span[0] + 4 + len(_STD) : span[1]] if span else None
-    if span is None and not pills:
+    if span is None and not pills and not _rating_arg(rating):
         return data
-    if existing is not None and _unchanged(existing, pills):
+    if existing is not None and _unchanged(existing, pills, rating):
         return data
     for pad in (_PAD, 0):
-        packet = _build(pills, existing, pad)
+        packet = _build(pills, existing, pad, rating)
         if len(_STD) + len(packet) <= _MAX_PAYLOAD:
             break
     else:
@@ -471,18 +531,18 @@ def _png_scan(data: bytes) -> tuple[tuple[int, int] | None, int]:
     return (found[0] if found else None), insert_at
 
 
-def _embed_png(data: bytes, pills) -> bytes:
+def _embed_png(data: bytes, pills, rating: int | None = None) -> bytes:
     span, insert_at = _png_scan(data)
     existing = None
     if span:
         existing = _itxt_text(data[span[0] + 8 : span[1] - 4])
         if existing is None:
             raise _Decline("XMP chunk unreadable")
-        if _unchanged(existing, pills):
+        if _unchanged(existing, pills, rating):
             return data
-    elif not pills:
+    elif not pills and not _rating_arg(rating):
         return data
-    payload = _PNG_KEY + b"\x00\x00\x00\x00" + _build(pills, existing, _PAD)
+    payload = _PNG_KEY + b"\x00\x00\x00\x00" + _build(pills, existing, _PAD, rating)
     chunk = b"iTXt" + payload
     out = struct.pack(">I", len(payload)) + chunk + struct.pack(">I", zlib.crc32(chunk))
     if span:
@@ -493,14 +553,15 @@ def _embed_png(data: bytes, pills) -> bytes:
 # ------------------------------------------------------------------ embed / apply -----------------------------------
 
 
-def embed(data: bytes, ext: str, pills) -> tuple[bytes | None, str]:
-    """Pure. (new bytes, "") with the pills merged into the file's XMP, or (None, reason) to fall back."""
+def embed(data: bytes, ext: str, pills, rating: int | None = None) -> tuple[bytes | None, str]:
+    """Pure. (new bytes, "") with the pills (and `rating`, see build_packet) merged into the file's XMP, or
+    (None, reason) to fall back."""
     try:
         ext = ext.lower()
         if ext in (".jpg", ".jpeg"):
-            return _embed_jpeg(data, pills), ""
+            return _embed_jpeg(data, pills, rating), ""
         if ext == ".png":
-            return _embed_png(data, pills), ""
+            return _embed_png(data, pills, rating), ""
         return None, f"{ext or 'this type'} does not embed XMP"
     except _Decline as exc:
         return None, str(exc)
@@ -534,8 +595,8 @@ def _verify(old: bytes, new: bytes, ext: str) -> str:
     return ""
 
 
-def apply_embedded(tmp: Path, pills) -> Outcome:
-    """Merge `pills` into our temp copy `tmp` in place, verified; restores the pre-write bytes on any doubt."""
+def apply_embedded(tmp: Path, pills, rating: int | None = None) -> Outcome:
+    """Merge `pills` (and `rating`, see build_packet) into our temp copy `tmp` in place, verified; restores the pre-write bytes on any doubt."""
     part = None
     old = None
     replaced = False
@@ -545,7 +606,7 @@ def apply_embedded(tmp: Path, pills) -> Outcome:
         if ext not in EMBED_EXTS:
             return _declined(f"{ext or 'this type'} does not embed XMP")
         old = tmp.read_bytes()
-        new, reason = embed(old, ext, pills)
+        new, reason = embed(old, ext, pills, rating)
         if new is None:
             return _declined(reason)
         if new == old:
@@ -583,25 +644,28 @@ def apply_embedded(tmp: Path, pills) -> Outcome:
 # ------------------------------------------------------------------ sidecar -----------------------------------------
 
 
-def _sigs(root: ET.Element) -> set:
+def _sigs(root: ET.Element, rated: bool = False) -> set:
+    """Signatures of everything foreign. `rated`: Spuza wrote an xmp:Rating, so the old one is not foreign."""
     skip: set = set()
-    for tag in (T_PILLS, T_SUBJECT, T_SLABEL, T_LABEL):
+    own = (T_RATING,) if rated else ()
+    for tag in (T_PILLS, T_SUBJECT, T_SLABEL, T_LABEL, *own):
         for e in root.iter(tag):
             skip.update(e.iter())
     out = set()
     for e in root.iter():
         if e in skip:
             continue
-        attrs = tuple(sorted((k, v) for k, v in e.attrib.items() if k not in (T_LABEL, T_SLABEL)))
+        attrs = tuple(sorted((k, v) for k, v in e.attrib.items() if k not in (T_LABEL, T_SLABEL, *own)))
         out.add((e.tag, attrs, (e.text or "").strip()))
     return out
 
 
-def _preserved(old: bytes, new: bytes) -> str:
+def _preserved(old: bytes, new: bytes, rating: int | None = None) -> str:
     """"" when everything that is not Spuza's in `old` is still in `new`."""
     ro, rn = _parse(old), _parse(new)
     do, dn = _descriptions(ro, create=False), _descriptions(rn, create=False)
-    if not _sigs(ro) <= _sigs(rn):
+    rated = rating is not None
+    if not _sigs(ro, rated) <= _sigs(rn, rated):
         return "foreign XMP content went missing"
     old_pill = {p.name for p in _pills_of(do) or []}
     new_pill = {p.name for p in _pills_of(dn) or []}
@@ -611,33 +675,39 @@ def _preserved(old: bytes, new: bytes) -> str:
     label, mine = _value(do, T_LABEL), _value(do, T_SLABEL)
     if label and label != mine and _value(dn, T_LABEL) != label:
         return "foreign xmp:Label changed"
+    if rating == 0 and _rating_raw(do) == -1 and _rating_raw(dn) != -1:
+        return "foreign xmp:Rating (reject) changed"
     return ""
 
 
-def _check_written(blob: bytes, pills: list[PillTag], old: bytes | None) -> str:
+def _check_written(blob: bytes, pills: list[PillTag], old: bytes | None, rating: int | None = None) -> str:
     got = parse_pills(blob)
     if (got or None) != (pills or None) or (pills and got != pills):
         return "verify: pills read back differ"
+    if rating is not None and (parse_rating(blob) or 0) != rating:
+        return "verify: rating read back differs"
     if old is not None:
         try:
-            return _preserved(old, blob)
+            return _preserved(old, blob, rating)
         except (ValueError, RecursionError) as exc:
             return f"verify: {exc}"
     return ""
 
 
-def write_sidecar(path: Path, pills) -> Outcome:
-    """Create or merge into the `<stem>.xmp` at `path`. Never overwrites foreign content; never raises."""
+def write_sidecar(path: Path, pills, rating: int | None = None) -> Outcome:
+    """Create or merge into the `<stem>.xmp` at `path` (`rating`: see build_packet). Never overwrites foreign
+    content; never raises."""
     part = None
     try:
         path = Path(path)
         part = path.with_name(f".{path.name}.{os.getpid()}-{secrets.token_hex(4)}.spuza-part")
         want = _norm(pills)
+        rating = _rating_arg(rating)
         if not path.exists():
-            if not want:
+            if not want and not rating:
                 return Outcome("written", "nothing to change")
-            packet = build_packet(want)
-            problem = _check_written(packet, want, None)
+            packet = build_packet(want, None, rating)
+            problem = _check_written(packet, want, None, rating)
             if problem:
                 return _declined(problem)
             part.write_bytes(packet)
@@ -662,7 +732,7 @@ def write_sidecar(path: Path, pills) -> Outcome:
                             pass
                         raise
                     return Outcome("written")
-        return _merge_sidecar(path, part, want)
+        return _merge_sidecar(path, part, want, rating)
     except Exception as exc:
         return _declined(str(exc) or type(exc).__name__)
     finally:
@@ -673,19 +743,19 @@ def write_sidecar(path: Path, pills) -> Outcome:
                 pass
 
 
-def _merge_sidecar(path: Path, part: Path, want: list[PillTag]) -> Outcome:
+def _merge_sidecar(path: Path, part: Path, want: list[PillTag], rating: int | None = None) -> Outcome:
     st0 = path.stat()
     old = read_sidecar(path)
     if old is None:
         return _declined("existing sidecar unreadable")
     try:
-        if _unchanged(old, want):
+        if _unchanged(old, want, rating):
             return Outcome("written", "nothing to change")
-        new = build_packet(want, old)
+        new = build_packet(want, old, rating)
     except ValueError as exc:
         return _declined(f"existing sidecar is not usable XMP: {exc}")
     part.write_bytes(new)
-    problem = _check_written(part.read_bytes(), want, old)
+    problem = _check_written(part.read_bytes(), want, old, rating)
     if problem:
         return _declined(problem)
     st1 = path.stat()
@@ -766,15 +836,29 @@ def _pills_from(raw: bytes | None) -> list[PillTag] | None:
     return parse_pills(raw) if raw else None
 
 
-def read_picture_pills(picture) -> list[PillTag] | None:
-    """The pills of a catalog Picture. Only a store with a spuza:pills bag counts; the primary's store wins
-    (RAW: its `<stem>.xmp`, then the JPEG twin's embedded; JPEG/PNG: embedded, then its `<stem>.xmp`). No union."""
+def _has_rating(raw: bytes | None) -> tuple[bool, int | None]:
+    """(the packet carries an xmp:Rating at all, its star value 1..5 or None)."""
+    if not raw:
+        return False, None
+    try:
+        descs = _descriptions(_parse(raw), create=False)
+        text = _value(descs, T_RATING)
+    except (ValueError, RecursionError):
+        return False, None
+    return (text is not None), (None if text is None else _stars(_rating_num(text)))
+
+
+def read_picture_meta(picture) -> tuple[list[PillTag] | None, int | None]:
+    """(pills, stars) of a catalog Picture. Pills: only a store with a spuza:pills bag counts, the primary's store
+    wins (RAW: its `<stem>.xmp`, then the JPEG twin's embedded; JPEG/PNG: embedded, then its `<stem>.xmp`), no union.
+    Stars: the xmp:Rating (1..5) of the first store in that order that has one at all, bag or not; a -1 reject,
+    0 or junk there reads as None and ends the search."""
     def sidecar():
         try:
             want = picture.primary.stem.lower() + ".xmp"
             for c in picture.companions:
                 if Path(c).name.lower() == want:
-                    return _pills_from(read_sidecar(Path(c)))
+                    return read_sidecar(Path(c))
         except Exception:
             pass
         return None
@@ -782,20 +866,32 @@ def read_picture_pills(picture) -> list[PillTag] | None:
     def embedded(p):
         try:
             if p is not None and Path(p).suffix.lower() in EMBED_EXTS:
-                return _pills_from(read_embedded(Path(p)))
+                return read_embedded(Path(p))
         except Exception:
             pass
         return None
 
+    pills: list[PillTag] | None = None
+    stars: int | None = None
+    rated = False
     try:
         if Path(picture.primary).suffix.lower() in EMBED_EXTS:
             order = (lambda: embedded(picture.primary), sidecar)
         else:
             order = (sidecar, lambda: embedded(picture.sidecar))
         for store in order:
-            got = store()
-            if got is not None:
-                return got
+            raw = store()
+            if pills is None:
+                pills = _pills_from(raw)
+            if not rated:
+                rated, stars = _has_rating(raw)
+            if pills is not None and rated:
+                break
     except Exception:
         pass
-    return None
+    return pills, stars
+
+
+def read_picture_pills(picture) -> list[PillTag] | None:
+    """The pills of a catalog Picture (see read_picture_meta)."""
+    return read_picture_meta(picture)[0]
