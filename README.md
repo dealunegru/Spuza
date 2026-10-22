@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.13.0-informational" alt="Version 0.13.0">
+  <img src="https://img.shields.io/badge/version-0.14.0-informational" alt="Version 0.14.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -40,18 +40,19 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## In this README
 
-[What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Pills](#pills) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
+[What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Pills](#pills) · [Stars](#stars) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
 
 ## What's new
 
-### 0.13.0
+### 0.14.0
 
-Review now opens big. The left panel lists your pills under All and Marked, one row each with its colour dot, name and how many of this folder's pictures carry it. Click a row (or press `R`, or the Review button, or Marked) and that set shows on the zoom page, starting at the picture you were looking at if it is in the set, otherwise at the first one. `J` or `←` and `K` or `→` step through the set and stop at the ends; the caption says "3 of 12" and names the set. `Esc` goes to the set's thumbnails and `Esc` again leaves review. A pill with no pictures shows an empty page, and the open set is highlighted in the panel.
+Star ratings, one to five, beside the pills. `Ctrl+1` to `Ctrl+5` set them (`Cmd` on a Mac) and `Ctrl+0` clears; the plain digits still toggle pills. The bar has five clickable stars after the pill tray, and click the lit star to clear. Stars show in the inspector, under the filmstrip thumbnails, in the review grid and in Lights out. In review the keys apply to the selection.
 
-Crop (`X`) has a `0 Reset` chip at the end of the ratio strip. Click it and the rectangle goes back to the largest centred one at the current ratio, the same as the `0` key.
+The left panel has an "at least 1★ to 5★" row. It narrows whichever review set is open (All, Marked or a pill), the counts read "n of m", and a click on the lit chip clears it. The main viewer is not filtered.
 
-The pill tray no longer ends in an `Edit` button, so nothing sits in the bar that is not a pill. The pill manager is still there under Pills, Manage pills, and on `Ctrl+Shift+P`. See [Review](#review) and [Pills](#pills).
+Stars are the standard `xmp:Rating`, written into the copies only (never the card), next to the pills. Ratings from other apps show up in Spuza. A copy of a picture whose rating changed since the last copy is now re-written in place instead of becoming a second copy. See [Stars](#stars).
 
+- **0.13.0**: Review opens big. The left panel lists All, Marked and one row per pill with its count; click one (or press `R`) and that set shows on the zoom page, stepped with `J` and `K`, "3 of 12" in the caption. Crop has a `0 Reset` chip. The pill tray no longer ends in an `Edit` button (Pills, Manage pills, `Ctrl+Shift+P`). See [Review](#review).
 - **0.12.0**: Pills: coloured labels you put on pictures. Make up to nine, give each a colour, toggle them with `1` to `9`, and a copy writes them into the copied files. See [Pills](#pills).
 - **0.11.1**: Zoom and Unmark in the review grid now show their key chips, and the other buttons name their key in the tooltip. The `?` shortcut overlay is a dark scrim over the whole window with the keys on a solid panel. J and K are swapped (J is back, K is next).
 - **0.11.0**: Eighth round: a quieter, darker Spuza. Spuza is dark by default on Windows and Linux; on a Mac it follows the system's light or dark appearance until you pick one. `Ctrl+T` (or View, Dark theme) flips it, and the pick is remembered. The bar above the picture is quieter: icon buttons for Back, Next, Mark, Zoom and Review, a filled Copy button, and a `⋯` menu holding Move on mark, Full screen, Preferences, Lights out and the advanced tools. Hover a button for its name and key. `Tab` is Lights out: the bar, sidebar, inspector, filmstrip and status line hide, and a small pill floats over the picture with the mark, `n / N`, `keys ?` and Copy. It is remembered between runs, and `F` full screen stays independent of it. There is now a menu bar (File, Edit, View, Picture, Help) that lists every action with its key, `?` opens a keyboard shortcut overlay, and `Ctrl+Q` quits. The keys and features are otherwise the same.
@@ -120,7 +121,7 @@ Right-click a picture in the filmstrip, the viewer or the review to show it in F
 
 ## Keys
 
-Every key in one table. The bar above the picture has icon buttons for the common ones (hover a button for its name and key), and the menu bar (File, Edit, View, Picture, Pills, Help) lists every action with its key. Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only. `?` shows the same list over the picture.
+Every key in one table. The bar above the picture has icon buttons for the common ones (hover a button for its name and key), and the menu bar (File, Edit, View, Picture, Pills, Stars, Help) lists every action with its key. Mark all, Unmark all, undo and the two turns (`[` `]`) are keys only. `?` shows the same list over the picture.
 
 | Key | Where | Does |
 |---|---|---|
@@ -143,12 +144,14 @@ Every key in one table. The bar above the picture has icon buttons for the commo
 | `Ctrl+Q` | anywhere | Quit (`Cmd+Q` on a Mac) |
 | `Tab` | anywhere | Lights out: hide the bar, sidebar, inspector, filmstrip and status line, and float a small pill (marked, `n / N`, `keys ?`, Copy) over the picture. `Tab` again brings the bar back. Remembered between runs. Also View, Lights out. Inside the Copy or Preferences sheet `Tab` still moves between fields |
 | `Ctrl+T` | anywhere | switch between the dark and the light theme (`Cmd+T` on a Mac). Remembered between runs. Also View, Dark theme |
-| `?` | anywhere | the keyboard shortcut overlay: every key, grouped by task. `Esc` or `?` closes it. The same list is in the menu bar (File, Edit, View, Picture, Pills, Help) |
+| `?` | anywhere | the keyboard shortcut overlay: every key, grouped by task. `Esc` or `?` closes it. The same list is in the menu bar (File, Edit, View, Picture, Pills, Stars, Help) |
 | `X` | viewer | **crop**: drag a rectangle on the picture, with a ratio strip above it. `Enter` adds the result as a new picture after the original. On a crop picture, `X` re-crops it from the original |
 | `1` to `8` | crop | pick the ratio: Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16, 1.91:1. Clicking a chip on the strip does the same. Outside the crop these digits are pills (below) |
 | `V` | crop | turn the ratio: 4:5 becomes 5:4, 1.91:1 becomes 1:1.91. Free and 1:1 do not change. Nothing outside the crop |
 | `1` `2` `3` `4` `5` `6` `7` `8` `9` | viewer, Lights out, review | **toggle pill 1 to 9** on this picture (review: on the selected picture or pictures). A digit with no pill says so. While a crop or story fit is open the digits keep their crop and story meanings and no pill is touched |
 | `0` | viewer, Lights out, review | **clear every pill** on this picture (or the selected ones). While a crop or story fit is open `0` keeps its crop or story meaning |
+| `Ctrl+1` `Ctrl+2` `Ctrl+3` `Ctrl+4` `Ctrl+5` | viewer, Lights out, review | **set the star rating** 1 to 5 on this picture (review: on the selected pictures). `Cmd+1` to `Cmd+5` on a Mac. Not while a crop or story fit is open |
+| `Ctrl+0` | viewer, Lights out, review | **clear the stars** on this picture or the selected ones (`Cmd+0` on a Mac) |
 | `Ctrl+Shift+P` | anywhere | open the **pill manager**: make, rename, recolour and delete pills (`Cmd+Shift+P` on a Mac). Also Pills, Manage pills |
 | `S` | viewer | **story fit** 9:16: drag and zoom the picture under a fixed vertical frame. `Enter` adds it as a new picture after the original. On a story picture, `S` re-fits it |
 | `0` | crop, story fit | crop: the largest centred rectangle of the ratio. Story fit: back to the whole picture inside the frame |
@@ -189,6 +192,20 @@ A pill is a name with a colour, such as **Hero** (blue) or **Delivered** (green)
 - **See them.** The tray shows each pill as a capsule with its dot, name and digit, lit when this picture has it. A narrow window drops the names (dot and digit), then shows `+N` for the rest, and never pushes the buttons on the right off the bar. Small dots at the bottom right of a thumbnail on the filmstrip and in the review show its pills; the inspector lists them on a "Pills:" line and the Lights out pill carries the dots too.
 - **Copies carry them.** Copy writes a picture's pills into the copy as keywords and a colour label (XMP): inside a JPEG or PNG, and in a `<name>.xmp` sidecar beside a raw or any other file. The card itself is never written. On a Mac the pills also become Finder tags on the copies.
 - **A reloaded folder shows them.** When Spuza opens a folder that already carries pills (a folder of copies), it reads them back in the background and shows them again. Pills you gave pictures on a card are remembered in Spuza's app-data folder, so the same card shows them next time.
+
+## Stars
+
+A star rating is one to five stars on a picture, kept apart from the pills.
+
+- **Set them.** `Ctrl+1` to `Ctrl+5` (`Cmd` on a Mac) set the rating and `Ctrl+0` clears it. Or click one of the five stars in the bar after the pill tray; click the lit star again to clear. In the review the keys apply to the selected pictures. The Stars menu lists the same actions, and the `?` overlay has a Stars group.
+- **See them.** Stars show in the inspector, under the filmstrip thumbnails, in the review grid and in Lights out.
+- **Filter.** The left panel has an "at least 1★ to 5★" row. It narrows whichever set is open (All, Marked or a pill) to pictures with that many stars or more, and the counts read "n of m". Click the lit chip to clear it. The main viewer is not filtered.
+- **Copies carry them.** Copy writes the rating as the standard `xmp:Rating`, beside the pills: inside a JPEG or PNG, and in a `<name>.xmp` sidecar beside a raw or any other file. The card is never written. Windows Explorer shows it on JPEG copies. Copy still copies the marked pictures, and their stars go with them. If you change a rating and copy again, the copy is re-written in place rather than made twice.
+- **Ratings from other apps.** A folder that already carries `xmp:Rating` (from Lightroom, Bridge, Explorer or a camera) shows those stars in Spuza.
+
+<p align="center">
+  <img src="docs/img/stars-filter.png" alt="The left panel with the 4 star chip lit and the counts reading n of m" width="900">
+</p>
 
 ## Crop and story fit
 
