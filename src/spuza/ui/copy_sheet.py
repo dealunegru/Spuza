@@ -124,11 +124,19 @@ class CopySheet(QDialog):
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
                  eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
-                 stories=None, crop_ratios=None, derived=None, pills=None, write_pills: bool = True):
+                 stories=None, crop_ratios=None, derived=None, pills=None, write_pills: bool = True, ratings=None):
         super().__init__(parent)
         # contract spp-copy: Picture.primary -> the pills (xmp.PillTag) that picture carries. They are written into its
         # copies (see copy.plan_copy) and shown as a block with one chip per pill; a value that is not a PillTag is dropped.
         self.write_pills = bool(write_pills)
+        # Picture.primary -> stars 0..5 (see copy.plan_copy ratings=); no visible UI yet. A bad entry is dropped.
+        self.ratings: dict[Path, int] = {}
+        try:
+            for k, v in dict(ratings or {}).items():
+                if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 5:
+                    self.ratings[k] = v
+        except (TypeError, ValueError):
+            self.ratings = {}
         self.pills: dict[Path, tuple[PillTag, ...]] = {}
         try:
             items = list(dict(pills or {}).items())
@@ -391,6 +399,18 @@ class CopySheet(QDialog):
                 out.update({f: tags for f in p.files if f not in skip and f.suffix.lower() in KNOWN_EXTS})
         return out
 
+    def _ratings_map(self) -> dict[Path, int]:
+        """Source picture file -> stars for plan_copy, spread over the picture's files like _pills_map."""
+        out: dict[Path, int] = {}
+        if not self.write_pills:
+            return out
+        for p in self.pictures:
+            n = self.ratings.get(getattr(p, "primary", None))
+            if n is not None:
+                skip = set(getattr(p, "companions", ()))
+                out.update({f: n for f in p.files if f not in skip and f.suffix.lower() in KNOWN_EXTS})
+        return out
+
     # ---- destination ---------------------------------------------------------------------------
     def pick_folder(self) -> None:
         start = str(self.dest) if self.dest else ""
@@ -519,8 +539,10 @@ class CopySheet(QDialog):
         return jobs
 
     def _plan(self):
+        ratings = self._ratings_map()
         return copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise, self._turns(),
-                                  self._crop_jobs(), self._story_jobs(), self._pills_map())
+                                  self._crop_jobs(), self._story_jobs(), self._pills_map(),
+                                  **({"ratings": ratings} if ratings else {}))
 
     def _show_plan(self, plan=None) -> None:
         self.plan = plan or self._plan()
