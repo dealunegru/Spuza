@@ -41,6 +41,8 @@ REVIEW_TABLE = {
     # design round 2: Tab (Lights out) and Ctrl+T (theme) are window layout/look switches, global; the bar's overflow
     # button opens the menu's own actions; the pill (shown only in Lights out, never over the review) calls act_help / act_copy
     "shortcut:Tab": "global", "shortcut:Ctrl+T": "global",
+    # stars (0.14): Ctrl+1..5 / Ctrl+0 set or clear the stars of the selected picture(s) from anywhere
+    **{f"shortcut:Ctrl+{n}": "global" for n in range(0, 6)},
     "quietMore": "global", "pillHelp": "global", "pillCopy": "global",
 }
 

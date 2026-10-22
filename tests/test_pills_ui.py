@@ -598,8 +598,8 @@ def test_manager_changes_are_saved_and_the_menu_follows(hero):
 
 # -- the menu and the overlay -----------------------------------------------------------------------------
 def test_pills_menu_sits_between_picture_and_help(win):
-    assert [a.text() for a in win.menuBar().actions()] == ["File", "Edit", "View", "Picture", "Pills", "Help"]
-    assert list(act.MENUS) == ["File", "Edit", "View", "Picture", "Pills", "Help"] and "Pills" in act.GROUPS
+    assert [a.text() for a in win.menuBar().actions()] == ["File", "Edit", "View", "Picture", "Pills", "Stars", "Help"]
+    assert list(act.MENUS) == ["File", "Edit", "View", "Picture", "Pills", "Stars", "Help"] and "Pills" in act.GROUPS
 
 
 def test_menu_shows_names_and_check_states_and_hides_unused_digits(hero):

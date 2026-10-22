@@ -189,6 +189,8 @@ PROBES = {
     # pills (0.12): the digits call _pill_key(n); Ctrl+Shift+P is a window shortcut
     **{f"pill_{n}": ("", "_pill_key") for n in range(1, 10)}, "pill_clear": ("", "_pill_key"),
     "pills_manage": ("", "open_pill_manager"),
+    # stars (0.14): Ctrl+1..5 set, Ctrl+0 clears; each is a window shortcut calling _stars_key(n)
+    **{f"stars_{n}": ("", "_stars_key") for n in range(1, 6)}, "stars_clear": ("", "_stars_key"),
 }
 
 
