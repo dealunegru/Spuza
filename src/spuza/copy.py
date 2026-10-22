@@ -151,6 +151,14 @@ def _canon(data: bytes, ext: str, rated: bool = False) -> bytes | None:
     1..5 xmp:Rating is removed as well."""
     r = 0 if rated else None
     try:
+        if rated:  # rating 0 keeps a -1 reject, which Spuza may have replaced: set a rating first so any value
+            #   (a -1, a 1..5 or none) ends the same, then 0 removes it
+            if ext == ".xmp":
+                data = xmp.build_packet([], data, 1)
+            else:
+                data, _why = xmp.embed(data, ext, [], 1)
+                if data is None:
+                    return None
         if ext == ".xmp":  # set a sentinel pill first so a file with and a file without pills strip to the same residue
             return xmp.build_packet([], xmp.build_packet([_SENTINEL], data, r), r)
         mid, _why = xmp.embed(data, ext, [_SENTINEL], r)
