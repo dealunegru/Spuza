@@ -425,3 +425,21 @@ def test_round_trip_leaves_the_card_byte_identical(tmp_path, advanced):
     assert state() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(siblings + ["store"])
     assert all(p.suffix == ".json" for p in store_dir.iterdir())
+
+
+def test_tests_wait_longer_than_the_one_second_close_budget(tmp_path, advanced):
+    """bug-453: a slow runner's write outlasts the product's 1 s close budget; the tests' wait must not."""
+    import time
+
+    root = make_card(tmp_path)
+
+    class Slow(SessionStore):
+        def save(self, *a, **kw):
+            time.sleep(1.3)
+            return super().save(*a, **kw)
+
+    cat = open_card(root)
+    c = ctl(cat, root, Slow(tmp_path / "s"))
+    cat.set_mark(1, True)
+    c.tick()
+    assert c.wait_idle()
