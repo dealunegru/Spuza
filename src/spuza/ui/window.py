@@ -23,6 +23,7 @@ landing on it (focus_point), and resume (resume_session; U starts fresh). Their 
 
 from __future__ import annotations
 
+import datetime
 import logging
 import sys
 import threading
@@ -152,6 +153,11 @@ class _PillSaveJob(QRunnable):
 def default_copy_dest() -> Path:
     """Where Copy… starts: a folder on the drive, never the card being culled (tests patch Path.home)."""
     return Path.home() / "Pictures" / "Spuza"
+
+
+def month_day(d) -> str:
+    """MM_DD of a date, zero padded (22 October is 10_22): the folder name a master-folder copy goes into."""
+    return f"{d.month:02d}_{d.day:02d}"
 
 
 _NOT_IN_REVIEW = object()
@@ -477,6 +483,7 @@ class MainWindow(QMainWindow):
         self.clock = clock  # kept for callers that pass it; the status strip no longer uses it
         self.review_factory = None
         self.copy_sheet_factory = None
+        self.today = datetime.date.today  # injectable: the master folder's MM_DD comes from it
         self.prefs_sheet_factory = None
         self.review = None
         self.compare = None  # advanced: CompareView, built on first N
@@ -1667,7 +1674,40 @@ class MainWindow(QMainWindow):
         self.filmstrip.viewport().update()
         self.refresh_marks()
 
-    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=(), pills=None, ratings=None):
+    def _copy_destination(self) -> tuple[Path, str, Path | None]:
+        """(default destination, a note for the sheet or "", where Choose folder opens or None for 'at the destination').
+        No master folder: the usual folder. A master that exists: <master>/MM_DD. A master that is gone (unplugged drive):
+        the usual folder and a note; the master is never created."""
+        usual = default_copy_dest()
+        master_s = settings.read_master_folder(self.prefs)
+        master = Path(master_s) if master_s else None
+        note, dest = "", usual
+        if master is not None:
+            if master.is_dir():
+                dest = master / month_day(self.today())
+            else:
+                note = f"Master folder {master} is not available; copying to the usual folder"
+                master = None
+        last_s = settings.read_last_parent(self.prefs)
+        last = Path(last_s) if last_s else None
+        start = None
+        if last is not None and last.is_dir():
+            if master is None or last == master or master in last.parents:
+                start = last
+        if start is None and master is not None:
+            start = master
+        return dest, note, start
+
+    def _on_copied_to_chosen(self, folder) -> None:
+        """A copy to a folder the user chose finished well: remember its parent for the next Choose folder."""
+        try:
+            settings.write_last_parent(self.prefs, str(Path(folder).parent))
+            self.prefs.sync()
+        except Exception as exc:  # noqa: BLE001 - a failed save of a convenience must never break the copy
+            log.warning("could not remember the copy folder: %s", exc)
+
+    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=(), pills=None, ratings=None,
+                                    start_folder=None, note=""):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
         derived = list(derived)
@@ -1680,7 +1720,9 @@ class MainWindow(QMainWindow):
                          rotations=self._copy_rotations(turned), derived=derived,
                          write_rotation=settings.read_write_rotation(self.prefs),
                          **({"pills": pills} if pills else {}),  # CopySheet takes pills= once spp-copy is merged
-                         **({"ratings": ratings} if ratings else {}))
+                         **({"ratings": ratings} if ratings else {}),
+                         **({"start_folder": start_folder} if start_folder else {}),
+                         **({"note": note} if note else {}))
 
     def _copy_pills(self, pictures) -> dict:
         """Picture.primary -> the XMP tags (xmp.PillTag) of the pills it carries, for the pictures being copied that
@@ -1717,7 +1759,15 @@ class MainWindow(QMainWindow):
             ratings = self._copy_ratings(marked)
             if ratings:  # and ratings: only a copy with some stars set in Spuza carries the kwarg
                 extra["ratings"] = ratings
-            self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self, **extra)
+            dest, note, start = self._copy_destination()
+            if note:  # a factory that knows nothing of notes or start folders is called as before when there are none
+                extra["note"] = note
+            if start is not None and start != dest:
+                extra["start_folder"] = start
+            self._sheet = factory(marked, default_dest=dest, parent=self, **extra)
+            chosen_signal = getattr(self._sheet, "copied_to_chosen", None)
+            if chosen_signal is not None:
+                chosen_signal.connect(self._on_copied_to_chosen)
             quit_signal = getattr(self._sheet, "quit_requested", None)
             if quit_signal is not None:
                 quit_signal.connect(self.close)  # the normal close path: closeEvent saves and flushes as usual
@@ -1736,7 +1786,8 @@ class MainWindow(QMainWindow):
                           eject_after=settings.read_eject_after(self.prefs),
                           quit_after=settings.read_quit_after(self.prefs),
                           write_rotation=settings.read_write_rotation(self.prefs),
-                          zoom_full_sensor=settings.read_zoom_full_sensor(self.prefs))
+                          zoom_full_sensor=settings.read_zoom_full_sensor(self.prefs),
+                          master_folder=settings.read_master_folder(self.prefs))
 
     def _show_mode(self) -> None:
         adv = features.is_advanced()
@@ -1810,6 +1861,11 @@ class MainWindow(QMainWindow):
                 if v != getattr(sheet, "seeded_" + {"eject_after": "eject", "quit_after": "quit",
                                                         "write_rotation": "rotation", "zoom_full_sensor": "sensor"}.get(name, name), v):
                     write(self.prefs, v)
+        master = getattr(sheet, "master_folder", None)  # classic row: saved in any mode, if changed
+        if callable(master):
+            m = str(master() or "")
+            if m != getattr(sheet, "seeded_master", m):
+                settings.write_master_folder(self.prefs, m)
         self.prefs.sync()
         sensor = getattr(sheet, "zoom_full_sensor", None)  # classic row: the viewer follows the sheet at once
         if callable(sensor):

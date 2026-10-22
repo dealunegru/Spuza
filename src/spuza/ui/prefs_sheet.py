@@ -7,13 +7,19 @@ Advanced box is ticked.
 
 Three classic rows (always visible) say what a copy does: organise the destination into raw / soc / ed,
 eject the card afterwards, quit Spuza afterwards. ``seeded_*`` is what each started as, so the window saves
-only a changed value. Reset to defaults sets them back to on (the shipped default) along with the spins.
+only a changed value. A fourth row, Master folder, names a folder every copy goes under (``master_folder()``, "" = not set; the window
+saves it only when it differs from ``seeded_master``); Reset to defaults leaves it alone.
+Reset to defaults sets them back to on (the shipped default) along with the spins.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
+    QHBoxLayout,
     QCheckBox,
     QDialogButtonBox,
     QFormLayout,
@@ -31,7 +37,7 @@ class PrefsSheet(QDialog):
                  advanced: bool = False, threads: int = settings.DEFAULT_THREADS,
                  peaking_threshold: int = settings.DEFAULT_PEAKING_THRESHOLD, resume: bool = True,
                  organise: bool = True, eject_after: bool = True, quit_after: bool = True,
-                 write_rotation: bool = True, zoom_full_sensor: bool = False):
+                 write_rotation: bool = True, zoom_full_sensor: bool = False, master_folder: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.max_side = max_side
@@ -70,6 +76,21 @@ class PrefsSheet(QDialog):
         self.organise_check.setChecked(self.seeded_organise)
         self.eject_check.setChecked(self.seeded_eject)
         self.quit_check.setChecked(self.seeded_quit)
+        self.seeded_master = str(master_folder or "")
+        self._master = self.seeded_master
+        self.choose_folder: Callable = lambda parent, title, start: QFileDialog.getExistingDirectory(parent, title, start)
+        self.master_title = QLabel("Master folder")
+        self.master_label = QLabel()
+        self.master_label.setWordWrap(True)
+        self.master_choose = QPushButton("Choose…")
+        self.master_choose.setAutoDefault(False)
+        self.master_choose.setToolTip("Choose a master folder  Space")  # the focused button is pressed with Space
+        self.master_choose.clicked.connect(self._pick_master)
+        self.master_clear = QPushButton("Clear")
+        self.master_clear.setAutoDefault(False)
+        self.master_clear.setToolTip("Clear the master folder  Space")
+        self.master_clear.clicked.connect(self._clear_master)
+        self._show_master()
         self.note_label = QLabel("The ADVANCED marker changes now; decode threads apply at the next launch.")
         self.note_label.setWordWrap(True)
         self.reset_button = QPushButton("Reset to defaults")
@@ -97,6 +118,12 @@ class PrefsSheet(QDialog):
         lay.addWidget(self.quit_check)
         lay.addWidget(self.rotation_check)
         lay.addWidget(self.sensor_check)
+        master_row = QHBoxLayout()
+        master_row.addWidget(self.master_title)
+        master_row.addWidget(self.master_label, 1)
+        master_row.addWidget(self.master_choose)
+        master_row.addWidget(self.master_clear)
+        lay.addLayout(master_row)
         lay.addWidget(self.advanced_check)
         lay.addWidget(self.note_label)
         lay.addWidget(self.reset_button)
@@ -116,6 +143,23 @@ class PrefsSheet(QDialog):
         self.peaking_spin.setVisible(on)
         self.resume_check.setVisible(on)
         self.note_label.setVisible(on)
+
+    def master_folder(self) -> str:
+        return self._master
+
+    def _show_master(self) -> None:
+        self.master_label.setText(self._master or "Not set: copies go to the usual folder")
+        self.master_clear.setEnabled(bool(self._master))
+
+    def _pick_master(self) -> None:
+        chosen = self.choose_folder(self, "Choose the master folder", self._master)
+        if chosen:
+            self._master = str(chosen)
+            self._show_master()
+
+    def _clear_master(self) -> None:
+        self._master = ""
+        self._show_master()
 
     def advanced(self) -> bool:
         return self.advanced_check.isChecked()

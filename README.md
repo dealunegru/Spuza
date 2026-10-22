@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.14.0-informational" alt="Version 0.14.0">
+  <img src="https://img.shields.io/badge/version-0.15.0-informational" alt="Version 0.15.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -43,6 +43,14 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 [What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Pills](#pills) · [Stars](#stars) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
 
 ## What's new
+
+### 0.15.0
+
+The copy sheet is quicker. **Choose folder...** now starts the copy as soon as you pick the folder; cancel the dialog and nothing changes. If the folder does not have the space, nothing starts and the "Not enough space" line shows. After a copy has finished, choosing another folder copies the same pictures there too.
+
+Preferences has a **Master folder** row (**Choose...** and **Clear**, empty by default). With a master set, the copy sheet starts at `<master>/MM_DD` for today's date (`10_22` on 22 October), Enter copies there and the folder is created, and **Choose folder...** opens in the master. If the master is missing, say an unplugged drive, the sheet falls back to `~/Pictures/Spuza` and says so in one line; the master itself is never created.
+
+After a copy to a folder you chose, Spuza remembers that folder's parent (`/poze/10_22` gives `/poze`), so the next **Choose folder...** opens there. With a master set, the master wins unless the remembered parent is inside it. See [Copying](#copying).
 
 ### 0.14.0
 
@@ -239,7 +247,8 @@ Rules:
 
 ## Copying
 
-`C` opens the copy sheet. It starts at `~/Pictures/Spuza`, and you can pick any other folder.
+`C` opens the copy sheet. It starts at `~/Pictures/Spuza`, or at `<master>/MM_DD` for today's date (`10_22` on 22 October) when you have set a **Master folder** in Preferences: Enter copies there and the folder is created. If the master is missing (an unplugged drive), the sheet uses `~/Pictures/Spuza` and says so in one line; the master itself is never created.
+**Choose folder...** picks any other folder and starts the copy at once; cancel the dialog and nothing changes. If space is short nothing starts and the "Not enough space" line shows. After a finished copy, choosing another folder copies the same pictures there. The dialog opens in the master, or else in the parent of the last folder you copied to (`/poze/10_22` gives `/poze`); the master wins unless that parent is inside it.
 The sheet shows the plan before anything is copied: how many files, how many bytes (crop and story sizes are estimates), and what is already in that folder.
 
 <p align="center">
@@ -273,6 +282,7 @@ Other rules:
 
 - **Pictures ready ahead** (1-64, default 12) and **Pictures kept behind** (0-64, default 8). The memory those previews take is shown under the rows.
 - **Copy into raw / soc / ed folders**, **Eject the card after copying**, **Quit Spuza after copying** and **Write rotation to copies (EXIF)** (all default on): see [Copying](#copying).
+- **Master folder** (empty by default; **Choose...** and **Clear**): where the copy sheet puts today's `MM_DD` folder. See [Copying](#copying).
 - **Zoom shows the full sensor on cropped shots** (default off). Some cameras can crop a shot as they take it. With the row off, `Z` on such a shot shows the camera's own frame at 100%. With it on, `Z` shows the whole sensor at 100% instead, and the label says `100% · full sensor`. The fitted view, the review sheet and compare always show the camera's frame; uncropped shots and JPEGs are the same either way.
 - **Advanced mode**: see below.
 - Advanced mode only:
