@@ -14,12 +14,15 @@ from spuza import derived as dv
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
 from spuza.ui.pill_tray import draw_dots_right
+from spuza.ui.star_bar import clamp_stars, draw_star
 from spuza.ui.thumbs import ThumbLoader, cut_crop, story_frame
 
 CELL_W, CELL_H = 112, 84
 THUMB_W, THUMB_H = 104, 62
 MEMO_MAX = 600  # scaled thumbnails kept; oldest dropped first
 STRIP_DOTS = 4  # pill dots drawn on a thumbnail (a "+" after that); the badge sits bottom left
+BAND_H = 14  # the free band under the thumb (the cell is CELL_H - 8 high inside its margin)
+STAR_R, STAR_PITCH = 5.0, 11  # the rating's stars in that band
 SCROLL_DEBOUNCE_MS = 150  # a scroll or resize settles this long before the strip asks for thumbnails
 
 
@@ -115,6 +118,11 @@ class _Delegate(QStyledItemDelegate):
             names = s.pill_colors(i)
             if names:
                 draw_dots_right(p, box.right() - 3, box.bottom() - 9, names, most=STRIP_DOTS)
+        if d is None:  # the rating: small filled stars in the free band under the thumb, at the left
+            n = s.star_count(i)
+            for k in range(n):
+                draw_star(p, box.x() + 2 + STAR_R + k * STAR_PITCH, box.bottom() + 1 + BAND_H / 2, STAR_R, True,
+                          QColor(c.text))
         # mark check
         if s.catalog.is_marked(i) if d is None else d.marked:
             dot = QRect(box.right() - 17, box.y() + 3, 14, 14)
@@ -142,6 +150,7 @@ class Filmstrip(QListView):
         # window leaves this alone; a derived picture's tag comes from `derived.tag`.
         self.edit_tag_of = lambda i: []
         self.pills_of = lambda i: ()  # the window assigns it: catalog index -> the pill colour NAMES to draw as dots
+        self.stars_of = lambda i: 0  # the window assigns it: catalog index -> the star rating 0..5
         self._memo: dict[tuple[int, int], QPixmap] = {}  # (index, quarter turns) -> scaled, rotated pixmap
         # derived id -> (content key, pixmap): ONE entry per derived picture, so a changed item drops its old cut
         self._dmemo: dict[int, tuple[tuple, QPixmap]] = {}
@@ -220,6 +229,12 @@ class Filmstrip(QListView):
             return [str(c) for c in (self.pills_of(i) or ())]
         except Exception:  # noqa: BLE001 - a bad provider shows no dots
             return []
+
+    def star_count(self, i: int) -> int:
+        try:
+            return clamp_stars(self.stars_of(i))
+        except Exception:  # noqa: BLE001 - a bad provider shows no stars
+            return 0
 
     def derived_tags(self, d) -> list[tuple[str, str]]:
         """The one tag of a derived picture: a crop is its ratio ("crop" for Free), a story is "9:16"."""

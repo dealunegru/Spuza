@@ -88,7 +88,7 @@ def watch(monkeypatch, obj, name) -> Counter:
 # -- the table ------------------------------------------------------------------------------------
 def test_menu_bar_has_the_six_menus_in_order(win):  # 0.12 added Pills, between Picture and Help
     assert [a.text() for a in win.menuBar().actions()] == list(act.MENUS) == ["File", "Edit", "View", "Picture",
-                                                                              "Pills", "Help"]
+                                                                              "Pills", "Stars", "Help"]
 
 
 def test_every_action_is_in_its_menu_with_keys(win):

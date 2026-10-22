@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 SHOTS = ("hero.gif", "workbench.png", "lights-out.png", "shortcuts.png", "bleed.png", "review.png", "copy.png", "prefs.png",
-         "compare.png", "peaking.png")
+         "compare.png", "peaking.png", "stars-filter.png")
 
 SIZE = (1440, 900)  # the window, for every shot
 OUT_WIDTH = 1200  # every image is scaled to this width
@@ -89,8 +89,12 @@ def _run(root: Path, out: Path) -> int:
         window.go_to(i)
         for d in digits:
             window._pill_key(d)
+    # Stars: through the real Ctrl+n handler, on the four pictures (5, 3, 4, 2 stars).
+    for i, n in enumerate((5, 3, 4, 2)):
+        window.go_to(i)
+        window._stars_key(n)
     window.go_to(0)
-    window.statusBar().clearMessage()  # not the last pill's "Print on"
+    window.statusBar().clearMessage()  # not the last pill's "Print on" or the stars toast
 
     def pump(seconds: float) -> None:
         end = time.monotonic() + seconds
@@ -191,6 +195,11 @@ def _run(root: Path, out: Path) -> int:
     pump(2.5)
     save_png("review.png", grab())
     window.stack.setCurrentIndex(0)  # back to the viewer for what follows
+    pump(0.3)
+    window._set_min_stars(4)  # the "at least 4 stars" chip (the left panel): counts read "n of m"
+    pump(0.6)
+    save_png("stars-filter.png", grab())
+    window._set_min_stars(0)
     pump(0.3)
 
     window.open_copy()

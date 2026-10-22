@@ -48,8 +48,10 @@ from spuza.copy import human_size
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
 from spuza.ui.pill_tray import draw_dots_right
+from spuza.ui.star_bar import clamp_stars, draw_star
 from spuza.ui.viewer import info_native_size, step_scale
 
+STAR_R, STAR_PITCH = 5.0, 11  # the grid's stars: small filled ones right of the kind badge
 THUMB_SIDE = 480  # decode size for the worker
 CELL = QSize(212, 176)
 THUMB_BOX = QSize(196, 130)
@@ -137,6 +139,9 @@ class _Delegate(QStyledItemDelegate):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(badge_rect, 4, 4)
         p.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, kind)
+        n_stars = self.grid.star_count(index.data(IDX_ROLE))
+        for k in range(n_stars):  # the rating: filled stars right of the kind badge, on its line
+            draw_star(p, badge_rect.right() + 10 + STAR_R + k * STAR_PITCH, badge_rect.center().y(), STAR_R, True, text_col)
         names = self.grid.pill_colors(index.data(IDX_ROLE))
         if names:  # the picture's pills: dots bottom right, on a dark halo (the mark check is not drawn here)
             draw_dots_right(p, r.right() - 2, badge_rect.center().y(), names, r=4.0, pitch=10.0, most=6)
@@ -157,6 +162,8 @@ class ReviewGrid(QWidget):
         self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self.pills_of = lambda i: ()  # catalog index -> the pill colour NAMES drawn as dots; the window assigns it
         self.pill_has = lambda i, name: False  # (catalog index, pill name) -> carries it? the window assigns it
+        self.stars_of = lambda i: 0  # catalog index -> its star rating 0..5; the window assigns it
+        self.min_stars = 0  # "at least N stars" narrows the open set (0: off); set_min_stars changes it
         self.set_kind: str = "marked"  # "marked" or "pill"
         self.set_name: str | None = None  # the pill's name while set_kind is "pill"
         self._members: list[int] = []  # catalog indices of the set, in catalog order (refresh keeps it)
@@ -255,8 +262,8 @@ class ReviewGrid(QWidget):
         c = self.catalog
         return [i for i in range(len(c.pictures)) if c.is_marked(i)]
 
-    def set_indices(self) -> list[int]:
-        """Catalog indices of the open set: the marked pictures, or those carrying the open pill."""
+    def _base_indices(self) -> list[int]:
+        """The open set before the star threshold: the marked pictures, or those carrying the open pill."""
         if self.set_kind != "pill" or self.set_name is None:
             return self.marked_indices()
         name = self.set_name
@@ -268,6 +275,20 @@ class ReviewGrid(QWidget):
             except Exception:  # noqa: BLE001 - a bad lookup leaves the picture out
                 continue
         return out
+
+    def set_indices(self) -> list[int]:
+        """Catalog indices of the open set, ANDed with "at least `min_stars` stars" when that is on."""
+        base = self._base_indices()
+        if self.min_stars <= 0:
+            return base
+        return [i for i in base if self.star_count(i) >= self.min_stars]
+
+    def set_min_stars(self, n: int) -> None:
+        """The "at least N stars" threshold (0: off): the set narrows (or widens) at once."""
+        n = clamp_stars(n)
+        if n != self.min_stars:
+            self.min_stars = n
+            self.refresh()
 
     def set_title(self) -> str:
         return "Marked" if self.set_kind != "pill" or self.set_name is None else str(self.set_name)
@@ -318,7 +339,14 @@ class ReviewGrid(QWidget):
             it.setToolTip(f"{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}")
             self.model.appendRow(it)
         n = self.model.rowCount()
-        if self.set_kind == "pill":
+        if self.min_stars > 0:
+            whole = len(self._base_indices())
+            title = f"{self.set_title()} · {self.min_stars}★ and up"
+            self.header.setText(f"{title}: {n} of {whole} pictures")
+            self.header.setToolTip(f"{n} of the {whole} pictures of {self.set_title()} have at least {self.min_stars} stars")
+            self.empty.setText(f"No pictures of {self.set_title()} have {self.min_stars}★ or more")
+            can_unmark = any(self.catalog.is_marked(i) for i in members)
+        elif self.set_kind == "pill":
             total = len(self.catalog)
             size = sum(self.catalog.pictures[i].size_bytes for i in members)
             self.header.setText(f"{self.set_title()}: {n} of {total} · {human_size(size)}")
@@ -385,6 +413,12 @@ class ReviewGrid(QWidget):
         return got
 
     # ---- thumbnails ----------------------------------------------------------------------------
+    def star_count(self, i) -> int:
+        try:
+            return clamp_stars(self.stars_of(i))
+        except Exception:  # noqa: BLE001 - a bad provider shows no stars
+            return 0
+
     def pill_colors(self, i) -> list[str]:
         try:
             return [str(c) for c in (self.pills_of(i) or ())]

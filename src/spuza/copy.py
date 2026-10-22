@@ -54,6 +54,7 @@ class CopyItem:
     crop_job: crop_mod.CropJob | None = None  # set on a crop item (action "crop"): src is the primary, dst is in ed
     story_job: story_mod.StoryJob | None = None  # set on a story item (action "story"), likewise
     pills: tuple[PillTag, ...] = ()  # the picture's pills to write into this copy; set on picture files (and ed outputs), never companions
+    rating: int | None = None  # the picture's stars (xmp:Rating, 0 clears a 1..5) for this copy; set where pills are, None = leave alone
 
 
 @dataclass
@@ -144,26 +145,39 @@ def _patched_bytes(src: Path, patch) -> bytes | None:
 _SENTINEL = PillTag("spuza-compare", "#000000")
 
 
-def _canon(data: bytes, ext: str) -> bytes | None:
+def _canon(data: bytes, ext: str, rated: bool = False) -> bytes | None:
     """`data` with Spuza's own XMP entries removed (None when it does not parse or cannot carry XMP): two files that
-    differ only in the pills Spuza wrote have the same canonical form."""
+    differ only in the pills Spuza wrote have the same canonical form. ``rated``: the stars are Spuza's too, so a
+    1..5 xmp:Rating is removed as well."""
+    r = 0 if rated else None
     try:
+        if rated:  # rating 0 keeps a -1 reject, which Spuza may have replaced: set a rating first so any value
+            #   (a -1, a 1..5 or none) ends the same, then 0 removes it
+            if ext == ".xmp":
+                data = xmp.build_packet([], data, 1)
+            else:
+                data, _why = xmp.embed(data, ext, [], 1)
+                if data is None:
+                    return None
         if ext == ".xmp":  # set a sentinel pill first so a file with and a file without pills strip to the same residue
-            return xmp.build_packet([], xmp.build_packet([_SENTINEL], data))
-        mid, _why = xmp.embed(data, ext, [_SENTINEL])
+            return xmp.build_packet([], xmp.build_packet([_SENTINEL], data, r), r)
+        mid, _why = xmp.embed(data, ext, [_SENTINEL], r)
         if mid is None:
             return None
-        new, _why = xmp.embed(mid, ext, [])
+        new, _why = xmp.embed(mid, ext, [], r)
         return new
     except Exception:  # noqa: BLE001 - a parse error means "not identical"
         return None
 
 
-def _same_planned(src: Path, dst: Path, turns: int, pills: Sequence[PillTag] = (), companion: bool = False) -> bool:
+def _same_planned(src: Path, dst: Path, turns: int, pills: Sequence[PillTag] = (), companion: bool = False,
+                  rating: int | None = None, rated_group: bool = False) -> bool:
     """dst already holds what a copy of src with `turns` and `pills` would hold (src plus the orientation patch plus
     the XMP embed, if they apply). A JPEG/PNG that differs only in Spuza's own XMP entries counts too (``run_copy``
     then re-embeds the current pills into it). ``companion``: src is the card's ``<stem>.xmp`` of a group that has
-    pills, whose copy is merged with them: it counts when it equals src or differs only in Spuza's entries."""
+    pills, whose copy is merged with them: it counts when it equals src or differs only in Spuza's entries.
+    ``rating`` (stars) is part of what a copy of src would hold, like the pills: a destination that differs only in its
+    rating counts as the same (``run_copy`` then re-embeds the rating); ``rated_group``: the companion's group has stars."""
     patch = None
     if turns:
         try:
@@ -171,7 +185,8 @@ def _same_planned(src: Path, dst: Path, turns: int, pills: Sequence[PillTag] = (
         except Exception:  # noqa: BLE001 - a file that cannot be patched is copied (and reported) as it is
             patch = None
     ext = src.suffix.lower()
-    if (pills and ext in xmp.EMBED_EXTS) or companion:
+    rated = rating is not None
+    if ((pills or rated) and ext in xmp.EMBED_EXTS) or companion:
         try:
             if abs(dst.stat().st_size - src.stat().st_size) > XMP_SLACK:
                 return False  # cheap reject: no need to read either file
@@ -181,12 +196,12 @@ def _same_planned(src: Path, dst: Path, turns: int, pills: Sequence[PillTag] = (
                 if companion:
                     if got == base:
                         return True
-                    a, b = _canon(got, ".xmp"), _canon(base, ".xmp")
+                    a, b = _canon(got, ".xmp", rated_group), _canon(base, ".xmp", rated_group)
                     return a is not None and a == b
-                new, _why = xmp.embed(base, ext, pills)
+                new, _why = xmp.embed(base, ext, pills, rating)
                 if got == (base if new is None else new):
                     return True
-                a, b = _canon(got, ext), _canon(base, ext)
+                a, b = _canon(got, ext, rated), _canon(base, ext, rated)
                 return a is not None and a == b
         except Exception:  # noqa: BLE001 - anything odd: fall back to the plain comparison below
             pass
@@ -241,7 +256,8 @@ STORY_BYTES = 1_500_000  # fixed estimate of one 1080x1920 q92 JPEG (photographi
 def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = False,
               turns: Mapping[Path, int] | None = None, crops: Sequence[crop_mod.CropJob] | None = None,
               stories: Sequence[story_mod.StoryJob] | None = None,
-              pills: Mapping[Path, Sequence[PillTag]] | None = None) -> CopyPlan:
+              pills: Mapping[Path, Sequence[PillTag]] | None = None,
+              ratings: Mapping[Path, int] | None = None) -> CopyPlan:
     """Decide, per file, copy / skip / rename. Creates nothing.
 
     With ``organise`` each file targets ``dest/raw`` or ``dest/soc`` (companions follow the group's picture:
@@ -253,15 +269,25 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
     ``pills`` maps a source picture file (a raw and its JPEG twin, never a companion) to its pills: they go into the
     copy (embedded in JPEG/PNG, else a ``<stem>.xmp`` sidecar), and a copy already there counts as identical when it
     equals the source plus the rotation patch plus the embed. The ed crops and stories carry their picture's pills too.
+    ``ratings`` maps a source picture file (keyed like ``pills``) to its stars, 0..5 (0 removes a 1..5 rating already in
+    the file; a value that is not such an int is ignored): written as xmp:Rating beside the pills, with or without them.
     """
     dest = Path(dest)
     pills = pills or {}
+    ratings = ratings or {}
 
     def pills_of(f: Path) -> tuple[PillTag, ...]:
         try:
             return tuple(pills.get(f, ()))
         except Exception:  # noqa: BLE001 - a malformed mapping must not stop the plan
             return ()
+
+    def rating_of(f: Path) -> int | None:
+        try:
+            v = ratings.get(f)
+        except Exception:  # noqa: BLE001 - a malformed mapping must not stop the plan
+            return None
+        return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 5 else None
 
     plan = CopyPlan(dest=dest, organise=bool(organise))
     taken: set[tuple[str, str]] = set()  # (folder, name) claimed by this plan, case-folded (Windows/macOS volumes)
@@ -270,7 +296,8 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
         if not files:
             continue
         plan.pictures += 1
-        group_pilled = any(pills_of(f) for f in files)
+        group_pilled = any(pills_of(f) or rating_of(f) is not None for f in files)
+        group_rated = any(rating_of(f) is not None for f in files)
         has_raw = any(f.suffix.lower() in RAW_EXTS for f in files)
         subs = [_subdir(f, has_raw) if organise else "" for f in files]
         folders = [dest / sub if sub else dest for sub in subs]
@@ -285,7 +312,9 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
             if not os.path.lexists(target):
                 actions.append("copy")
             elif _same_planned(f, target, int((turns or {}).get(f, 0)) % 4, pills_of(f),
-                               companion=group_pilled and f.suffix.lower() == ".xmp" and not pills_of(f)):
+                               companion=(group_pilled and f.suffix.lower() == ".xmp" and not pills_of(f)
+                                          and rating_of(f) is None),
+                               rating=rating_of(f), rated_group=group_rated):
                 actions.append("skip")
             else:
                 actions = None
@@ -304,7 +333,7 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
             taken.add((sub, name.casefold()))
             size = _size(f)
             plan.items.append(CopyItem(f, folder / name, size, act, int((turns or {}).get(f, 0)) % 4,
-                                       pills=pills_of(f)))
+                                       pills=pills_of(f), rating=rating_of(f)))
             if act != "skip":
                 plan.total_bytes += size
     ed = dest / ED_DIR
@@ -324,12 +353,12 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
         name = ed_name(Path(job.primary).stem, f"{ratio_mod.export_suffix(job.ratio or ratio_mod.FREE, job.turns)}.jpg")
         est = estimate_crop_bytes(job)
         plan.crop_items.append(CopyItem(Path(job.primary), ed / name, est, "crop", crop_job=job,
-                                        pills=pills_of(Path(job.primary))))
+                                        pills=pills_of(Path(job.primary)), rating=rating_of(Path(job.primary))))
         plan.total_bytes += est
     for sjob in stories or ():
         name = ed_name(Path(sjob.primary).stem, "_story.jpg")
         plan.story_items.append(CopyItem(Path(sjob.primary), ed / name, STORY_BYTES, "story", story_job=sjob,
-                                         pills=pills_of(Path(sjob.primary))))
+                                         pills=pills_of(Path(sjob.primary)), rating=rating_of(Path(sjob.primary))))
         plan.total_bytes += STORY_BYTES
     return plan
 
@@ -410,9 +439,16 @@ def run_copy(
         if progress:
             progress(done, total, src)
 
+    def has_xmp(item: CopyItem) -> bool:
+        return bool(item.pills) or item.rating is not None
+
+    def stars_kw(item: CopyItem) -> dict:
+        """`rating=` only when there is one, so a plain pills call keeps its old shape."""
+        return {} if item.rating is None else {"rating": item.rating}
+
     def temp_for(item: CopyItem) -> Path:
         """The temp name. Where an XMP embed will run it keeps the picture's extension (xmp picks the format by it)."""
-        if item.pills and item.dst.suffix.lower() in xmp.EMBED_EXTS:
+        if has_xmp(item) and item.dst.suffix.lower() in xmp.EMBED_EXTS:
             return item.dst.with_name(f".{item.dst.stem}.spuza-part{item.dst.suffix}")
         return item.dst.with_name(f".{item.dst.name}.spuza-part")
 
@@ -432,7 +468,7 @@ def run_copy(
                     res.bytes_copied += len(chunk)
                     report(item.src)
             outcome = rotation.apply_rotation(item.src, tmp, item.turns) if item.turns else None
-            embedded = xmp.apply_embedded(tmp, item.pills) if item.pills and tmp.suffix.lower() in xmp.EMBED_EXTS else None
+            embedded = xmp.apply_embedded(tmp, item.pills, **stars_kw(item)) if has_xmp(item) and tmp.suffix.lower() in xmp.EMBED_EXTS else None
             # Times only, never the mode: a read-only card file would make the temp (and, hard-linked, the copy)
             # read-only too, and the temp could then not be removed. The copy stays an ordinary owner-writable file.
             st = item.src.stat()
@@ -455,7 +491,10 @@ def run_copy(
     sidecars: list[tuple[CopyItem, Path]] = []  # picture files whose pills go to <final stem>.xmp, after every file is published
 
     def names_of(item: CopyItem) -> str:
-        return ", ".join(p.name for p in item.pills)
+        parts = [p.name for p in item.pills]
+        if item.rating is not None:
+            parts.append(f"{item.rating} stars")
+        return ", ".join(parts)
 
     def reembed(item: CopyItem) -> bool:
         """Our own earlier copy at item.dst holds other pills: embed the current ones into a temp copy of it (verified
@@ -463,7 +502,7 @@ def run_copy(
         tmp = temp_for(item)
         try:
             shutil.copyfile(item.dst, tmp)
-            if xmp.apply_embedded(tmp, item.pills).status != "written":
+            if xmp.apply_embedded(tmp, item.pills, **stars_kw(item)).status != "written":
                 return False
             st = item.dst.stat()
             os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
@@ -484,12 +523,12 @@ def run_copy(
         if item.action == "skip":
             res.skipped.append(item.src)
             notes.append(f"SKIP   {item.src} (identical already at {item.dst})")
-            if item.pills:
+            if has_xmp(item):
                 carried = False
                 if item.dst.suffix.lower() in xmp.EMBED_EXTS:
                     try:
                         data = item.dst.read_bytes()
-                        new, _why = xmp.embed(data, item.dst.suffix, item.pills)
+                        new, _why = xmp.embed(data, item.dst.suffix, item.pills, item.rating)
                         carried = new is not None and (new == data or reembed(item))
                     except Exception:  # noqa: BLE001 - unreadable: the sidecar merge below decides
                         carried = False
@@ -524,7 +563,7 @@ def run_copy(
         elif outcome is not None and outcome.status == "kept":
             res.rotation_kept.append((item.src, outcome.reason))
             notes.append(f"KEPT   {final}: original orientation kept ({outcome.reason})")
-        if item.pills:
+        if has_xmp(item):
             if embedded is not None and embedded.status == "written":
                 res.pilled.append(item.src)
                 notes.append(f"PILLS  {final}: embedded ({names_of(item)})")
@@ -533,7 +572,7 @@ def run_copy(
                     notes.append(f"PILLS? {final}: not embedded ({embedded.reason}); sidecar instead")
                 sidecars.append((item, final))
             try:
-                tagged = bool(finder_tags.write_tags(final, item.pills))
+                tagged = bool(item.pills) and bool(finder_tags.write_tags(final, item.pills))
             except Exception:  # noqa: BLE001 - Finder tags are best effort (dec-054): never fail the copy
                 tagged = False
             if tagged:
@@ -544,7 +583,7 @@ def run_copy(
     # pills merge into that copy; the card's file is never touched.
     for item, final in sidecars:
         side = final.with_suffix(".xmp")
-        out = xmp.write_sidecar(side, item.pills)
+        out = xmp.write_sidecar(side, item.pills, **stars_kw(item))
         if out.status == "written":
             res.pilled.append(item.src)
             notes.append(f"PILLS  {final}: sidecar {side} ({names_of(item)})")
@@ -563,8 +602,8 @@ def run_copy(
         tmp = temp_for(item)  # keeps the .jpg extension when the picture's pills are embedded
         try:
             write(made, tmp)
-            if item.pills:  # the crop/story is a new JPEG of this picture: it carries the picture's pills too
-                emb = xmp.apply_embedded(tmp, item.pills)
+            if has_xmp(item):  # the crop/story is a new JPEG of this picture: it carries the picture's pills and stars too
+                emb = xmp.apply_embedded(tmp, item.pills, **stars_kw(item))
                 if emb.status == "written":
                     notes.append(f"PILLS  {item.dst}: embedded ({names_of(item)})")
                 else:
