@@ -1,4 +1,11 @@
-"""Review grid: the marked pictures as thumbnails; unmark, zoom, open one in the cull view.
+"""Review grid: one SET of pictures (the marked ones, or those carrying one pill) as thumbnails; unmark, zoom, open
+one in the cull view.
+
+``open_set(kind, name, prefer)`` shows a set the way the main screen shows a picture: on the zoom page at
+``prefer`` (when it is in the set) or at the set's first picture. On the zoom page J / Left step back and K / Right
+step on within the set, with no wrap (at an end the caption and ``status`` say so). Esc goes to the set's thumbnail
+grid; Esc on the grid emits ``closed``. A picture that leaves the set (unmarked, un-pilled) while it is on screen
+is replaced by the next one that remains (else the previous); an empty set shows the empty page.
 
 Keys: M or Space unmarks the selected picture (Delete is deliberately NOT bound: nothing is ever
 deleted), Z or double-click zooms (Z again toggles fit / 100%), Return/Enter emits ``open_index``,
@@ -140,6 +147,7 @@ class ReviewGrid(QWidget):
     marks_changed = Signal()
     closed = Signal()
     pill_key = Signal(int)  # a digit 0-9 was pressed: the window toggles that pill on the selected picture(s)
+    status = Signal(str)  # a short note for the status bar (stepping past an end of the set)
 
     def __init__(self, catalog, prefetcher=None, parent=None, loader: Callable | None = None):
         super().__init__(parent)
@@ -147,6 +155,12 @@ class ReviewGrid(QWidget):
         self._loader = loader
         self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
         self.pills_of = lambda i: ()  # catalog index -> the pill colour NAMES drawn as dots; the window assigns it
+        self.pill_has = lambda i, name: False  # (catalog index, pill name) -> carries it? the window assigns it
+        self.set_kind: str = "marked"  # "marked" or "pill"
+        self.set_name: str | None = None  # the pill's name while set_kind is "pill"
+        self._members: list[int] = []  # catalog indices of the set, in catalog order (refresh keeps it)
+        self._member_set: frozenset[int] = frozenset()
+        self._edge = ""  # "last picture of ..." after stepping past an end; cleared by the next step
         self._thumbs: dict[int, QPixmap] = {}
         self._failed: set[int] = set()
         self._queue: list[int] = []
@@ -239,6 +253,43 @@ class ReviewGrid(QWidget):
         c = self.catalog
         return [i for i in range(len(c.pictures)) if c.is_marked(i)]
 
+    def set_indices(self) -> list[int]:
+        """Catalog indices of the open set: the marked pictures, or those carrying the open pill."""
+        if self.set_kind != "pill" or self.set_name is None:
+            return self.marked_indices()
+        name = self.set_name
+        out = []
+        for i in range(len(self.catalog.pictures)):
+            try:
+                if self.pill_has(i, name):
+                    out.append(i)
+            except Exception:  # noqa: BLE001 - a bad lookup leaves the picture out
+                continue
+        return out
+
+    def set_title(self) -> str:
+        return "Marked" if self.set_kind != "pill" or self.set_name is None else str(self.set_name)
+
+    def set_source(self, kind: str = "marked", name: str | None = None) -> None:
+        """Choose the set (kind "marked", or "pill" with a pill name) and list it; the page stays off zoom."""
+        self.set_kind, self.set_name = ("pill", str(name)) if kind == "pill" and name else ("marked", None)
+        self._zoom_index, self._edge = None, ""
+        self.refresh()
+
+    def rename_set(self, name: str) -> None:
+        """The open pill was renamed: keep showing the same pictures under the new name."""
+        if self.set_kind == "pill":
+            self.set_name = str(name)
+            self.refresh()
+
+    def open_set(self, kind: str = "marked", name: str | None = None, prefer: int | None = None) -> None:
+        """Show a set big: set_source, then the zoom page at `prefer` if it is in the set, else its first picture.
+        An empty set shows the empty page."""
+        self.set_source(kind, name)
+        if not self._members:
+            return
+        self.show_zoom(prefer if prefer in self._member_set else self._members[0])
+
     def _apply_selection_mode(self) -> None:
         """Advanced + compare_view: Ctrl/Cmd-click selects several (for compare). Classic stays single."""
         multi = features.enabled("compare_view")
@@ -252,8 +303,11 @@ class ReviewGrid(QWidget):
         self._apply_selection_mode()
         keep = self.selected_index()
         keep_row = self.view.currentIndex().row()
+        old = self._members
+        self._members = members = self.set_indices()
+        self._member_set = frozenset(members)
         self.model.clear()
-        for i in self.marked_indices():
+        for i in members:
             pic = self.catalog.pictures[i]
             it = QStandardItem(pic.stem)
             it.setData(i, IDX_ROLE)
@@ -262,23 +316,49 @@ class ReviewGrid(QWidget):
             it.setToolTip(f"{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}")
             self.model.appendRow(it)
         n = self.model.rowCount()
-        self.header.setText(header_text(self.catalog.marked_count, len(self.catalog), self.catalog.marked_bytes))
-        self.header.setToolTip(f"{percent(self.catalog.marked_count, len(self.catalog))}% of the card is marked")
-        self.unmark_button.setEnabled(n > 0)
-        self.zoom_button.setEnabled(n > 0)
-        if self._zoom_index is not None and not self.catalog.is_marked(self._zoom_index):
-            self._zoom_index = None
-        if self._zoom_index is not None:
-            self.stack.setCurrentIndex(PAGE_ZOOM)
+        if self.set_kind == "pill":
+            total = len(self.catalog)
+            size = sum(self.catalog.pictures[i].size_bytes for i in members)
+            self.header.setText(f"{self.set_title()}: {n} of {total} · {human_size(size)}")
+            self.header.setToolTip(f"{n} of the {total} pictures carry {self.set_title()}")
+            self.empty.setText(f"No pictures have {self.set_title()} yet")
+            can_unmark = any(self.catalog.is_marked(i) for i in members)
         else:
-            self.stack.setCurrentIndex(PAGE_GRID if n else PAGE_EMPTY)
+            self.header.setText(header_text(self.catalog.marked_count, len(self.catalog), self.catalog.marked_bytes))
+            self.header.setToolTip(f"{percent(self.catalog.marked_count, len(self.catalog))}% of the card is marked")
+            self.empty.setText("Nothing marked yet")
+            can_unmark = n > 0
+        self.unmark_button.setEnabled(can_unmark)
+        self.zoom_button.setEnabled(n > 0)
         if n:
             row = self._row_of(keep) if keep is not None else -1
             if row < 0:  # the selected one went away: stay at the same place
                 row = min(max(keep_row, 0), n - 1)
             self.view.setCurrentIndex(self.model.index(row, 0))
-        self._queue = [i for i in self.marked_indices() if self._pixmap(i) is None and i not in self._failed]
+        if self._zoom_index is not None and self._zoom_index not in self._member_set:
+            # the picture on the zoom page left the set: the next one that remains, else the previous
+            was, self._zoom_index = self._zoom_index, None
+            repl = self._neighbour_after_leaving(old, was)
+            if repl is not None:
+                self.show_zoom(repl)
+        if self._zoom_index is not None:
+            self.stack.setCurrentIndex(PAGE_ZOOM)
+            self._update_caption()  # "n of N" may have moved
+        else:
+            self.stack.setCurrentIndex(PAGE_GRID if n else PAGE_EMPTY)
+        self._queue = [i for i in members if self._pixmap(i) is None and i not in self._failed]
         self._pump()
+
+    def _neighbour_after_leaving(self, old: list[int], gone: int) -> int | None:
+        """Where the zoom page goes when `gone` left the set: the first remaining picture after it in the old order,
+        else the last one before it, else None (the set is empty)."""
+        pos = old.index(gone) if gone in old else -1
+        after = old[pos + 1:] if pos >= 0 else self._members[:1]
+        before = list(reversed(old[:pos])) if pos >= 0 else []
+        for x in after + before:
+            if x in self._member_set:
+                return x
+        return None
 
     def _row_of(self, idx: int) -> int:
         for r in range(self.model.rowCount()):
@@ -358,7 +438,7 @@ class ReviewGrid(QWidget):
     def _pump(self) -> None:
         while self._queue and len(self._inflight) < MAX_INFLIGHT:
             i = self._queue.pop(0)
-            if i in self._inflight or i in self._thumbs or not self.catalog.is_marked(i):
+            if i in self._inflight or i in self._thumbs or i not in self._member_set:
                 continue
             self._inflight.add(i)
             self._pool.start(_Job(self._sig, self._get_loader(), i, self.catalog.pictures[i].primary, THUMB_SIDE))
@@ -393,7 +473,7 @@ class ReviewGrid(QWidget):
         self._pump()
 
     def _on_prefetched(self, i: int, _img=None, _info=None) -> None:
-        if i not in self._thumbs and self.catalog.is_marked(i):
+        if i not in self._thumbs and i in self._member_set:
             self.view.viewport().update()
 
     def wait_idle(self, timeout_ms: int = 5000) -> bool:
@@ -410,15 +490,19 @@ class ReviewGrid(QWidget):
             return
         for i in picks:
             self.catalog.set_mark(i, False)
-        self._zoom_index = None
-        self.refresh()
+        self.refresh()  # on the zoom page a picture that left the set is replaced by the next one
         self.marks_changed.emit()
 
-    def show_zoom(self) -> None:
-        i = self.selected_index()
+    def show_zoom(self, i: int | None = None) -> None:
+        """The zoom page on picture i (default: the selected one), fitted."""
+        if i is None:
+            i = self.selected_index()
         if i is None:
             return
-        self._zoom_index, self._zoom_fit, self._zoom_pct = i, True, False
+        row = self._row_of(i)
+        if row >= 0 and row != self.view.currentIndex().row():
+            self.view.setCurrentIndex(self.model.index(row, 0))  # Esc then lands the grid on this picture
+        self._zoom_index, self._zoom_fit, self._zoom_pct, self._edge = i, True, False, ""
         self.stack.setCurrentIndex(PAGE_ZOOM)
         self._update_caption()
         img = self._zoom_big.get(i)
@@ -454,10 +538,28 @@ class ReviewGrid(QWidget):
                 state = " · preview pixels only (full decode failed)"
             else:
                 state = f" · {lab} … decoding full resolution…"
+        where = ""
+        if i in self._member_set:
+            where = f"{self._members.index(i) + 1} of {len(self._members)} · {self.set_title()} · "
+        edge = f" · {self._edge}" if self._edge else ""
         self.zoom_caption.setText(
-            f"{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}{state}"
-            "   (Z: fit / 100%, + / -: zoom, M: unmark, Esc: back)"
+            f"{where}{pic.primary.name} · {pic.kind} · {human_size(pic.size_bytes)}{state}{edge}"
+            "   (Z: fit / 100%, + / -: zoom, J / K: step, M: unmark, Esc: back)"
         )
+
+    def step_set(self, delta: int) -> None:
+        """On the zoom page: the previous (-1) or next (+1) picture of the set; no wrap. At an end the caption and
+        ``status`` say so and the picture stays."""
+        i = self._zoom_index
+        if i is None or i not in self._member_set:
+            return
+        pos = self._members.index(i) + delta
+        if not 0 <= pos < len(self._members):
+            self._edge = f"{'first' if delta < 0 else 'last'} picture of {self.set_title()}"
+            self._update_caption()
+            self.status.emit(self._edge[0].upper() + self._edge[1:])
+            return
+        self.show_zoom(self._members[pos])
 
     def zoom_label(self) -> str:
         """"100%" for Z; the level's own percentage once + or - chose it."""
@@ -653,6 +755,10 @@ class ReviewGrid(QWidget):
             self.unmark_selected()
         elif k == Qt.Key.Key_Z:
             self.toggle_zoom()
+        elif zooming and k in (Qt.Key.Key_Left, Qt.Key.Key_J):
+            self.step_set(-1)
+        elif zooming and k in (Qt.Key.Key_Right, Qt.Key.Key_K):
+            self.step_set(1)
         elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_step(True)
         elif k == Qt.Key.Key_Minus:

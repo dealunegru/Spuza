@@ -155,7 +155,8 @@ def default_copy_dest() -> Path:
 
 _NOT_IN_REVIEW = object()
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
-                       Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus, Qt.Key_Escape})
+                       Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus, Qt.Key_Escape,
+                       Qt.Key_J, Qt.Key_K})  # J / K step a set on the review's zoom page; the grid ignores them
 # (name, label, key cap shown on the button, checkable). Mark all and the turns have no buttons (round 4: they
 # did not fit the one classic row at 1280 px); Ctrl+A, Ctrl+Shift+A, Ctrl+Z, [ and ] are window shortcuts only.
 PREFS_CAP = "⌘," if sys.platform == "darwin" else "Ctrl+,"
@@ -205,11 +206,53 @@ class KeyButton(QToolButton):
         self.setAccessibleName(label)
 
 
+class _PillRow(QWidget):
+    """One pill in the sidebar: dot, name, count. Clickable (not a button: it has no key of its own); the pill's
+    number key toggles the pill on a picture, a click here shows the pictures that carry it."""
+
+    clicked = Signal()
+
+    def __init__(self, name: str, color: str, parent=None):
+        super().__init__(parent)
+        self.name, self.color = name, color
+        self.setObjectName("pillRow")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.dot = QLabel()
+        self.dot.setFixedSize(14, 14)
+        self.label = QLabel(name)
+        self.label.setToolTip(f"Show the pictures with {name}")
+        self.count = QLabel("0")
+        row.addSpacing(6)
+        row.addWidget(self.dot)
+        row.addWidget(self.label, 1)
+        row.addWidget(self.count)
+        self.setToolTip(f"Show the pictures with {name}")
+        self.paint_dot()
+
+    def paint_dot(self) -> None:
+        pm = QPixmap(14, 14)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        draw_dot(painter, 7, 7, 5, self.color, theme.current().dark)
+        painter.end()
+        self.dot.setPixmap(pm)
+
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(e)
+
+
 class Sidebar(QWidget):
-    """Source root and counts; 'All' is always above 'Marked'."""
+    """Source root and counts; 'All' is always above 'Marked', then one row per pill."""
 
     show_all = Signal()
     show_marked = Signal()
+    show_pill = Signal(str)  # a pill row was clicked: its name
 
     def __init__(self, root: Path, parent=None):
         super().__init__(parent)
@@ -236,6 +279,10 @@ class Sidebar(QWidget):
             row.addWidget(cnt)
             lay.addLayout(row)
             self._rows.append((name, btn, cnt))
+        self._lay = lay
+        self._pill_rows: list[_PillRow] = []
+        self._pill_sig: list[tuple[str, str]] = []
+        self._open: tuple[str, str | None] | None = None  # ("marked", None) or ("pill", name): the set shown in review
         lay.addStretch(1)
         self.set_root(root)
 
@@ -251,6 +298,72 @@ class Sidebar(QWidget):
         for (name, _b, cnt), n in zip(self._rows, (total, marked)):
             cnt.setText(str(n))
 
+    def set_pills(self, rows) -> None:
+        """rows: (name, colour name, picture count) in the book's order. Rebuilt only when the names or colours
+        changed; a count alone just updates its label."""
+        rows = [(str(n), str(c), int(k)) for n, c, k in rows]
+        sig = [(n, c) for n, c, _k in rows]
+        if sig != self._pill_sig:
+            for r in self._pill_rows:
+                self._lay.removeWidget(r)
+                r.hide()
+                r.deleteLater()
+            self._pill_rows = []
+            at = self._lay.count() - 1  # just above the stretch
+            for n, c, _k in rows:
+                r = _PillRow(n, c)
+                r.clicked.connect(lambda _n=n: self.show_pill.emit(_n))
+                self._lay.insertWidget(at, r)
+                at += 1
+                self._pill_rows.append(r)
+            self._pill_sig = sig
+            self.retheme()
+        for r, (_n, _c, k) in zip(self._pill_rows, rows):
+            r.count.setText(str(k))
+        self._style_open()
+
+    def set_open(self, kind: str | None, name: str | None = None) -> None:
+        """Highlight the row of the set review shows (kind "marked" or "pill"), none with None."""
+        self._open = None if kind is None else (kind, name)
+        self._style_open()
+
+    def open_row(self) -> str | None:
+        """The name of the highlighted row ("Marked" or a pill's name), None when no set is open."""
+        if self._open is None:
+            return None
+        return "Marked" if self._open[0] == "marked" else self._open[1]
+
+    def _is_open(self, row: _PillRow) -> bool:
+        return (self._open is not None and self._open[0] == "pill"
+                and str(self._open[1]).casefold() == row.name.casefold())
+
+    def _style_open(self) -> None:
+        c = theme.current()
+        for name, btn, _cnt in self._rows:
+            on = name == "Marked" and self._open is not None and self._open[0] == "marked"
+            btn.setProperty("openSet", on)
+            btn.setStyleSheet(f"text-align: left; padding: 4px 6px; color: {c.text}; border: 0;"
+                              + (f" background: {c.raised}; font-weight: bold;" if on else ""))
+        for r in self._pill_rows:
+            on = self._is_open(r)
+            r.setProperty("openSet", on)
+            r.setStyleSheet(f"#pillRow {{ background: {c.raised if on else 'transparent'}; }}")
+            f = r.label.font()
+            f.setBold(on)
+            r.label.setFont(f)
+
+    def pill_row_names(self) -> list[str]:
+        return [r.name for r in self._pill_rows]
+
+    def pill_counts(self) -> dict[str, int]:
+        return {r.name: int(r.count.text()) for r in self._pill_rows}
+
+    def pill_row(self, name: str) -> _PillRow | None:
+        for r in self._pill_rows:
+            if r.name.casefold() == str(name).casefold():
+                return r
+        return None
+
     def row_names(self) -> list[str]:
         return [n for n, _b, _c in self._rows]
 
@@ -261,9 +374,13 @@ class Sidebar(QWidget):
         c = theme.current()
         self.head.setStyleSheet(f"color: {c.text_dim}; font-size: {tk.TYPE['caption']}px; "
                                 f"font-weight: {tk.TYPE['weight_strong']};")
-        for _n, btn, cnt in self._rows:
-            btn.setStyleSheet(f"text-align: left; padding: 4px 6px; color: {c.text}; border: 0;")
+        for _n, _btn, cnt in self._rows:
             cnt.setStyleSheet(f"color: {c.text_dim};")
+        for r in self._pill_rows:
+            r.count.setStyleSheet(f"color: {c.text_dim};")
+            r.label.setStyleSheet(f"color: {c.text};")
+            r.paint_dot()
+        self._style_open()
 
 
 class MainWindow(QMainWindow):
@@ -336,6 +453,7 @@ class MainWindow(QMainWindow):
         self._pill_ready = False  # the read-back has finished: the strip and the review may draw every picture's dots
         self._pill_touched: set = set()  # pictures changed by hand before then (their dots show at once)
         self._pill_counts: dict[str, int] | None = None
+        self._pill_snapshot: list[str] = [p.name for p in self.pill_book.pills()]
         self._pill_gen = 0
         self._pill_cancel = threading.Event()
         self._pill_sig = _PillSignals()
@@ -485,7 +603,8 @@ class MainWindow(QMainWindow):
         self.filmstrip.picked.connect(self.go_to)
         self.filmstrip.picked_derived.connect(self.go_to)
         self.sidebar.show_all.connect(self.close_review)
-        self.sidebar.show_marked.connect(self.open_review)
+        self.sidebar.show_marked.connect(lambda: self.open_review())
+        self.sidebar.show_pill.connect(self.open_pill_set)
         QShortcut(QKeySequence(QKeySequence.StandardKey.FullScreen), self,
                   activated=lambda: self.set_bleed(not self.is_bleed))
         advance = QShortcut(QKeySequence("A"), self, context=Qt.ShortcutContext.WindowShortcut,
@@ -1138,6 +1257,7 @@ class MainWindow(QMainWindow):
             self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
         total_marked = self._marked_total()
         self.sidebar.set_counts(len(cat) + len(self.band), total_marked)
+        self._refresh_sidebar_pills()
         self.pill.set_state(marked, f"{i + 1} / {len(cat)}" if pic is not None else "0 / 0")
         self._sync_chrome()  # the page, an edit or compare may have changed whether the pill belongs
         self._pills_follow()
@@ -1311,7 +1431,25 @@ class MainWindow(QMainWindow):
 
         return ReviewGrid(catalog, prefetcher, parent)
 
-    def open_review(self) -> None:
+    def open_pill_set(self, name: str) -> None:
+        """A pill row of the sidebar: review shows the pictures carrying that pill, big, from the first one."""
+        pill = self.pill_book.by_name(name)
+        if pill is None:
+            self.say(f"No pill called {name}")
+            return
+        self.open_review("pill", pill.name)
+
+    def _pic_has_pill(self, i: int, name: str) -> bool:
+        """Does catalog picture i carry the pill `name` (case-folded)? The review's set lookup."""
+        pics = self.catalog.pictures
+        if not 0 <= i < len(pics):
+            return False
+        key = str(name).casefold()
+        return any(n.casefold() == key for n in self.pill_index.get(pics[i]))
+
+    def open_review(self, kind: str = "marked", name: str | None = None) -> None:
+        """Show review on a set: the marked pictures (kind "marked") or those carrying pill `name` (kind "pill"),
+        on the zoom page at the viewer's picture when it is in the set, else at the set's first picture."""
         if self._compare_shown():
             return
         if self.review is None:
@@ -1328,6 +1466,7 @@ class MainWindow(QMainWindow):
             self.review.rotation_of = self._rotation_of
             if hasattr(self.review, "pills_of"):  # a fake review in a test may not know about pills
                 self.review.pills_of = self._pill_colors_of
+                self.review.pill_has = self._pic_has_pill  # the pill sets' membership
             pill_key = getattr(self.review, "pill_key", None)
             if pill_key is not None:
                 pill_key.connect(self._pill_key)
@@ -1335,7 +1474,17 @@ class MainWindow(QMainWindow):
             self.review.open_index.connect(self._review_open_index)
             self.review.marks_changed.connect(self._review_marks_changed)
             self.review.closed.connect(self.close_review)
-        self.review.refresh()
+            note = getattr(self.review, "status", None)
+            if note is not None:
+                note.connect(self.say)
+        shown = self._review_shown_index() if self.stack.currentIndex() == 1 else _NOT_IN_REVIEW
+        prefer = shown if isinstance(shown, int) else (self.catalog.index if len(self.catalog) else None)
+        opener = getattr(self.review, "open_set", None)
+        if opener is not None:
+            opener(kind, name, prefer)
+        else:  # a fake review in a test lists the marked pictures only
+            self.review.refresh()
+        self.sidebar.set_open(kind, name)
         self.stack.setCurrentIndex(1)
         self.buttons["review"].setChecked(True)
         self.buttons["fullscreen"].setEnabled(False)  # full-bleed is inert in review: show it
@@ -1405,6 +1554,7 @@ class MainWindow(QMainWindow):
         if self._compare_shown():
             return
         self.stack.setCurrentIndex(0)
+        self.sidebar.set_open(None)
         self.buttons["review"].setChecked(False)
         self.buttons["fullscreen"].setEnabled(True)
         self.refresh_marks()
@@ -2002,9 +2152,38 @@ class MainWindow(QMainWindow):
         if self.catalog.current is not None:
             self.inspector.set_pills(self.inspector.pills)
         self.filmstrip.viewport().update()
-        if self.review is not None and hasattr(self.review, "view"):
+        if self.review is not None and getattr(self.review, "set_kind", "marked") == "pill":
+            self.review.refresh()  # the set is "carries this pill": an un-pilled picture leaves it
+        elif self.review is not None and hasattr(self.review, "view"):
             self.review.view.viewport().update()
+        self._refresh_sidebar_pills()
         self.refresh_actions()
+
+    def _refresh_sidebar_pills(self) -> None:
+        """One sidebar row per pill, in the book's order, with how many pictures of this folder carry it."""
+        counts = self.pill_counts()
+        self.sidebar.set_pills([(p.name, p.color, counts.get(p.name.casefold(), 0)) for p in self.pill_book.pills()])
+
+    def _snap_pills(self) -> None:
+        self._pill_snapshot = [p.name for p in self.pill_book.pills()]
+
+    def _sync_pill_set(self) -> None:
+        """Pills were edited: the open pill set follows a pill renamed in place, or closes when its pill is gone."""
+        r = self.review
+        if r is None or getattr(r, "set_kind", "marked") != "pill":
+            return
+        name = r.set_name
+        if self.pill_book.by_name(name) is not None:
+            return
+        now = [p.name for p in self.pill_book.pills()]
+        prev = self._pill_snapshot
+        if name in prev and len(prev) == len(now):  # same number of pills: the one at that place was renamed
+            new = now[prev.index(name)]
+            r.rename_set(new)
+            self.sidebar.set_open("pill", new)
+            return
+        self.say(f"{name} is gone")
+        self.close_review()
 
     def _mark_pills_dirty(self) -> None:
         self._pill_dirty = True
@@ -2065,6 +2244,8 @@ class MainWindow(QMainWindow):
         """The manager made, renamed, recoloured or deleted a pill."""
         self._pill_counts = None
         self._mark_pills_dirty()
+        self._sync_pill_set()
+        self._snap_pills()
         self._redraw_pills()
 
     def _tray_toggled(self, name: str) -> None:
@@ -2107,6 +2288,10 @@ class MainWindow(QMainWindow):
         if changed:
             self._pill_counts = None
             self._mark_pills_dirty()
+            self._snap_pills()
+            self._refresh_sidebar_pills()
+            if self.review is not None and getattr(self.review, "set_kind", "marked") == "pill":
+                self.review.refresh()
 
     def _on_pill_finished(self, gen: int, _seen: int) -> None:
         if gen != self._pill_gen:

@@ -232,6 +232,7 @@ def test_review_keys_work_in_b_with_the_grid_focused(adv, lights_out):
     adv.set_lights_out(lights_out)
     adv.open_review()
     pump(lambda: adv.stack.currentIndex() == 1)
+    adv.review.leave_zoom()  # review now opens on the zoom page (448/449); this test drives the grid's list view
     QTest.keyClick(adv.review.view, Qt.Key_Right)
     sel = adv.review.selected_index()
     QTest.keyClick(adv.review.view, Qt.Key_Right)

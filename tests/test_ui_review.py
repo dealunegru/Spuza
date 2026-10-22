@@ -192,7 +192,8 @@ def test_double_click_zooms_and_unmark_from_zoom(qapp):
     assert g.stack.currentIndex() == PAGE_ZOOM
     g.unmark_selected()
     assert not cat.is_marked(1)
-    assert g.stack.currentIndex() == PAGE_GRID
+    # 448/449: unmarking the picture on the zoom page shows the next marked one (3) instead of the grid
+    assert g.stack.currentIndex() == PAGE_ZOOM and g._zoom_index == 3
     g.wait_idle()
     g.close()
 
