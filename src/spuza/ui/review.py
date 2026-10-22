@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QListView,
     QPushButton,
     QStackedWidget,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QVBoxLayout,
@@ -230,6 +231,7 @@ class ReviewGrid(QWidget):
         self.zoom_view.customContextMenuRequested.connect(lambda pos: self._popup(self.zoom_view, pos, True))
         self._zoom_item: QGraphicsPixmapItem | None = None
         self.zoom_caption = QLabel()
+        self.zoom_caption.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # a long caption never widens the window
         zoom_page = QWidget()
         zl = QVBoxLayout(zoom_page)
         zl.setContentsMargins(0, 0, 0, 0)

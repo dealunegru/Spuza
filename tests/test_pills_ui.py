@@ -223,6 +223,7 @@ def grid(tmp_path):
     for i in (0, 1, 2):
         w.catalog.toggle_mark(i)
     w.open_review()
+    w.review.leave_zoom()  # review opens on the zoom page now; these tests drive the grid
     pump(lambda: w.stack.currentIndex() == 1)
     yield w
     w.close()
