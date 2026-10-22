@@ -19,7 +19,7 @@ from spuza.ui.inspector import edit_lines
 from spuza.ui.ratio_strip import Chip, RatioStrip
 from test_friend_r3_window import make_window, pump
 
-CHIPS = ["1 Free", "2 Original", "3 1:1", "4 4:5", "5 3:4", "6 2:3", "7 9:16", "8 1.91:1", "V turn"]
+CHIPS = ["1 Free", "2 Original", "3 1:1", "4 4:5", "5 3:4", "6 2:3", "7 9:16", "8 1.91:1", "V turn", "0 Reset"]
 FREE_STATUS = ("Crop free: drag on the picture. 1-8 ratio, 0 resets. Enter adds it after the original, Esc cancels, "
                "Backspace clears the rectangle")
 

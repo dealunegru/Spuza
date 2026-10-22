@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml"><img src="https://github.com/fungimasters/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/fungimasters/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/fungimasters/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.12.0-informational" alt="Version 0.12.0">
+  <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/version-0.13.0-informational" alt="Version 0.13.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -22,7 +22,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 then, in a new Terminal window:
 ```sh
-uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
+uv tool install --python 3.13 git+https://github.com/dealunegru/Spuza
 ```
 
 **Windows**, in PowerShell:
@@ -32,7 +32,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ```
 then, in a new PowerShell window:
 ```powershell
-uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
+uv tool install --python 3.13 git+https://github.com/dealunegru/Spuza
 ```
 
 Then run `spuza` with a card in.
@@ -44,10 +44,15 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## What's new
 
-### 0.12.0
+### 0.13.0
 
-Pills: coloured labels you put on pictures. Make up to nine (Hero, Delivered, Edit, anything), give each a colour, and toggle them with the digit keys `1` to `9` while you cull. A tray of capsules sits in the bar after the folder name, small colour dots show a picture's pills on the filmstrip and in the review, and `Ctrl+Shift+P` opens the manager. A copy writes the pills into the copied files, and a folder of copies shows them again when you open it. See [Pills](#pills).
+Review now opens big. The left panel lists your pills under All and Marked, one row each with its colour dot, name and how many of this folder's pictures carry it. Click a row (or press `R`, or the Review button, or Marked) and that set shows on the zoom page, starting at the picture you were looking at if it is in the set, otherwise at the first one. `J` or `←` and `K` or `→` step through the set and stop at the ends; the caption says "3 of 12" and names the set. `Esc` goes to the set's thumbnails and `Esc` again leaves review. A pill with no pictures shows an empty page, and the open set is highlighted in the panel.
 
+Crop (`X`) has a `0 Reset` chip at the end of the ratio strip. Click it and the rectangle goes back to the largest centred one at the current ratio, the same as the `0` key.
+
+The pill tray no longer ends in an `Edit` button, so nothing sits in the bar that is not a pill. The pill manager is still there under Pills, Manage pills, and on `Ctrl+Shift+P`. See [Review](#review) and [Pills](#pills).
+
+- **0.12.0**: Pills: coloured labels you put on pictures. Make up to nine, give each a colour, toggle them with `1` to `9`, and a copy writes them into the copied files. See [Pills](#pills).
 - **0.11.1**: Zoom and Unmark in the review grid now show their key chips, and the other buttons name their key in the tooltip. The `?` shortcut overlay is a dark scrim over the whole window with the keys on a solid panel. J and K are swapped (J is back, K is next).
 - **0.11.0**: Eighth round: a quieter, darker Spuza. Spuza is dark by default on Windows and Linux; on a Mac it follows the system's light or dark appearance until you pick one. `Ctrl+T` (or View, Dark theme) flips it, and the pick is remembered. The bar above the picture is quieter: icon buttons for Back, Next, Mark, Zoom and Review, a filled Copy button, and a `⋯` menu holding Move on mark, Full screen, Preferences, Lights out and the advanced tools. Hover a button for its name and key. `Tab` is Lights out: the bar, sidebar, inspector, filmstrip and status line hide, and a small pill floats over the picture with the mark, `n / N`, `keys ?` and Copy. It is remembered between runs, and `F` full screen stays independent of it. There is now a menu bar (File, Edit, View, Picture, Help) that lists every action with its key, `?` opens a keyboard shortcut overlay, and `Ctrl+Q` quits. The keys and features are otherwise the same.
 - **0.10.0**: Seventh feedback round. A crop or a story fit is now a picture of its own on the filmstrip. `Enter` in a crop (`X`) or a story fit (`S`) adds a new picture right after the original, with its own thumbnail and a tag (the ratio, `crop` for Free, an outlined `9:16` for a story). The original is not touched, so `X` on it again cuts another crop: one original, any number of crops and story fits. A crop picture can be viewed, zoomed, marked and stepped through like any other, and `Backspace` removes it. Mark all counts them. Copy writes each marked one to `ed`. A session from 0.9.0 turns its crops and story fits into these pictures.
@@ -144,7 +149,7 @@ Every key in one table. The bar above the picture has icon buttons for the commo
 | `V` | crop | turn the ratio: 4:5 becomes 5:4, 1.91:1 becomes 1:1.91. Free and 1:1 do not change. Nothing outside the crop |
 | `1` `2` `3` `4` `5` `6` `7` `8` `9` | viewer, Lights out, review | **toggle pill 1 to 9** on this picture (review: on the selected picture or pictures). A digit with no pill says so. While a crop or story fit is open the digits keep their crop and story meanings and no pill is touched |
 | `0` | viewer, Lights out, review | **clear every pill** on this picture (or the selected ones). While a crop or story fit is open `0` keeps its crop or story meaning |
-| `Ctrl+Shift+P` | anywhere | open the **pill manager**: make, rename, recolour and delete pills (`Cmd+Shift+P` on a Mac). Also the `Edit` capsule in the tray and Pills, Manage pills |
+| `Ctrl+Shift+P` | anywhere | open the **pill manager**: make, rename, recolour and delete pills (`Cmd+Shift+P` on a Mac). Also Pills, Manage pills |
 | `S` | viewer | **story fit** 9:16: drag and zoom the picture under a fixed vertical frame. `Enter` adds it as a new picture after the original. On a story picture, `S` re-fits it |
 | `0` | crop, story fit | crop: the largest centred rectangle of the ratio. Story fit: back to the whole picture inside the frame |
 | `Enter` | crop, story fit, review | make the crop or story fit that is open into a picture (or replace the one being redone); in the review, open the selected picture in the workbench |
@@ -165,19 +170,21 @@ Notes on the keys:
 
 ## Review
 
-`R` shows every marked picture on one contact sheet.
+`R` shows the marked pictures big, one at a time.
 
 <p align="center">
-  <img src="docs/img/review.png" alt="Review: the marked pictures on one contact sheet" width="900">
+  <img src="docs/img/review.png" alt="Review: a marked picture shown big, with its place in the set in the caption" width="900">
 </p>
 
-`↑` `↓` `←` `→` move, `Space` unmarks the selected picture, `Z` opens it at 100% (`Esc` returns to the sheet), `+` and `-` zoom that view, `Enter` opens it in the workbench and `Esc` goes back to the card. Unmarking takes a picture off the list. Spuza never deletes anything.
+The left panel lists All, Marked and then one row per pill, each with its count for this folder. Click a row to open that set. Review opens on the picture you were viewing if it is in the set, otherwise on the set's first picture. `J` or `←` steps to the previous picture of the set and `K` or `→` to the next, with no wrap; the caption shows `n of N` and the set's name. `Esc` goes to the set's thumbnail grid (`↑` `↓` `←` `→` move there, `Z` or a double click on a thumbnail opens it big again), and `Esc` again goes back to the card. A pill with no pictures shows an empty page, and the row of the open set is highlighted.
+
+`Space` unmarks the picture (it drops out of the Marked set), `Z` toggles fit and 100%, `+` and `-` zoom, `Enter` opens it in the workbench, and the digits toggle pills on it. Spuza never deletes anything.
 
 ## Pills
 
 A pill is a name with a colour, such as **Hero** (blue) or **Delivered** (green). You can have up to nine, and each sits on a digit key: the first pill is `1`, the second `2`, and so on.
 
-- **Make a pill.** Press `Ctrl+Shift+P` (or click `Edit` at the end of the tray, or Pills, Manage pills). **New pill** adds one, the name box renames it, one of the eight colours (None, Gray, Green, Purple, Blue, Yellow, Red, Orange) recolours it, and **Delete** asks first and says how many pictures it comes off. `Enter` is Done.
+- **Make a pill.** Press `Ctrl+Shift+P` (or Pills, Manage pills). **New pill** adds one, the name box renames it, one of the eight colours (None, Gray, Green, Purple, Blue, Yellow, Red, Orange) recolours it, and **Delete** asks first and says how many pictures it comes off. `Enter` is Done.
 - **Apply a pill.** Press its digit on a picture; press it again to take it off. `0` clears all of them. In the review grid the digit acts on the selected picture or pictures. You can also click a capsule in the tray or pick the pill in the Pills menu. While a crop (`X`) or story fit (`S`) is open the digits keep their crop and story meanings.
 - **See them.** The tray shows each pill as a capsule with its dot, name and digit, lit when this picture has it. A narrow window drops the names (dot and digit), then shows `+N` for the rest, and never pushes the buttons on the right off the bar. Small dots at the bottom right of a thumbnail on the filmstrip and in the review show its pills; the inspector lists them on a "Pills:" line and the Lights out pill carries the dots too.
 - **Copies carry them.** Copy writes a picture's pills into the copy as keywords and a colour label (XMP): inside a JPEG or PNG, and in a `<name>.xmp` sidecar beside a raw or any other file. The card itself is never written. On a Mac the pills also become Finder tags on the copies.
@@ -198,7 +205,7 @@ The new picture has its own thumbnail and a tag: the ratio (`4:5`, `Original` fo
 - **Remove.** `Backspace` on a crop or story picture takes it off the filmstrip. On an original it does nothing and says "Nothing to remove here".
 - Mark all and Unmark all include these pictures, and the sidebar counts them. The review and compare show originals only.
 
-**The ratio strip.** Press `1` to `8`, or click a chip, to pick Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16 or 1.91:1. The top-row digits work on a Mac; no keypad is needed. 4:5, 3:4, 2:3 and 9:16 open portrait and 1.91:1 opens landscape, whichever way the picture lies. Free and Original follow the picture. `V` turns the ratio, so 4:5 becomes 5:4. `0` resets the rectangle to the largest centred one of the ratio.
+**The ratio strip.** Press `1` to `8`, or click a chip, to pick Free, Original, 1:1, 4:5, 3:4, 2:3, 9:16 or 1.91:1. The top-row digits work on a Mac; no keypad is needed. 4:5, 3:4, 2:3 and 9:16 open portrait and 1.91:1 opens landscape, whichever way the picture lies. Free and Original follow the picture. `V` turns the ratio, so 4:5 becomes 5:4. `0`, or the `0 Reset` chip at the end of the strip, resets the rectangle to the largest centred one of the ratio.
 
 - Changing the ratio keeps the rectangle's centre and size, as far as the picture allows. A rectangle you have not touched stays the largest one.
 - A locked ratio has four corner handles. Free keeps eight.
@@ -329,7 +336,7 @@ These numbers have not been measured on a Mac yet. To set the prefetch window fo
 
 ## Mac app
 
-Every [release](https://github.com/fungimasters/Spuza/releases/latest) also has `Spuza-macos.zip`. It holds a self-contained `Spuza.app` that CI builds on a macOS runner. Unzip it and drag `Spuza.app` to Applications.
+Every [release](https://github.com/dealunegru/Spuza/releases/latest) also has `Spuza-macos.zip`. It holds a self-contained `Spuza.app` that CI builds on a macOS runner. Unzip it and drag `Spuza.app` to Applications.
 
 For Windows, the same release has `Spuza-windows.zip`: unzip it and run `Spuza.exe` from the folder (SmartScreen asks once: More info, then Run anyway). `spuza-cli.exe` beside it is the same app with a console, for `--version` and `--bench`.
 
@@ -363,7 +370,7 @@ Why uv and not an installer? Spuza is a Python application. `uv tool install` gi
 ## Development
 
 ```sh
-git clone https://github.com/fungimasters/Spuza
+git clone https://github.com/dealunegru/Spuza
 cd Spuza
 uv sync
 uv run spuza --demo docs/samples

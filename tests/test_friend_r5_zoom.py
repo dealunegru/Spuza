@@ -433,6 +433,7 @@ def test_grid_page_ignores_zoom_keys_and_does_not_drive_the_hidden_viewer(win):
     win.catalog.set_mark(0, True)
     win.refresh_marks()
     win.buttons["review"].click()
+    win.review.leave_zoom()  # opening review now lands on the zoom page (448/449); this test is about the grid page
     assert win.review.stack.currentIndex() != 2
     viewer_calls = []
     win.viewer.zoom_in = lambda: viewer_calls.append("in")

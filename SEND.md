@@ -13,7 +13,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 open a new Terminal window, then
 
 ```
-uv tool install --python 3.13 git+https://github.com/fungimasters/Spuza
+uv tool install --python 3.13 git+https://github.com/dealunegru/Spuza
 ```
 
 Run it: `spuza` (card in; Spuza scans `/Volumes/*` for `DCIM`), or `spuza /path/to/folder`.
@@ -21,7 +21,7 @@ Update: `uv tool upgrade spuza`. Remove: `uv tool uninstall spuza`.
 
 ## 2. The app
 
-Every release at <https://github.com/fungimasters/Spuza/releases> carries `Spuza-macos.zip`
+Every release at <https://github.com/dealunegru/Spuza/releases> carries `Spuza-macos.zip`
 (about 43 MB), built unsigned by CI on a macOS runner. Unzip, drag `Spuza.app` to
 Applications. The first launch is refused because the app is not signed: open
 System Settings > Privacy & Security, scroll to the message about Spuza, click **Open Anyway**,

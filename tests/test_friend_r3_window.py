@@ -244,6 +244,7 @@ def test_rotate_keys_and_the_views_read_the_window_dict(w):
 
 def test_rotate_in_review_turns_the_selected_pictures(wa):
     wa.buttons["review"].click()
+    wa.review.leave_zoom()  # review opens on the zoom page now; selecting several is a grid action
     wa.review.view.selectAll()  # advanced: multi-select; marked 1, 3, 5
     recs = record_views(wa)
     QTest.keyClick(wa.review.view, Qt.Key_BracketRight)

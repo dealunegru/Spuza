@@ -208,6 +208,7 @@ def test_f11_shortcut_inert_in_review(w):
 
 def test_a_toggles_move_on_mark_while_the_real_grid_has_focus(w):
     in_review(w)
+    w.review.leave_zoom()  # review now opens on the zoom page (448/449); this test wants the grid's list view
     target = w._review_target()
     assert target is w.review.view and target.hasFocus()
     QTest.keyClick(target, Qt.Key_A)  # the list view would swallow a printable key; the window shortcut wins

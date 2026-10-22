@@ -223,6 +223,7 @@ def grid(tmp_path):
     for i in (0, 1, 2):
         w.catalog.toggle_mark(i)
     w.open_review()
+    w.review.leave_zoom()  # review opens on the zoom page now; these tests drive the grid
     pump(lambda: w.stack.currentIndex() == 1)
     yield w
     w.close()
@@ -286,7 +287,7 @@ def test_tray_lights_the_pills_of_the_current_picture(hero):
     QTest.keyClick(w, Qt.Key_1)
     QTest.keyClick(w, Qt.Key_3)
     caps = {c.label: c for c in w.pill_tray.capsules()}
-    assert [c.label for c in w.pill_tray.capsules()] == ["Hero", "Delivered", "Edit", "Edit"]  # pill "Edit", then the Edit capsule
+    assert [c.label for c in w.pill_tray.capsules()] == ["Hero", "Delivered", "Edit"]  # the pill "Edit", and nothing after it
     pill_caps = [c for c in w.pill_tray.capsules() if c.kind == "pill"]
     assert [(c.label, c.key, c.lit) for c in pill_caps] == [("Hero", "1", True), ("Delivered", "2", False), ("Edit", "3", True)]
     assert caps["Hero"].tip == "Remove Hero  1"
@@ -305,13 +306,24 @@ def test_clicking_a_capsule_toggles_the_pill(hero):
     assert names_of(w) == ()
 
 
-def test_the_edit_capsule_has_its_key_chip_and_opens_the_manager(hero):
+def test_the_tray_has_no_edit_capsule_and_a_click_past_the_pills_does_nothing(hero):
     w = hero
-    edit = [c for c in w.pill_tray.capsules() if c.kind == "edit"][0]
-    assert edit.label == "Edit" and edit.key in ("Ctrl+Shift+P", "⌘⇧P") and "Manage pills" in edit.tip
-    assert edit.tip.endswith(edit.key)
-    QTest.mouseClick(w.pill_tray, Qt.MouseButton.LeftButton, pos=edit.rect.center())
+    caps = w.pill_tray.capsules()
+    assert all(c.kind == "pill" for c in caps) and len(caps) == 3
+    seen = []
+    w.pill_tray.manage.connect(lambda: seen.append(1))
+    QTest.mouseClick(w.pill_tray, Qt.MouseButton.LeftButton, pos=QPoint(caps[-1].rect.right() + 6, 12))
+    assert seen == [] and w._pill_mgr is None
+
+
+def test_the_manager_still_opens_from_ctrl_shift_p_and_the_pills_menu(hero):
+    w = hero
+    assert hero.menu_actions["pills_manage"].shortcut().toString() == "Ctrl+Shift+P"
+    hero.menu_actions["pills_manage"].trigger()
     assert w._pill_mgr is not None and w._pill_mgr.isVisible()
+    w._pill_mgr.reject()
+    QTest.keyClick(w, Qt.Key_P, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert w._pill_mgr.isVisible()
     w._pill_mgr.reject()
 
 
@@ -323,9 +335,9 @@ def test_the_tray_comes_after_the_title_and_before_the_buttons(hero):
     assert order[0] is bar._title and order[1] is w.pill_tray
 
 
-def test_a_tray_with_no_pills_is_just_the_edit_capsule(win):
-    caps = win.pill_tray.capsules()
-    assert [c.kind for c in caps] == ["edit"]
+def test_a_tray_with_no_pills_is_empty(win):
+    assert win.pill_tray.capsules() == [] and win.pill_tray.plan(10) == []
+    assert win.pill_tray.full_width() == 0 and win.pill_tray.minimumSizeHint().height() == win.pill_tray.height()
 
 
 def test_the_plan_collapses_in_the_decided_order(win):
@@ -339,13 +351,21 @@ def test_the_plan_collapses_in_the_decided_order(win):
     width = max(c.rect.right() for c in short) + 1
     count = tray.plan(width - 1)
     kinds = [c.kind for c in count]
-    assert kinds[-1] == "edit" and "more" in kinds
+    assert "edit" not in kinds and kinds[-1] == "more"
     shown = len([c for c in count if c.kind == "pill"])
     more = next(c for c in count if c.kind == "more")
     assert more.label == f"+{9 - shown}" and shown < 9
     assert max(c.rect.right() for c in count) + 1 <= width - 1
     narrow = tray.plan(10)
-    assert [c.kind for c in narrow][-1] == "edit"  # never fewer than the Edit capsule
+    assert "edit" not in [c.kind for c in narrow] and all(c.kind in ("more",) for c in narrow)  # no Edit capsule, ever
+
+
+def test_the_width_the_edit_capsule_took_goes_to_the_pills(win):
+    add_pills(win, NAMES9)
+    tray = win.pill_tray
+    need = max(c.rect.right() for c in tray.plan(10000) if c.kind == "pill") + 1 + 4  # + the trailing GAP  # the last pill's right edge
+    assert not any(c.short for c in tray.plan(need))  # names still fit at exactly that width
+    assert tray.full_width() == need
 
 
 def test_more_capsule_opens_the_pills_menu(win, monkeypatch):
@@ -385,7 +405,7 @@ def test_the_tray_never_pushes_the_right_hand_buttons_off(tmp_path, width, dark)
         assert w.width() == width
         assert tray_right <= left_of_buttons and right_edge <= width  # the tray stops short of the buttons
         assert max(c.rect.right() for c in caps) < tray.width()  # every capsule is inside the tray
-        assert caps[-1].kind == "edit"
+        assert all(c.kind in ("pill", "more") for c in caps)
     finally:
         w.close()
 
