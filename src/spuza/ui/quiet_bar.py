@@ -7,7 +7,7 @@ Wired into MainWindow (``window.quiet_bar``). The window supplies its existing b
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QSizePolicy, QToolButton, QWidget
 
 from . import icons, theme
 
@@ -31,6 +31,36 @@ def _col(c, name: str) -> str:
 def tooltip_text(name: str, key: str = "") -> str:
     """'Name  Key' on one line (spaces non-breaking so Qt never wraps it)."""
     return f"{name}  {key}".strip().replace(" ", " ")
+
+
+class _StarSlot(QWidget):
+    """Holds the star bar after the pill tray. Its minimum width is 0 (the layout may squeeze it away), and the bar
+    inside is shown only while the whole of it fits: it gives way on a narrow window instead of pushing Copy off."""
+
+    GAP = 8
+
+    def __init__(self, bar: QWidget, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.bar = bar
+        bar.setParent(self)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(bar.height())
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self.GAP + self.bar.width(), self.bar.height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, self.bar.height())
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        self.fit()
+
+    def fit(self) -> None:
+        room = self.width() >= self.GAP + self.bar.width()
+        self.bar.move(self.GAP, 0)
+        self.bar.setVisible(room)
 
 
 class QuietBar(QWidget):
@@ -76,6 +106,17 @@ class QuietBar(QWidget):
 
     def tray(self) -> QWidget | None:
         return self._tray
+
+    def set_star_bar(self, bar: QWidget) -> QWidget:
+        """The star bar, right after the pill tray. It is shown only while it fits (see _StarSlot)."""
+        self._star_slot = _StarSlot(bar)
+        at = self._lay.indexOf(self._tray) + 1 if self._tray is not None else 1
+        self._lay.insertWidget(at, self._star_slot)
+        return bar
+
+    def star_bar_shown(self) -> bool:
+        slot = getattr(self, "_star_slot", None)
+        return slot is not None and slot.bar.isVisibleTo(self)
 
     def title(self) -> str:
         return self._title.text()

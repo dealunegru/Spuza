@@ -49,6 +49,7 @@ from spuza.ui.pill import LightsOutPill
 from spuza.ui.pill_tray import MANAGE_SEQ, PillTray, draw_dot, native
 from spuza.ui.quiet_bar import QuietBar, tooltip_text
 from spuza.ui.ratio_strip import RatioStrip
+from spuza.ui.star_bar import FILLED, MAX_STARS, StarBar, clamp_stars
 from spuza.ui.viewer import Viewer, info_native_size
 
 DOT = "·"
@@ -86,12 +87,12 @@ class _MaskJob(QRunnable):
 
 
 class _PillSignals(QObject):
-    batch = Signal(int, list)  # generation, [(picture index, [PillTag])] for the pictures that carry a spuza:pills bag
+    batch = Signal(int, list)  # generation, [(picture index, [PillTag] | None, rating 1..5 | None)]: a pills bag or a rating
     finished = Signal(int, int)  # generation, pictures looked at
 
 
 class _PillReadJob(QRunnable):
-    """Reads every picture's pills from its XMP off the GUI thread (xmp.read_picture_pills), and warms the index's
+    """Reads every picture's pills and star rating from its XMP, in one read, off the GUI thread (xmp.read_picture_meta), and warms the index's
     per-file keys so the UI thread never has to open a file to draw a dot. Stops at once when `cancel` is set (another
     folder loaded, or the window closes) and after PILL_READ_MAX pictures."""
 
@@ -119,11 +120,11 @@ class _PillReadJob(QRunnable):
             except Exception:  # noqa: BLE001 - a key we cannot make is made again on use
                 pass
             try:
-                tags = xmp.read_picture_pills(pic)
-            except Exception:  # noqa: BLE001 - an unreadable file has no pills
-                tags = None
-            if tags is not None:
-                batch.append((k, tags))
+                tags, rating = xmp.read_picture_meta(pic)
+            except Exception:  # noqa: BLE001 - an unreadable file has no pills and no rating
+                tags, rating = None, None
+            if tags is not None or rating is not None:
+                batch.append((k, tags, rating))
             if len(batch) >= PILL_READ_BATCH:
                 self._emit(self.sig.batch, self.gen, batch)
                 batch = []
@@ -177,6 +178,7 @@ NEXT_BUTTONS = [
     ("afpoint", "AF point", "O", "focus_point"),
 ]
 # the buttons the quiet bar shows icon-only, in order (Copy is its filled primary button)
+STAR_ACTIONS = tuple(f"stars_{n}" for n in range(1, MAX_STARS + 1)) + ("stars_clear",)
 BAR_ICONS = {"back": "arrow-left", "next": "arrow-right", "mark": "circle-check", "zoom": "zoom-in",
              "review": "layout-grid"}
 # the menu actions the bar's overflow (the ellipsis button) holds, in order; None is a separator before the advanced ones
@@ -247,12 +249,40 @@ class _PillRow(QWidget):
         super().mouseReleaseEvent(e)
 
 
+class _StarChip(QLabel):
+    """One "N★" chip of the sidebar's threshold row. A click asks for N, or for none when it is the lit one."""
+
+    clicked = Signal()
+
+    def __init__(self, n: int, parent=None):
+        super().__init__(f"{n}{FILLED}", parent)
+        self.n = n
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip(f"Only pictures with at least {n} star{'s' if n > 1 else ''}")
+        self.setAccessibleName(f"At least {n} stars")
+
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(e)
+
+
+def _lead(text: str) -> int:
+    """The number a count label starts with ("2 of 5" -> 2, "7" -> 7); 0 when it has none."""
+    head = text.split(" ", 1)[0]
+    return int(head) if head.isdigit() else 0
+
+
 class Sidebar(QWidget):
-    """Source root and counts; 'All' is always above 'Marked', then one row per pill."""
+    """Source root and counts; 'All' is always above 'Marked', then one row per pill, then the "at least N stars"
+    threshold chips. While a threshold is set every count reads "n of m"."""
 
     show_all = Signal()
     show_marked = Signal()
     show_pill = Signal(str)  # a pill row was clicked: its name
+    min_stars_changed = Signal(int)  # the threshold chips: 1..5, or 0 when the lit one was clicked off
 
     def __init__(self, root: Path, parent=None):
         super().__init__(parent)
@@ -283,6 +313,19 @@ class Sidebar(QWidget):
         self._pill_rows: list[_PillRow] = []
         self._pill_sig: list[tuple[str, str]] = []
         self._open: tuple[str, str | None] | None = None  # ("marked", None) or ("pill", name): the set shown in review
+        self._min_stars = 0
+        self.stars_head = QLabel("STARS")
+        self.stars_hint = QLabel("at least")
+        self._chips = [_StarChip(n) for n in range(1, MAX_STARS + 1)]
+        chips = QHBoxLayout()
+        chips.setSpacing(2)
+        for chip in self._chips:
+            chip.clicked.connect(lambda n=chip.n: self._chip_clicked(n))
+            chips.addWidget(chip)
+        lay.addSpacing(10)
+        lay.addWidget(self.stars_head)
+        lay.addWidget(self.stars_hint)
+        lay.addLayout(chips)
         lay.addStretch(1)
         self.set_root(root)
 
@@ -294,14 +337,43 @@ class Sidebar(QWidget):
     def root_text(self) -> str:
         return self._root
 
-    def set_counts(self, total: int, marked: int) -> None:
-        for (name, _b, cnt), n in zip(self._rows, (total, marked)):
-            cnt.setText(str(n))
+    def set_counts(self, total: int, marked: int, shown=None) -> None:
+        """`shown`: (All, Marked) counts that pass the star threshold; given, the labels read "n of m"."""
+        for k, ((name, _b, cnt), n) in enumerate(zip(self._rows, (total, marked))):
+            cnt.setText(str(n) if shown is None else f"{shown[k]} of {n}")
+
+    def min_stars(self) -> int:
+        return self._min_stars
+
+    def set_min_stars(self, n: int) -> None:
+        """Light the chip of threshold `n` (0: none). Silent: only a click emits min_stars_changed."""
+        self._min_stars = max(0, min(MAX_STARS, int(n)))
+        self._style_chips()
+
+    def star_chip(self, n: int) -> QLabel:
+        return self._chips[n - 1]
+
+    def _chip_clicked(self, n: int) -> None:
+        self.set_min_stars(0 if n == self._min_stars else n)
+        self.min_stars_changed.emit(self._min_stars)
+
+    def _style_chips(self) -> None:
+        c = theme.current()
+        self.stars_head.setStyleSheet(f"color: {c.text_dim}; font-size: {tk.TYPE['caption']}px; "
+                                      f"font-weight: {tk.TYPE['weight_strong']};")
+        self.stars_hint.setStyleSheet(f"color: {c.text_dim};")
+        for chip in self._chips:
+            on = chip.n == self._min_stars
+            chip.setProperty("lit", on)
+            chip.setStyleSheet(f"background: {c.focus if on else c.raised}; color: {c.on_focus if on else c.text};"
+                               " border-radius: 4px; padding: 3px 0px;")
 
     def set_pills(self, rows) -> None:
-        """rows: (name, colour name, picture count) in the book's order. Rebuilt only when the names or colours
-        changed; a count alone just updates its label."""
-        rows = [(str(n), str(c), int(k)) for n, c, k in rows]
+        """rows: (name, colour name, picture count[, count that passes the star threshold]) in the book's order.
+        Rebuilt only when the names or colours changed; a count alone just updates its label ("n of m" with the
+        fourth field)."""
+        shown = [int(r[3]) if len(r) > 3 else None for r in rows]
+        rows = [(str(r[0]), str(r[1]), int(r[2])) for r in rows]
         sig = [(n, c) for n, c, _k in rows]
         if sig != self._pill_sig:
             for r in self._pill_rows:
@@ -309,7 +381,7 @@ class Sidebar(QWidget):
                 r.hide()
                 r.deleteLater()
             self._pill_rows = []
-            at = self._lay.count() - 1  # just above the stretch
+            at = self._lay.indexOf(self.stars_head) - 1  # just above the stars section's spacing
             for n, c, _k in rows:
                 r = _PillRow(n, c)
                 r.clicked.connect(lambda _n=n: self.show_pill.emit(_n))
@@ -318,8 +390,8 @@ class Sidebar(QWidget):
                 self._pill_rows.append(r)
             self._pill_sig = sig
             self.retheme()
-        for r, (_n, _c, k) in zip(self._pill_rows, rows):
-            r.count.setText(str(k))
+        for r, (_n, _c, k), got in zip(self._pill_rows, rows, shown):
+            r.count.setText(str(k) if got is None else f"{got} of {k}")
         self._style_open()
 
     def set_open(self, kind: str | None, name: str | None = None) -> None:
@@ -356,7 +428,7 @@ class Sidebar(QWidget):
         return [r.name for r in self._pill_rows]
 
     def pill_counts(self) -> dict[str, int]:
-        return {r.name: int(r.count.text()) for r in self._pill_rows}
+        return {r.name: _lead(r.count.text()) for r in self._pill_rows}
 
     def pill_row(self, name: str) -> _PillRow | None:
         for r in self._pill_rows:
@@ -368,7 +440,13 @@ class Sidebar(QWidget):
         return [n for n, _b, _c in self._rows]
 
     def counts(self) -> dict[str, int]:
-        return {n: int(c.text()) for n, _b, c in self._rows}
+        return {n: _lead(c.text()) for n, _b, c in self._rows}
+
+    def count_texts(self) -> dict[str, str]:
+        """The labels as shown: "7", or "2 of 7" while a star threshold is set (the pill rows too)."""
+        out = {n: c.text() for n, _b, c in self._rows}
+        out.update({r.name: r.count.text() for r in self._pill_rows})
+        return out
 
     def retheme(self) -> None:
         c = theme.current()
@@ -380,6 +458,7 @@ class Sidebar(QWidget):
             r.count.setStyleSheet(f"color: {c.text_dim};")
             r.label.setStyleSheet(f"color: {c.text};")
             r.paint_dot()
+        self._style_chips()
         self._style_open()
 
 
@@ -453,6 +532,10 @@ class MainWindow(QMainWindow):
         self._pill_ready = False  # the read-back has finished: the strip and the review may draw every picture's dots
         self._pill_touched: set = set()  # pictures changed by hand before then (their dots show at once)
         self._pill_counts: dict[str, int] | None = None
+        self._star_counts: tuple | None = None  # (pictures passing the threshold, {pill name casefolded: n}); None: stale
+        self._min_stars = 0  # the sidebar's "at least N stars" threshold (0: off)
+        self._file_stars: dict = {}  # Picture.primary -> the 1..5 xmp:Rating the file carried when the folder loaded
+        self._stars_touched: set = set()  # pictures whose stars were set by hand (their stars show before the read ends)
         self._pill_snapshot: list[str] = [p.name for p in self.pill_book.pills()]
         self._pill_gen = 0
         self._pill_cancel = threading.Event()
@@ -473,6 +556,7 @@ class MainWindow(QMainWindow):
         self.filmstrip = Filmstrip(catalog, prefetcher, band=self.band)
         self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
         self.filmstrip.pills_of = self._pill_colors_of
+        self.filmstrip.stars_of = self._stars_of
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -504,6 +588,9 @@ class MainWindow(QMainWindow):
         self.pill_tray.manage.connect(lambda: self.open_pill_manager())
         self.pill_tray.more.connect(self._tray_more)
         self.quiet_bar.set_tray(self.pill_tray)
+        self.star_bar = StarBar()  # five clickable stars after the tray; it gives way on a narrow window
+        self.star_bar.rated.connect(self._star_bar_rated)
+        self.quiet_bar.set_star_bar(self.star_bar)
         self.prefs_button = KeyButton("prefs", "Preferences…", PREFS_CAP, False)
         for name, label, cap, checkable in BUTTONS:
             b = KeyButton(name, label, cap, checkable)
@@ -606,6 +693,7 @@ class MainWindow(QMainWindow):
         self.sidebar.show_all.connect(self.close_review)
         self.sidebar.show_marked.connect(lambda: self.open_review())
         self.sidebar.show_pill.connect(self.open_pill_set)
+        self.sidebar.min_stars_changed.connect(self._set_min_stars)
         QShortcut(QKeySequence(QKeySequence.StandardKey.FullScreen), self,
                   activated=lambda: self.set_bleed(not self.is_bleed))
         advance = QShortcut(QKeySequence("A"), self, context=Qt.ShortcutContext.WindowShortcut,
@@ -627,6 +715,10 @@ class MainWindow(QMainWindow):
         pills_sc = QShortcut(QKeySequence("Ctrl+Shift+P"), self, context=Qt.ShortcutContext.WindowShortcut,
                              activated=lambda: None if self._overlay_open() else self.open_pill_manager())
         pills_sc.setAutoRepeat(False)  # a held key must not stack managers
+        for n in range(0, MAX_STARS + 1):  # Ctrl/Cmd+1..5 set stars, Ctrl/Cmd+0 clears (plain digits stay pills)
+            star_sc = QShortcut(QKeySequence(f"Ctrl+{n}"), self, context=Qt.ShortcutContext.WindowShortcut,
+                                activated=lambda n=n: self._stars_key(n))
+            star_sc.setAutoRepeat(False)  # a held key must not toast and save again and again
         quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self, context=Qt.ShortcutContext.WindowShortcut,
                             activated=lambda: self.act_quit())  # StandardKey.Quit is empty on Windows
         quit_sc.setAutoRepeat(False)
@@ -1257,7 +1349,7 @@ class MainWindow(QMainWindow):
             self.buttons["mark"].setEnabled(shown is not None)
             self.buttons["mark"].setChecked(shown is not None and cat.is_marked(shown))
         total_marked = self._marked_total()
-        self.sidebar.set_counts(len(cat) + len(self.band), total_marked)
+        self._refresh_sidebar_counts()
         self._refresh_sidebar_pills()
         self.pill.set_state(marked, f"{i + 1} / {len(cat)}" if pic is not None else "0 / 0")
         self._sync_chrome()  # the page, an edit or compare may have changed whether the pill belongs
@@ -1468,6 +1560,8 @@ class MainWindow(QMainWindow):
             if hasattr(self.review, "pills_of"):  # a fake review in a test may not know about pills
                 self.review.pills_of = self._pill_colors_of
                 self.review.pill_has = self._pic_has_pill  # the pill sets' membership
+            if hasattr(self.review, "stars_of"):
+                self.review.stars_of = self._stars_of
             pill_key = getattr(self.review, "pill_key", None)
             if pill_key is not None:
                 pill_key.connect(self._pill_key)
@@ -1480,6 +1574,8 @@ class MainWindow(QMainWindow):
                 note.connect(self.say)
         shown = self._review_shown_index() if self.stack.currentIndex() == 1 else _NOT_IN_REVIEW
         prefer = shown if isinstance(shown, int) else (self.catalog.index if len(self.catalog) else None)
+        if hasattr(self.review, "min_stars"):
+            self.review.min_stars = self._min_stars  # open_set lists the set already narrowed
         opener = getattr(self.review, "open_set", None)
         if opener is not None:
             opener(kind, name, prefer)
@@ -1571,7 +1667,7 @@ class MainWindow(QMainWindow):
         self.filmstrip.viewport().update()
         self.refresh_marks()
 
-    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=(), pills=None):
+    def _default_copy_sheet_factory(self, pictures, default_dest=None, parent=None, derived=(), pills=None, ratings=None):
         from spuza.ui.copy_sheet import CopySheet  # lazy, see above
 
         derived = list(derived)
@@ -1583,7 +1679,8 @@ class MainWindow(QMainWindow):
                          quit_after=settings.read_quit_after(self.prefs), eject_target=self.card_mount,
                          rotations=self._copy_rotations(turned), derived=derived,
                          write_rotation=settings.read_write_rotation(self.prefs),
-                         **({"pills": pills} if pills else {}))  # CopySheet takes pills= once spp-copy is merged
+                         **({"pills": pills} if pills else {}),  # CopySheet takes pills= once spp-copy is merged
+                         **({"ratings": ratings} if ratings else {}))
 
     def _copy_pills(self, pictures) -> dict:
         """Picture.primary -> the XMP tags (xmp.PillTag) of the pills it carries, for the pictures being copied that
@@ -1593,6 +1690,16 @@ class MainWindow(QMainWindow):
             tags = [self.pill_book.tag(n) for n in self.pill_index.get(p) if self.pill_book.by_name(n)]
             if tags:
                 out[p.primary] = tags
+        return out
+
+    def _copy_ratings(self, pictures) -> dict:
+        """Picture.primary -> stars (0 = clear) for the pictures being copied whose stars were set in Spuza. A picture
+        never rated in Spuza is left out, so its file's own rating is left alone. Empty when none was."""
+        out = {}
+        for p in pictures:
+            n = self.pill_index.stars(p)
+            if n is not None:
+                out[p.primary] = n
         return out
 
     def open_copy(self) -> None:
@@ -1607,6 +1714,9 @@ class MainWindow(QMainWindow):
             pills = self._copy_pills(marked)
             if pills:  # same for pills: only a copy with some carries the kwarg (spp-copy: CopySheet(pills=...))
                 extra["pills"] = pills
+            ratings = self._copy_ratings(marked)
+            if ratings:  # and ratings: only a copy with some stars set in Spuza carries the kwarg
+                extra["ratings"] = ratings
             self._sheet = factory(marked, default_dest=default_copy_dest(), parent=self, **extra)
             quit_signal = getattr(self._sheet, "quit_requested", None)
             if quit_signal is not None:
@@ -2105,6 +2215,105 @@ class MainWindow(QMainWindow):
         self.pill.set_pills(pairs)
         self.inspector.pills = pairs  # drawn by the set_picture that follows, or by set_pills when it is alone
         self.pill_tray.refresh()
+        self._stars_follow()
+
+    # -- stars: Ctrl/Cmd+1..5 set, Ctrl/Cmd+0 clears; the bar after the tray clicks the same; the sidebar's
+    # "at least N" threshold narrows the open review set (the main viewer and the strip stay unfiltered)
+    def _stars_pic(self, pic) -> int:
+        """The stars shown for a picture: the Spuza index's value when it has one (0 = cleared), else the 1..5
+        rating its file carried when the folder loaded, else 0."""
+        n = self.pill_index.stars(pic)
+        if n is None:
+            n = self._file_stars.get(pic.primary, 0)
+        return clamp_stars(n)
+
+    def _stars_of(self, i: int) -> int:
+        """Catalog index -> stars 0..5, for the strip, the grid, the threshold. Until the read-back has finished only
+        pictures it already told us about answer (so painting never opens a file to make an index key)."""
+        pics = self.catalog.pictures
+        if not 0 <= i < len(pics):
+            return 0
+        pic = pics[i]
+        if (not self._pill_ready and pic.primary not in self._pill_touched and pic.primary not in self._stars_touched
+                and pic.primary not in self._file_stars):
+            return 0
+        return self._stars_pic(pic)
+
+    def _current_stars(self) -> int:
+        """The stars of the picture(s) in view: the viewer's picture, the review's selection (0 when they differ)."""
+        if not len(self.catalog):
+            return 0
+        try:
+            pics = self._pill_pictures(self._rotation_targets())
+        except Exception:  # noqa: BLE001 - a fake review
+            return 0
+        got = {self._stars_pic(p) for p in pics}
+        return got.pop() if len(got) == 1 else 0
+
+    def _stars_follow(self) -> None:
+        n = self._current_stars()
+        self.pill.set_stars(n)
+        self.inspector.set_stars(n)
+        self.star_bar.set_stars(n)
+
+    def _stars_key(self, n: int) -> None:
+        """Ctrl/Cmd+n: n stars (0 clears) on the picture(s) in view. Ignored while a crop or story edit or the `?`
+        overlay is open, and with no picture."""
+        if self._edit is not None or self._overlay_open() or not len(self.catalog):
+            return
+        pics = self._pill_pictures(self._rotation_targets())
+        if not pics:
+            self.say("Select a picture first")
+            return
+        n = clamp_stars(n)
+        for p in pics:
+            self.pill_index.set_stars(p, n)
+        self._stars_changed(pics)
+        more = f" · {len(pics)} pictures" if len(pics) > 1 else ""
+        if n == 0:
+            self.say(f"Stars cleared · {native('Ctrl+0')}{more}")
+        else:
+            self.say(f"{FILLED * n} {n} star{'s' if n > 1 else ''} · {native(f'Ctrl+{n}')}{more}")
+
+    def _star_bar_rated(self, n: int) -> None:
+        self._stars_key(n)
+
+    def _stars_changed(self, pics) -> None:
+        for pic in pics:
+            self._stars_touched.add(pic.primary)
+        self._star_counts = None
+        self._mark_pills_dirty()
+        self._redraw_pills()
+
+    def _set_min_stars(self, n: int) -> None:
+        """The sidebar's threshold chips: only pictures with at least n stars (0: all) in the review's open set."""
+        self._min_stars = clamp_stars(n)
+        self._star_counts = None
+        self.sidebar.set_min_stars(self._min_stars)
+        if self.review is not None and hasattr(self.review, "set_min_stars"):
+            self.review.set_min_stars(self._min_stars)
+        self.refresh_marks()
+
+    def _star_pass(self) -> tuple:
+        """(pictures with at least the threshold, {pill name casefolded: how many of them carry it}); cached."""
+        if self._star_counts is None:
+            per: dict[str, int] = {}
+            n_all = 0
+            for i, pic in enumerate(self.catalog.pictures):
+                if self._stars_of(i) >= self._min_stars:
+                    n_all += 1
+                    for name in self.pill_index.get(pic):
+                        per[name.casefold()] = per.get(name.casefold(), 0) + 1
+            self._star_counts = (n_all, per)
+        return self._star_counts
+
+    def _refresh_sidebar_counts(self) -> None:
+        cat = self.catalog
+        shown = None
+        if self._min_stars > 0:
+            marked = sum(1 for i in range(len(cat.pictures)) if cat.is_marked(i) and self._stars_of(i) >= self._min_stars)
+            shown = (self._star_pass()[0], marked)
+        self.sidebar.set_counts(len(cat) + len(self.band), self._marked_total(), shown)
 
     def _pill_hint(self, n: int) -> None:
         self.say(f"No pill on {n} — {native(MANAGE_SEQ)} to make one")
@@ -2144,7 +2353,7 @@ class MainWindow(QMainWindow):
         """Pictures' pills changed by hand: redraw everything that shows them and queue the (debounced) save."""
         for pic in pics:
             self._pill_touched.add(pic.primary)
-        self._pill_counts = None
+        self._pill_counts = self._star_counts = None
         self._mark_pills_dirty()
         self._redraw_pills()
 
@@ -2153,8 +2362,8 @@ class MainWindow(QMainWindow):
         if self.catalog.current is not None:
             self.inspector.set_pills(self.inspector.pills)
         self.filmstrip.viewport().update()
-        if self.review is not None and getattr(self.review, "set_kind", "marked") == "pill":
-            self.review.refresh()  # the set is "carries this pill": an un-pilled picture leaves it
+        if self.review is not None and (getattr(self.review, "set_kind", "marked") == "pill" or self._min_stars > 0):
+            self.review.refresh()  # the set is "carries this pill" (and enough stars): a picture may leave it
         elif self.review is not None and hasattr(self.review, "view"):
             self.review.view.viewport().update()
         self._refresh_sidebar_pills()
@@ -2163,7 +2372,13 @@ class MainWindow(QMainWindow):
     def _refresh_sidebar_pills(self) -> None:
         """One sidebar row per pill, in the book's order, with how many pictures of this folder carry it."""
         counts = self.pill_counts()
-        self.sidebar.set_pills([(p.name, p.color, counts.get(p.name.casefold(), 0)) for p in self.pill_book.pills()])
+        if self._min_stars > 0:
+            per = self._star_pass()[1]
+            self.sidebar.set_pills([(p.name, p.color, counts.get(p.name.casefold(), 0), per.get(p.name.casefold(), 0))
+                                    for p in self.pill_book.pills()])
+        else:
+            self.sidebar.set_pills([(p.name, p.color, counts.get(p.name.casefold(), 0)) for p in self.pill_book.pills()])
+        self._refresh_sidebar_counts()
 
     def _snap_pills(self) -> None:
         self._pill_snapshot = [p.name for p in self.pill_book.pills()]
@@ -2234,7 +2449,7 @@ class MainWindow(QMainWindow):
             return
         from spuza.ui.pill_manager import PillManager  # lazy: built on first use
 
-        self._pill_counts = None
+        self._pill_counts = self._star_counts = None
         mgr = self._pill_mgr = PillManager(self.pill_book, self.pill_index, self._pill_count, len(self.catalog),
                                            parent=self)
         mgr.changed.connect(self._pills_edited)
@@ -2243,7 +2458,7 @@ class MainWindow(QMainWindow):
 
     def _pills_edited(self) -> None:
         """The manager made, renamed, recoloured or deleted a pill."""
-        self._pill_counts = None
+        self._pill_counts = self._star_counts = None
         self._mark_pills_dirty()
         self._sync_pill_set()
         self._snap_pills()
@@ -2269,6 +2484,9 @@ class MainWindow(QMainWindow):
         self._pill_gen += 1
         self._pill_ready = False
         self._pill_touched.clear()  # the file wins over the index for a folder that is loaded again
+        self._file_stars.clear()  # (a rating the file carries shows until the index has a value of its own)
+        self._stars_touched.clear()
+        self._star_counts = None
         pics = list(self.catalog.pictures)
         if not pics:
             self._pill_ready = True
@@ -2279,25 +2497,40 @@ class MainWindow(QMainWindow):
         if gen != self._pill_gen:
             return  # another folder loaded since
         pics = self.catalog.pictures
-        changed = False
-        for k, tags in batch:
-            if not 0 <= k < len(pics) or pics[k].primary in self._pill_touched:
+        changed = rated = False
+        for item in batch:
+            k, tags = item[0], item[1]
+            rating = item[2] if len(item) > 2 else None
+            if not 0 <= k < len(pics):
+                continue
+            if rating is not None and self._file_stars.get(pics[k].primary) != rating:
+                self._file_stars[pics[k].primary] = rating  # shown only where Spuza's index has no value of its own
+                rated = True
+            if tags is None or pics[k].primary in self._pill_touched:
                 continue  # a pill changed by hand since this folder loaded wins over the older file
             self.pill_book.adopt(tags)
             self.pill_index.set(pics[k], [t.name for t in tags])
             changed = True
-        if changed:
-            self._pill_counts = None
-            self._mark_pills_dirty()
-            self._snap_pills()
+        if changed or rated:
+            self._pill_counts = self._star_counts = None
+            if changed:
+                self._mark_pills_dirty()
+                self._snap_pills()
             self._refresh_sidebar_pills()
-            if self.review is not None and getattr(self.review, "set_kind", "marked") == "pill":
+            if rated:
+                self._stars_follow()
+                self.filmstrip.viewport().update()
+            if self.review is not None and (getattr(self.review, "set_kind", "marked") == "pill"
+                                            or (rated and self._min_stars > 0)):
                 self.review.refresh()
+            elif rated and self.review is not None and hasattr(self.review, "view"):
+                self.review.view.viewport().update()
 
     def _on_pill_finished(self, gen: int, _seen: int) -> None:
         if gen != self._pill_gen:
             return
         self._pill_ready = True
+        self._star_counts = None
         self._redraw_pills()
 
     def wait_pill_readback(self, timeout_ms: int = 5000) -> bool:
@@ -2358,6 +2591,8 @@ class MainWindow(QMainWindow):
                 qa.setChecked(btn.isChecked())
                 qa.blockSignals(False)
         self._refresh_pill_actions()
+        for aid in STAR_ACTIONS:  # no stars with no picture, or under a crop / story edit (which ignores the keys)
+            menu_actions[aid].setEnabled(has and self._edit is None)
         for aid, on in (("lights_out", self.lights_out), ("dark_theme", theme.current().dark)):
             qa = menu_actions[aid]  # no button mirrors these two: the window's own state is the truth
             qa.blockSignals(True)
@@ -2492,6 +2727,24 @@ class MainWindow(QMainWindow):
 
     def act_pill_clear(self) -> None:
         self._pill_key(0)
+
+    def act_stars_1(self) -> None:
+        self._stars_key(1)
+
+    def act_stars_2(self) -> None:
+        self._stars_key(2)
+
+    def act_stars_3(self) -> None:
+        self._stars_key(3)
+
+    def act_stars_4(self) -> None:
+        self._stars_key(4)
+
+    def act_stars_5(self) -> None:
+        self._stars_key(5)
+
+    def act_stars_clear(self) -> None:
+        self._stars_key(0)
 
     def act_pills_manage(self) -> None:
         self.open_pill_manager()

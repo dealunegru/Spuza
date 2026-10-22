@@ -12,14 +12,17 @@ action mirrors ("" for none; "next:<name>" is one of the advanced row's buttons)
 The Pills actions (pill_1..pill_9, pill_clear, pills_manage) are static here, so the policy tests and check_readme see
 every key; at run time MainWindow.refresh_actions relabels pill_N with its pill's name and colour dot, checks it when
 the current picture carries the pill, and hides it while no pill owns that digit.
+
+The Stars actions (stars_1..stars_5 on Ctrl+1..5, stars_clear on Ctrl+0; Cmd on a Mac) set the 1-5 star rating of the
+picture(s) in view. They are static rows; MainWindow registers a QShortcut for each (the digits alone stay pills).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-MENUS = ("File", "Edit", "View", "Picture", "Pills", "Help")
-GROUPS = ("Navigate", "Mark", "View", "Picture", "Pills", "Crop / Story", "Review", "Compare", "App")
+MENUS = ("File", "Edit", "View", "Picture", "Pills", "Stars", "Help")
+GROUPS = ("Navigate", "Mark", "View", "Picture", "Pills", "Stars", "Crop / Story", "Review", "Compare", "App")
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,12 @@ ACTIONS = [
     Action("pill_clear", "Pills", "Clear all pills", ("0",), "act_pill_clear", "Pills"),
     Action("pills_manage", "Pills", "Manage pills…", ("Ctrl+Shift+P",), "act_pills_manage", "Pills",
            needs_picture=False),
+    Action("stars_1", "Stars", "1 star", ("Ctrl+1",), "act_stars_1", "Stars"),
+    Action("stars_2", "Stars", "2 stars", ("Ctrl+2",), "act_stars_2", "Stars"),
+    Action("stars_3", "Stars", "3 stars", ("Ctrl+3",), "act_stars_3", "Stars"),
+    Action("stars_4", "Stars", "4 stars", ("Ctrl+4",), "act_stars_4", "Stars"),
+    Action("stars_5", "Stars", "5 stars", ("Ctrl+5",), "act_stars_5", "Stars"),
+    Action("stars_clear", "Stars", "Clear stars", ("Ctrl+0",), "act_stars_clear", "Stars"),
     Action("help", "Help", "Keyboard shortcuts", ("?",), "act_help", "App", needs_picture=False),
 ]
 
