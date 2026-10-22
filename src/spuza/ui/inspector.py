@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from spuza import pills as pills_mod
+from spuza.ui import star_bar as stars_mod
 from spuza.catalog import RAW_EXTS
 from spuza.copy import human_size
 from spuza.ui import theme
@@ -150,6 +151,7 @@ class Inspector(QWidget):
         self.amber = False
         self._args = None
         self.pills: list[tuple[str, str]] = []  # (name, swatch name) of the picture's pills, shown as "Pills: • Hero"
+        self.stars = 0  # the picture's rating, 0..5 (0: not rated)
         self._head: str | None = None  # a derived picture's own headline (else explain() names the files)
 
     def set_picture(self, pic, info=None, marked=False, reason: str | None = None, edit=()) -> None:
@@ -209,6 +211,15 @@ class Inspector(QWidget):
         if self._args is not None and self._args[0] is not None:
             self._render()
 
+    def set_stars(self, n: int) -> None:
+        """The star rating (0..5) of the picture on show; 0 reads "not rated"."""
+        self.stars = stars_mod.clamp_stars(n)
+        if self._args is not None and self._args[0] is not None:
+            self._render()
+
+    def stars_line(self) -> str:
+        return "Stars: " + (f"{stars_mod.stars_text(self.stars)} {self.stars} of 5" if self.stars else "not rated")
+
     def pills_line(self) -> str:
         return "Pills: " + " ".join(f"• {n}" for n, _c in self.pills) if self.pills else ""
 
@@ -233,6 +244,7 @@ class Inspector(QWidget):
                 f" <span style='color:{pills_mod.swatch(col).dark if c.dark else pills_mod.swatch(col).light}'>"
                 f"{'○' if pills_mod.swatch(col).finder == 0 else '●'}</span> {html.escape(n)}" for n, col in self.pills)
             out.append(f"<div style='color:{c.dim};margin-bottom:3px'>Pills:{bullets}</div>")
+        out.append(f"<div style='color:{c.dim};margin-bottom:3px'>{html.escape(self.stars_line())}</div>")
         self.label.setText("".join(out))
 
     def plain(self) -> str:

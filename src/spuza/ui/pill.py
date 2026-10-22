@@ -14,6 +14,7 @@ from . import icons, theme
 from . import tokens as tk
 from .icons import parse_color
 from .pill_tray import draw_dot
+from .star_bar import FILLED, clamp_stars
 
 # tokens.json dark values, used when theme.Colors predates the new fields.
 _DARK = {
@@ -78,6 +79,8 @@ class LightsOutPill(QWidget):
         self._pos = QLabel("")
         self._dots = _Dots()
         self._pill_names: list[str] = []
+        self._stars = QLabel("")
+        self._stars.hide()
         self._help = QPushButton("keys ?")
         self._help.setObjectName("pillHelp")
         self._help.setFlat(True)
@@ -85,7 +88,7 @@ class LightsOutPill(QWidget):
         self._copy.setObjectName("pillCopy")
         self._copy.setText("Copy")
         self._copy.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        for w in (self._dot, self._mark, self._pos, self._dots, self._help, self._copy):
+        for w in (self._dot, self._mark, self._pos, self._dots, self._stars, self._help, self._copy):
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             lay.addWidget(w)
         self._help.clicked.connect(self.help_clicked)
@@ -124,6 +127,17 @@ class LightsOutPill(QWidget):
         self._dots.setToolTip(", ".join(self._pill_names))
         self.adjustSize()
         self.reposition()
+
+    def set_stars(self, n: int) -> None:
+        """The current picture's rating (0..5): filled stars after the pill dots. 0 shows nothing and takes no width."""
+        n = clamp_stars(n)
+        self._stars.setText(FILLED * n)
+        self._stars.setVisible(n > 0)
+        self.adjustSize()
+        self.reposition()
+
+    def stars_text(self) -> str:
+        return self._stars.text()
 
     def pill_names(self) -> list[str]:
         return list(self._pill_names)
