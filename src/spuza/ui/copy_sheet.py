@@ -120,12 +120,18 @@ class CopySheet(QDialog):
     finished = Signal(object)  # shadows QDialog.finished(int) on purpose (contract); see done()
 
     quit_requested = Signal()  # the countdown ran out: the window closes itself
+    copied_to_chosen = Signal(object)  # a copy to a folder picked with Choose folder finished well: that folder (a Path)
 
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
                  eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
-                 stories=None, crop_ratios=None, derived=None, pills=None, write_pills: bool = True, ratings=None):
+                 stories=None, crop_ratios=None, derived=None, pills=None, write_pills: bool = True, ratings=None,
+                 start_folder=None, note: str = ""):
         super().__init__(parent)
+        # friend r8: where Choose folder opens (default: the destination) and one line saying why the destination is
+        # what it is (e.g. the master folder is not there); the window passes both, a plain sheet needs neither.
+        self.start_folder: Path | None = Path(start_folder) if start_folder else None
+        self._chosen = False  # the destination came from Choose folder, not from the default
         # contract spp-copy: Picture.primary -> the pills (xmp.PillTag) that picture carries. They are written into its
         # copies (see copy.plan_copy) and shown as a block with one chip per pill; a value that is not a PillTag is dropped.
         self.write_pills = bool(write_pills)
@@ -252,6 +258,9 @@ class CopySheet(QDialog):
         self.dest_label = QLabel()
         self.dest_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.dest_label.setWordWrap(True)
+        self.dest_note_label = QLabel(str(note or ""))
+        self.dest_note_label.setWordWrap(True)
+        self.dest_note_label.setVisible(bool(note))
         self.choose_button = QPushButton("Choose folder…")
         self.choose_button.clicked.connect(self.pick_folder)
         self.free_label = QLabel()
@@ -302,6 +311,7 @@ class CopySheet(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(self.title_label)
         lay.addLayout(where)
+        lay.addWidget(self.dest_note_label)
         lay.addWidget(self.list, 1)
         lay.addWidget(self.total_label)
         lay.addWidget(self.notes_label)
@@ -413,13 +423,20 @@ class CopySheet(QDialog):
 
     # ---- destination ---------------------------------------------------------------------------
     def pick_folder(self) -> None:
-        start = str(self.dest) if self.dest else ""
+        """Choose folder: a pick starts the copy at once (no second click on Copy); cancel changes nothing. When the
+        space is short the sheet only shows the warning, as Copy would."""
+        if self.running:
+            return
+        start = str(self.start_folder or self.dest) if (self.start_folder or self.dest) else ""
         chosen = self.choose_folder(self, "Choose a folder for the copies", start)
         if chosen:
             self.dest = Path(chosen)
-            if self.result is not None and not self.running:
+            self._chosen = True
+            self.dest_note_label.hide()  # the note was about the default folder
+            if self.result is not None:
                 self._reset_for_new_destination()
             self._update_dest()
+            self.start_copy()
 
     def _reset_for_new_destination(self) -> None:
         """After a finished copy, a new folder gets a fresh sheet: the same marks can go to a second drive."""
@@ -648,6 +665,8 @@ class CopySheet(QDialog):
             self.close()  # running is False now, so this closes without asking again
             return
         if not res.failed and not res.cancelled:
+            if self._chosen and self.dest is not None:
+                self.copied_to_chosen.emit(self.dest)
             self._after_copy()
 
     def _rotation_text(self, res) -> str:

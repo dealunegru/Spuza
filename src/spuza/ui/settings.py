@@ -179,3 +179,29 @@ def read_zoom_full_sensor(s: QSettings) -> bool:
 
 def write_zoom_full_sensor(s: QSettings, on: bool) -> None:
     s.setValue(ZOOM_FULL_SENSOR, bool(on))
+
+
+# Friend round 8: a master folder every copy goes under, and the parent of the last folder the user chose.
+MASTER_FOLDER = "copy/master_folder"  # "" or absent = not set: copies go to the usual folder
+LAST_PARENT = "copy/last_parent"  # parent of the last folder a copy went to by Choose folder; "" = none
+
+
+def _read_str(s: QSettings, key: str) -> str:
+    v = s.value(key, "")
+    return v.strip() if isinstance(v, str) else ""  # an .ini store hands back strings; anything else is unset
+
+
+def read_master_folder(s: QSettings) -> str:
+    return _read_str(s, MASTER_FOLDER)
+
+
+def write_master_folder(s: QSettings, path: str) -> None:
+    s.setValue(MASTER_FOLDER, str(path or ""))
+
+
+def read_last_parent(s: QSettings) -> str:
+    return _read_str(s, LAST_PARENT)
+
+
+def write_last_parent(s: QSettings, path: str) -> None:
+    s.setValue(LAST_PARENT, str(path or ""))
