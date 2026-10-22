@@ -1,7 +1,7 @@
 """The pill tray (Direction A, digit pills) and the drawing helpers every pill surface shares.
 
 The tray sits in the Quiet bar after the title: one capsule per pill (dot, name, digit chip), lit when the current
-picture carries it, a click toggles it, and a last "Edit" capsule with its key chip opens the manager. It never
+picture carries it, a click toggles it. The manager opens from the Pills menu and Ctrl+Shift+P, not from the tray. It never
 pushes the bar's right-hand buttons off (decision spuza-pills-tray-1280): when the full capsules do not fit they drop
 their names (dot + digit chip, the name moves to the tooltip), and if even that does not fit it shows as many as fit
 plus a "+N" capsule that opens the Pills menu. The plan is pure arithmetic on font metrics: `PillTray.plan(width)`.
@@ -27,7 +27,6 @@ from spuza.ui import tokens as tk
 MANAGE_SEQ = "Ctrl+Shift+P"
 MANAGE_CAP = "⌘⇧P" if sys.platform == "darwin" else MANAGE_SEQ  # the Mac label; Qt maps Ctrl to Cmd there
 GAP = 4
-EDIT_GAP = 2  # extra room before the Edit capsule
 HEIGHT = 26
 DOT_R = 4.5
 HALO = 1.7
@@ -119,9 +118,9 @@ def draw_chip(p: QPainter, x: float, cy: float, text: str, font: QFont) -> int:
 
 @dataclass(frozen=True)
 class Capsule:
-    kind: str  # "pill" | "edit" | "more"
-    label: str  # the pill's name, "Edit", or "+N"
-    key: str  # the chip text: the digit, the manage key, or ""
+    kind: str  # "pill" | "more"
+    label: str  # the pill's name, or "+N"
+    key: str  # the chip text: the digit, or ""
     lit: bool
     short: bool  # drawn without its name
     rect: QRect
@@ -131,7 +130,7 @@ class Capsule:
 
 class PillTray(QWidget):
     """The capsules. `book_fn()` -> the pills in digit order; `lit_fn()` -> the (case-folded) names the current
-    picture carries. Signals: toggled(name), manage(), more()."""
+    picture carries. Signals: toggled(name), more(); manage() is kept for window.py but no click emits it."""
 
     toggled = Signal(str)
     manage = Signal()
@@ -157,25 +156,23 @@ class PillTray(QWidget):
         pills = list(self.book_fn())[:pills_mod.MAX_PILLS]
         full = [10 + 9 + 6 + fmb.horizontalAdvance(p.name) + 7 + chip_width(str(p.digit), cf) + 8 for p in pills]
         short = [10 + 9 + 6 + chip_width(str(p.digit), cf) + 8 for p in pills]
-        edit = 10 + fm.horizontalAdvance("Edit") + 7 + chip_width(MANAGE_CAP, cf) + 8
         more = lambda n: 10 + fm.horizontalAdvance(f"+{n}") + 10  # noqa: E731
-        return pills, full, short, edit, more
+        return pills, full, short, more
 
     def plan(self, width: int) -> list[Capsule]:
-        """The capsules that fit in `width` px, left to right. Edit is always last; see the module docstring."""
-        pills, full, short, edit_w, more_w = self._widths()
+        """The capsules that fit in `width` px, left to right. see the module docstring."""
+        pills, full, short, more_w = self._widths()
         lit = {str(n).casefold() for n in self.lit_fn()}
-        base = EDIT_GAP + edit_w  # the Edit capsule, and the gap before it
         mode, n_show = "full", len(pills)
-        if sum(w + GAP for w in full) + base > width:
+        if sum(w + GAP for w in full) > width:
             mode = "short"
-            if sum(w + GAP for w in short) + base > width:
+            if sum(w + GAP for w in short) > width:
                 mode = "count"
                 n_show, x = 0, 0
                 for i, w in enumerate(short):
                     hidden = len(pills) - (i + 1)
                     reserve = more_w(hidden) + GAP if hidden else 0
-                    if x + w + GAP + reserve + base > width:
+                    if x + w + GAP + reserve > width:
                         break
                     x += w + GAP
                     n_show = i + 1
@@ -196,8 +193,6 @@ class PillTray(QWidget):
             caps.append(Capsule("more", f"+{n}", "", False, False, QRect(x, 1, w, HEIGHT - 2), "None",
                                 f"{n} more pill{'s' if n != 1 else ''}  open the Pills menu"))
             x += w + GAP
-        caps.append(Capsule("edit", "Edit", MANAGE_CAP, False, False, QRect(x + EDIT_GAP, 1, edit_w, HEIGHT - 2), "None",
-                            f"Manage pills  {MANAGE_CAP}"))
         return caps
 
     def capsules(self) -> list[Capsule]:
@@ -206,15 +201,15 @@ class PillTray(QWidget):
 
     def full_width(self) -> int:
         """The width the capsules need when nothing is collapsed."""
-        _pills, full, _short, edit_w, _more = self._widths()
-        return sum(w + GAP for w in full) + EDIT_GAP + edit_w
+        _pills, full, _short, _more = self._widths()
+        return sum(w + GAP for w in full)
 
     def sizeHint(self) -> QSize:  # noqa: N802
         return QSize(self.full_width(), HEIGHT)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802
-        _pills, _full, _short, edit_w, more_w = self._widths()
-        return QSize(EDIT_GAP + edit_w + GAP + more_w(9), HEIGHT)
+        _pills, _full, _short, more_w = self._widths()
+        return QSize(more_w(9), HEIGHT)
 
     def refresh(self) -> None:
         self.updateGeometry()
@@ -249,19 +244,12 @@ class PillTray(QWidget):
                     tx += QFontMetrics(nf).horizontalAdvance(cap.label) + 7
                 draw_chip(p, tx, cy, cap.key, cf)
             else:
-                p.setPen(QPen(QColor(c.border), 1, Qt.PenStyle.DashLine if cap.kind == "edit" else Qt.PenStyle.SolidLine))
+                p.setPen(QPen(QColor(c.border), 1, Qt.PenStyle.SolidLine))
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.drawRoundedRect(rf, rad, rad)
                 p.setFont(f)
                 p.setPen(QColor(c.text_dim))
-                if cap.kind == "more":
-                    p.drawText(r, Qt.AlignmentFlag.AlignCenter, cap.label)
-                else:
-                    tx = r.x() + 10
-                    p.drawText(QRect(tx, r.y(), r.width(), r.height()),
-                               Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, cap.label)
-                    tx += QFontMetrics(f).horizontalAdvance(cap.label) + 7
-                    draw_chip(p, tx, cy, cap.key, cf)
+                p.drawText(r, Qt.AlignmentFlag.AlignCenter, cap.label)
         p.end()
 
     def _hit(self, pos) -> Capsule | None:
@@ -278,8 +266,6 @@ class PillTray(QWidget):
             return
         if cap.kind == "pill":
             self.toggled.emit(cap.label)
-        elif cap.kind == "edit":
-            self.manage.emit()
         else:
             self.more.emit()
 
