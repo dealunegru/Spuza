@@ -1,10 +1,10 @@
 """The ratio strip: a row of chips above the picture, shown only while the X crop edit is open (round 6, mockup A).
 
-`1 Free` `2 Original` `3 1:1` `4 4:5` `5 3:4` `6 2:3` `7 9:16` `8 1.91:1`, then `V turn`. The current chip is filled
+`1 Free` `2 Original` `3 1:1` `4 4:5` `5 3:4` `6 2:3` `7 9:16` `8 1.91:1`, then `V turn` and `0 Reset`. The current chip is filled
 with the accent and shows its on-screen label (5:4 after V). A click does what the key does: it emits `picked(entry)`
-or `turn()`; the window owns the behaviour. Never takes keyboard focus. Cheap numbers only: no decoding here.
+`turn()` or `reset()`; the window owns the behaviour. Never takes keyboard focus. Cheap numbers only: no decoding here.
 
-API: set_state(ratio, turns) / chip_texts() / current_entry() / retheme(), signals `picked(int)`, `turn()`.
+API: set_state(ratio, turns) / chip_texts() / current_entry() / retheme(), signals `picked(int)`, `turn()`, `reset()`.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ class Chip(QLabel):
 class RatioStrip(QWidget):
     picked = Signal(int)
     turn = Signal()
+    reset = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +67,9 @@ class RatioStrip(QWidget):
         self._turn = self._chip("V turn")
         self._turn.clicked.connect(lambda _c=False: self.turn.emit())
         lay.addWidget(self._turn)
+        self._reset = self._chip("0 Reset")
+        self._reset.clicked.connect(lambda _c=False: self.reset.emit())
+        lay.addWidget(self._reset)
         lay.addStretch(1)
         self.retheme()
 
@@ -80,7 +84,7 @@ class RatioStrip(QWidget):
         self.retheme()
 
     def chip_texts(self) -> list[str]:
-        return [self._chips[e].text() for e, _n in ratio_mod.ENTRIES] + [self._turn.text()]
+        return [self._chips[e].text() for e, _n in ratio_mod.ENTRIES] + [self._turn.text(), self._reset.text()]
 
     def current_entry(self) -> int:
         return self._r.entry
@@ -96,3 +100,4 @@ class RatioStrip(QWidget):
         for entry, b in self._chips.items():
             b.setStyleSheet(on if entry == self._r.entry else base)
         self._turn.setStyleSheet(base)
+        self._reset.setStyleSheet(base)
