@@ -57,8 +57,15 @@ class ShortcutOverlay(QFrame):
         cols = QHBoxLayout()
         outer.addLayout(cols, 1)
         by_group: dict[str, list[tuple[str, str, bool]]] = {g: [] for g in act.GROUPS}
+        book = getattr(parent, "pill_book", None)  # the user's pills name the digit rows; a digit with no pill has none
         for a in act.ACTIONS:
-            by_group[a.group].append((a.label, act.native_keys(a), not a.flag or features.enabled(a.flag)))
+            label = a.label
+            if a.id in act.PILL_DIGITS:
+                pill = book.by_digit(act.PILL_DIGITS[a.id]) if book is not None else None
+                if pill is None:
+                    continue
+                label = pill.name
+            by_group[a.group].append((label, act.native_keys(a), not a.flag or features.enabled(a.flag)))
         for g, keys, what in act.CONTEXT_KEYS:
             by_group[g].append((what, keys, True))
         column = None

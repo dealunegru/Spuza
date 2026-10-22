@@ -39,6 +39,7 @@ from spuza import features
 from spuza.copy import human_size
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
+from spuza.ui.pill_tray import draw_dots_right
 from spuza.ui.viewer import info_native_size, step_scale
 
 THUMB_SIDE = 480  # decode size for the worker
@@ -128,6 +129,9 @@ class _Delegate(QStyledItemDelegate):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(badge_rect, 4, 4)
         p.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, kind)
+        names = self.grid.pill_colors(index.data(IDX_ROLE))
+        if names:  # the picture's pills: dots bottom right, on a dark halo (the mark check is not drawn here)
+            draw_dots_right(p, r.right() - 2, badge_rect.center().y(), names, r=4.0, pitch=10.0, most=6)
         p.restore()
 
 
@@ -135,12 +139,14 @@ class ReviewGrid(QWidget):
     open_index = Signal(int)
     marks_changed = Signal()
     closed = Signal()
+    pill_key = Signal(int)  # a digit 0-9 was pressed: the window toggles that pill on the selected picture(s)
 
     def __init__(self, catalog, prefetcher=None, parent=None, loader: Callable | None = None):
         super().__init__(parent)
         self.catalog, self.prefetcher = catalog, prefetcher
         self._loader = loader
         self.rotation_of = lambda i: 0  # contract fr3: clockwise quarter turns per index; the window assigns it
+        self.pills_of = lambda i: ()  # catalog index -> the pill colour NAMES drawn as dots; the window assigns it
         self._thumbs: dict[int, QPixmap] = {}
         self._failed: set[int] = set()
         self._queue: list[int] = []
@@ -297,6 +303,12 @@ class ReviewGrid(QWidget):
         return got
 
     # ---- thumbnails ----------------------------------------------------------------------------
+    def pill_colors(self, i) -> list[str]:
+        try:
+            return [str(c) for c in (self.pills_of(i) or ())]
+        except Exception:  # noqa: BLE001 - a bad provider shows no dots
+            return []
+
     def _pixmap(self, i: int) -> QPixmap | None:
         pm = self._thumbs.get(i)
         if pm is not None:
@@ -630,8 +642,12 @@ class ReviewGrid(QWidget):
 
     def _handle_key(self, ev: QKeyEvent) -> bool:
         k = ev.key()
-        if ev.isAutoRepeat() and k in (Qt.Key.Key_M, Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            return True  # a held key must not unmark a run of pictures or reopen repeatedly
+        if ev.isAutoRepeat() and (k in (Qt.Key.Key_M, Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                                  or Qt.Key.Key_0 <= k <= Qt.Key.Key_9):
+            return True  # a held key must not unmark a run of pictures, reopen repeatedly or flip a pill back and forth
+        if Qt.Key.Key_0 <= k <= Qt.Key.Key_9 and not (ev.modifiers() & ~Qt.KeyboardModifier.KeypadModifier):
+            self.pill_key.emit(k - Qt.Key.Key_0)  # 1-9 toggle that pill on the selection, 0 clears (the window decides)
+            return True
         zooming = self.stack.currentIndex() == PAGE_ZOOM
         if k in (Qt.Key.Key_M, Qt.Key.Key_Space):  # never Delete: nothing is deleted
             self.unmark_selected()

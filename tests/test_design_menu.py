@@ -1,4 +1,4 @@
-"""Design round 2: the menu bar (File / Edit / View / Picture / Help) and the `?` shortcut overlay.
+"""Design round 2: the menu bar (File / Edit / View / Picture / Pills / Help) and the `?` shortcut overlay.
 
 Both are built from ui/actions.py. Keys stay dispatched by keyPressEvent and the QShortcuts; the menu QActions only
 display them, so one key press must be one call. Real QTest key events over a window on tiny JPEGs in tmp_path."""
@@ -51,6 +51,12 @@ def make_window(folder: Path, n: int) -> MainWindow:
     return w
 
 
+@pytest.fixture(autouse=True)
+def isolated_pills(tmp_path, monkeypatch):
+    """The window loads and saves pills in app data: never the real one."""
+    monkeypatch.setenv("SPUZA_PILLS_DIR", str(tmp_path / "pills"))
+
+
 @pytest.fixture
 def win(tmp_path):
     w = make_window(tmp_path / "card", 3)
@@ -80,8 +86,9 @@ def watch(monkeypatch, obj, name) -> Counter:
 
 
 # -- the table ------------------------------------------------------------------------------------
-def test_menu_bar_has_the_five_menus_in_order(win):
-    assert [a.text() for a in win.menuBar().actions()] == list(act.MENUS) == ["File", "Edit", "View", "Picture", "Help"]
+def test_menu_bar_has_the_six_menus_in_order(win):  # 0.12 added Pills, between Picture and Help
+    assert [a.text() for a in win.menuBar().actions()] == list(act.MENUS) == ["File", "Edit", "View", "Picture",
+                                                                              "Pills", "Help"]
 
 
 def test_every_action_is_in_its_menu_with_keys(win):
@@ -108,6 +115,7 @@ def test_the_menu_lists_the_actions_the_issue_names(win):
     assert by_menu["Edit"] == ["Mark", "Move on mark", "Mark all", "Unmark all", "Undo mark all", "Start fresh"]
     assert by_menu["View"][:6] == ["Back", "Next", "Zoom 100%", "Zoom in", "Zoom out", "Full screen"]
     assert by_menu["Picture"] == ["Rotate left", "Rotate right", "Crop", "Story fit", "Remove crop / story"]
+    assert by_menu["Pills"] == [f"Pill {n}" for n in range(1, 10)] + ["Clear all pills", "Manage pills…"]
     assert by_menu["Help"] == ["Keyboard shortcuts"]
 
 
@@ -186,6 +194,13 @@ def test_space_and_arrows_in_the_review_never_reach_the_menu(monkeypatch, win):
 def test_menu_trigger_calls_the_handler_once(monkeypatch, win, a):
     features.set_mode(features.ADVANCED)
     win.set_advanced(True)
+    if a.id in act.PILL_DIGITS:  # a digit's row is hidden until a pill owns it
+        while len(win.pill_book.pills()) < act.PILL_DIGITS[a.id]:
+            win.pill_book.create(f"Pill {len(win.pill_book.pills()) + 1}", "Blue")
+        win.refresh_actions()
+    elif a.id == "pill_clear":
+        win.pill_book.create("Hero", "Blue")
+        win.refresh_actions()
     h = watch(monkeypatch, win, a.handler)
     qa = win.menu_actions[a.id]
     assert qa.isEnabled() and qa.isVisible(), a.id
@@ -291,6 +306,8 @@ def test_overlay_lists_every_action_with_its_key_and_the_context_keys(win):
     assert ov.isVisible()
     texts = ov.labels()
     for a in act.ACTIONS:
+        if a.id in act.PILL_DIGITS:  # a digit row appears only once a pill owns it (test_pills_ui covers it)
+            continue
         assert a.label in texts, a.id
         assert act.native_keys(a) in texts, a.id
     for _g, keys, what in act.CONTEXT_KEYS:

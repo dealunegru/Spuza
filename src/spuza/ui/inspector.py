@@ -8,6 +8,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from spuza import pills as pills_mod
 from spuza.catalog import RAW_EXTS
 from spuza.copy import human_size
 from spuza.ui import theme
@@ -148,6 +149,7 @@ class Inspector(QWidget):
         self.lines: list[str] = []
         self.amber = False
         self._args = None
+        self.pills: list[tuple[str, str]] = []  # (name, swatch name) of the picture's pills, shown as "Pills: • Hero"
         self._head: str | None = None  # a derived picture's own headline (else explain() names the files)
 
     def set_picture(self, pic, info=None, marked=False, reason: str | None = None, edit=()) -> None:
@@ -201,6 +203,15 @@ class Inspector(QWidget):
         self.lines, self.amber = [pic.stem, head, *rows, "Marked" if marked else "Not marked"], False
         self._render()
 
+    def set_pills(self, pills) -> None:
+        """The pills of the picture on show; the next set_picture / set_derived (or this call) draws them."""
+        self.pills = [(str(n), str(c)) for n, c in pills]
+        if self._args is not None and self._args[0] is not None:
+            self._render()
+
+    def pills_line(self) -> str:
+        return "Pills: " + " ".join(f"• {n}" for n, _c in self.pills) if self.pills else ""
+
     def retheme(self) -> None:
         if self._args is not None and self._args[0] is not None:  # no picture (an empty catalog): nothing to repaint, bug-437
             self._render()
@@ -217,7 +228,12 @@ class Inspector(QWidget):
         for t in body:
             col = c.marked if t == "Marked" else (c.warning if reason and t.startswith("Preview failed") else c.dim)
             out.append(f"<div style='color:{col};margin-bottom:3px'>{html.escape(t)}</div>")
+        if self.pills:  # after "Marked": the bullets take the pills' own colours
+            bullets = "".join(
+                f" <span style='color:{pills_mod.swatch(col).dark if c.dark else pills_mod.swatch(col).light}'>"
+                f"{'○' if pills_mod.swatch(col).finder == 0 else '●'}</span> {html.escape(n)}" for n, col in self.pills)
+            out.append(f"<div style='color:{c.dim};margin-bottom:3px'>Pills:{bullets}</div>")
         self.label.setText("".join(out))
 
     def plain(self) -> str:
-        return "\n".join(self.lines)
+        return "\n".join([*self.lines, *([self.pills_line()] if self.pills else [])])

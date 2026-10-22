@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolButton, QWi
 from . import icons, theme
 from . import tokens as tk
 from .icons import parse_color
+from .pill_tray import draw_dot
 
 # tokens.json dark values, used when theme.Colors predates the new fields.
 _DARK = {
@@ -20,6 +21,33 @@ _DARK = {
     "focus": "#5a9bff", "on_focus": "#ffffff", "key_chip_bg": "#3a3a3a", "key_chip_text": "#d0d0d0",
 }
 BOTTOM_MARGIN = 24
+DOT_PITCH = 13
+MAX_DOTS = 9
+
+
+class _Dots(QWidget):
+    """The current picture's pill dots (the dark swatches: the HUD is dark in both themes). Empty: no width."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.colors: list[str] = []
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFixedHeight(16)
+        self.hide()
+
+    def set_colors(self, colors) -> None:
+        self.colors = [str(c) for c in colors][:MAX_DOTS]
+        self.setFixedWidth(max(0, len(self.colors) * DOT_PITCH))
+        self.setVisible(bool(self.colors))
+        self.update()
+
+    def paintEvent(self, _ev) -> None:
+        p = QPainter(self)
+        for i, name in enumerate(self.colors):
+            draw_dot(p, i * DOT_PITCH + DOT_PITCH / 2, self.height() / 2, 4.5, name, True)
+        p.end()
 
 
 def _col(c, name: str) -> str:
@@ -48,6 +76,8 @@ class LightsOutPill(QWidget):
         self._dot = QLabel("●")
         self._mark = QLabel("")
         self._pos = QLabel("")
+        self._dots = _Dots()
+        self._pill_names: list[str] = []
         self._help = QPushButton("keys ?")
         self._help.setObjectName("pillHelp")
         self._help.setFlat(True)
@@ -55,7 +85,7 @@ class LightsOutPill(QWidget):
         self._copy.setObjectName("pillCopy")
         self._copy.setText("Copy")
         self._copy.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        for w in (self._dot, self._mark, self._pos, self._help, self._copy):
+        for w in (self._dot, self._mark, self._pos, self._dots, self._help, self._copy):
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             lay.addWidget(w)
         self._help.clicked.connect(self.help_clicked)
@@ -85,6 +115,18 @@ class LightsOutPill(QWidget):
         self._pos.setText(position_text)
         self.adjustSize()
         self.reposition()
+
+    def set_pills(self, pills) -> None:
+        """The current picture's pills, (name, colour name) pairs: shown as dots after the position."""
+        pills = list(pills)
+        self._pill_names = [str(n) for n, _c in pills]
+        self._dots.set_colors(c for _n, c in pills)
+        self._dots.setToolTip(", ".join(self._pill_names))
+        self.adjustSize()
+        self.reposition()
+
+    def pill_names(self) -> list[str]:
+        return list(self._pill_names)
 
     def help_button(self) -> QPushButton:
         return self._help

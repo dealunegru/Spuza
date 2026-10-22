@@ -35,6 +35,12 @@ _spec.loader.exec_module(cr)
 
 
 @pytest.fixture(autouse=True)
+def isolated_pills(tmp_path, monkeypatch):
+    """The window loads and saves pills in app data: never the real one."""
+    monkeypatch.setenv("SPUZA_PILLS_DIR", str(tmp_path / "pills"))
+
+
+@pytest.fixture(autouse=True)
 def clean_theme():
     theme._stop_following()
     yield
@@ -180,6 +186,9 @@ PROBES = {
     "lights_out": ("", "set_lights_out"), "dark_theme": ("", "act_dark_theme"),
     "rotate_left": ("", "rotate"), "rotate_right": ("", "rotate"), "crop": ("", "start_crop"),
     "story": ("", "start_story"), "remove": ("", "remove_derived"), "help": ("", "toggle_shortcuts"),
+    # pills (0.12): the digits call _pill_key(n); Ctrl+Shift+P is a window shortcut
+    **{f"pill_{n}": ("", "_pill_key") for n in range(1, 10)}, "pill_clear": ("", "_pill_key"),
+    "pills_manage": ("", "open_pill_manager"),
 }
 
 

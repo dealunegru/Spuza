@@ -13,11 +13,13 @@ from PySide6.QtWidgets import QAbstractItemView, QListView, QStyledItemDelegate
 from spuza import derived as dv
 from spuza.reveal import reveal_menu
 from spuza.ui import theme
+from spuza.ui.pill_tray import draw_dots_right
 from spuza.ui.thumbs import ThumbLoader, cut_crop, story_frame
 
 CELL_W, CELL_H = 112, 84
 THUMB_W, THUMB_H = 104, 62
 MEMO_MAX = 600  # scaled thumbnails kept; oldest dropped first
+STRIP_DOTS = 4  # pill dots drawn on a thumbnail (a "+" after that); the badge sits bottom left
 SCROLL_DEBOUNCE_MS = 150  # a scroll or resize settles this long before the strip asks for thumbnails
 
 
@@ -109,6 +111,10 @@ class _Delegate(QStyledItemDelegate):
                 p.setPen(QColor(c.on_focus))
             p.drawText(tb, Qt.AlignmentFlag.AlignCenter, text)
             tx += tw + 3
+        if d is None:  # the picture's pills: dots, bottom right (the mark check owns the top right)
+            names = s.pill_colors(i)
+            if names:
+                draw_dots_right(p, box.right() - 3, box.bottom() - 9, names, most=STRIP_DOTS)
         # mark check
         if s.catalog.is_marked(i) if d is None else d.marked:
             dot = QRect(box.right() - 17, box.y() + 3, 14, 14)
@@ -135,6 +141,7 @@ class Filmstrip(QListView):
         # "story" (accent outline); [] for none. A bare string is one crop tag. Round 7: originals carry none, the
         # window leaves this alone; a derived picture's tag comes from `derived.tag`.
         self.edit_tag_of = lambda i: []
+        self.pills_of = lambda i: ()  # the window assigns it: catalog index -> the pill colour NAMES to draw as dots
         self._memo: dict[tuple[int, int], QPixmap] = {}  # (index, quarter turns) -> scaled, rotated pixmap
         # derived id -> (content key, pixmap): ONE entry per derived picture, so a changed item drops its old cut
         self._dmemo: dict[int, tuple[tuple, QPixmap]] = {}
@@ -206,6 +213,12 @@ class Filmstrip(QListView):
                 got = [(got, "crop")]
             return [(str(t), "story" if k == "story" else "crop") for t, k in got if t]
         except Exception:  # noqa: BLE001 - a bad provider shows no tag
+            return []
+
+    def pill_colors(self, i: int) -> list[str]:
+        try:
+            return [str(c) for c in (self.pills_of(i) or ())]
+        except Exception:  # noqa: BLE001 - a bad provider shows no dots
             return []
 
     def derived_tags(self, d) -> list[tuple[str, str]]:

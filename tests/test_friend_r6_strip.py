@@ -301,13 +301,16 @@ def test_auto_repeat_is_ignored(w):
     assert w._crop_ratio == Ratio(4)
 
 
-def test_digits_and_v_do_nothing_on_the_plain_viewer(w):
+def test_digits_and_v_open_no_editor_on_the_plain_viewer(w):
+    # Since 0.12 the digits are pills on the plain viewer (no pill made here: they only say so), never crop ratios.
     msg = w.last_message
     for k in (Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4, Qt.Key_5, Qt.Key_6, Qt.Key_7, Qt.Key_8, Qt.Key_9, Qt.Key_V,
               Qt.Key_0):
         key(w, k)
     assert w._edit is None and w._crop_overlay is None and not w.band
-    assert not w.ratio_strip.isVisible() and w.last_message == msg
+    assert not w.ratio_strip.isVisible()
+    assert w.last_message == msg or "pill" in w.last_message.lower()  # the 0.12 pill hint, nothing about a ratio
+    assert w.pill_book.pills() == [] and not w.pill_index.get(w.catalog.current)
 
 
 def test_digits_and_v_do_nothing_in_story_fit(w):
