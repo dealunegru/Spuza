@@ -82,7 +82,9 @@ def test_folder_chooser_is_injectable(qapp, tmp_path):
     sheet.choose_folder = lambda parent, title, start: asked.append(start) or str(tmp_path / "picked")
     sheet.choose_button.click()
     assert sheet.dest == tmp_path / "picked"
-    assert sheet.copy_button.isEnabled()
+    assert sheet.running or sheet.result is not None  # a pick starts the copy
+    assert wait_for(lambda: sheet.result is not None)
+    sheet.wait_idle()
     sheet.choose_folder = lambda *a: ""  # cancelled dialog keeps the old destination
     sheet.choose_button.click()
     assert sheet.dest == tmp_path / "picked" and len(asked) == 1

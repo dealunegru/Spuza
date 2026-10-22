@@ -44,12 +44,11 @@ def test_b11_second_folder_after_finished_copy_has_a_copy_button(tmp_path):
     sheet.wait_idle()
     sheet.show()
     sheet.choose_folder = lambda *a: str(tmp_path / "second")
-    sheet.choose_button.click()
-    assert sheet.dest == tmp_path / "second"
-    assert sheet.copy_button.isEnabled() and not sheet.copy_button.isHidden()
     done.clear()
-    sheet.copy_button.click()
+    sheet.choose_button.click()  # a pick starts the copy: no second click on Copy
+    assert sheet.dest == tmp_path / "second"
     assert wait_for(lambda: done)
+    sheet.wait_idle()
     sheet.wait_idle()
     assert len(done[0].copied) == 5 and (tmp_path / "second" / "R0000.DNG").is_file()
 
