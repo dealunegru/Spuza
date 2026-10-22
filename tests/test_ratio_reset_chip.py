@@ -60,7 +60,6 @@ def test_reset_chip_is_styled_like_the_others():
 
 
 def test_chip_returns_the_largest_centred_rectangle(w):
-    w.ratio_strip.reset.connect(w._reset_ratio)  # the wiring line window.py will carry
     QTest.keyClick(w, Qt.Key_X)
     QTest.keyClick(w, Qt.Key_4)
     cw, ch = w._crop_native
@@ -70,5 +69,20 @@ def test_chip_returns_the_largest_centred_rectangle(w):
     assert w._crop_overlay.rect_frac() != largest
     assert w._crop_overlay.rect_frac() is not None
     w.ratio_strip._reset.click()
+    assert tuple(w._crop_overlay.rect_frac()) == pytest.approx(largest)
+    assert w._rect_auto is True
+
+
+def test_real_window_wiring_mouse_click_resets_the_rectangle(w):
+    """No hand-connect: the window itself must route the chip's `reset` to `_reset_ratio`."""
+    QTest.keyClick(w, Qt.Key_X)
+    QTest.keyClick(w, Qt.Key_4)
+    cw, ch = w._crop_native
+    largest = tuple(ratio.largest_centred(ratio.frame_aspect(w._crop_ratio, cw, ch), cw, ch))
+    w._crop_overlay.set_rect_frac((0.1, 0.1, 0.5, 0.6))
+    w._crop_overlay.changed.emit()
+    assert w._rect_auto is False
+    assert tuple(w._crop_overlay.rect_frac()) != pytest.approx(largest)
+    QTest.mouseClick(w.ratio_strip._reset, Qt.MouseButton.LeftButton)
     assert tuple(w._crop_overlay.rect_frac()) == pytest.approx(largest)
     assert w._rect_auto is True

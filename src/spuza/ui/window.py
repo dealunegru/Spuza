@@ -538,6 +538,7 @@ class MainWindow(QMainWindow):
         self.ratio_strip.setVisible(False)
         self.ratio_strip.picked.connect(self._pick_ratio)
         self.ratio_strip.turn.connect(self._turn_ratio)
+        self.ratio_strip.reset.connect(self._reset_ratio)
         stage = QWidget()
         stage_lay = QVBoxLayout(stage)
         stage_lay.setContentsMargins(0, 0, 0, 0)
