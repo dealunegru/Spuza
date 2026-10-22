@@ -237,7 +237,10 @@ def test_compare_when_review_is_built_after_it(made):
     w.catalog.set_mark(1, True)
     w.buttons["review"].click()  # built after compare: still stack page 1
     assert w.stack.currentIndex() == 1 and w.stack.currentWidget() is w.review
-    key(w, Qt.Key_Escape)
+    assert w.review.stack.currentIndex() == 2  # review opens on the zoom page (448/449)
+    key(w, Qt.Key_Escape)  # zoom -> grid
+    key(w, Qt.Key_Escape)  # grid -> viewer
+    assert w.stack.currentIndex() == 0
     key(w, Qt.Key_N)
     assert w._compare_shown()
 

@@ -66,6 +66,8 @@ def open_review(marked=(1, 3)):
 def test_focus_is_on_the_grid_after_r():
     w = open_review()
     try:
+        assert w.review.stack.currentIndex() == 2 and QApplication.focusWidget() is w.review.zoom_view
+        press(Qt.Key_Escape)  # review opens on the zoom page (448/449); Esc goes to the grid
         fw = QApplication.focusWidget()
         assert fw is w.review.view
     finally:
@@ -123,7 +125,9 @@ def test_z_opens_grid_zoom_and_esc_returns_to_grid():
 def test_esc_on_grid_returns_to_viewer_with_focus_on_window():
     w = open_review()
     try:
-        press(Qt.Key_Escape)
+        press(Qt.Key_Escape)  # zoom -> grid
+        assert w.stack.currentIndex() == 1 and w.review.stack.currentIndex() == 1
+        press(Qt.Key_Escape)  # grid -> viewer
         assert w.stack.currentIndex() == 0
         assert QApplication.focusWidget() is w
         press(Qt.Key_Right)  # keys drive the viewer again
@@ -207,9 +211,11 @@ def test_esc_order_with_bleed_then_review():
     QTest.keyClick(w, Qt.Key_R)
     assert w.stack.currentIndex() == 1 and w.is_bleed
     try:
-        press(Qt.Key_Escape)  # first Esc: review closes, bleed stays
+        press(Qt.Key_Escape)  # first Esc: review's zoom page goes to its grid
+        assert w.stack.currentIndex() == 1 and w.review.stack.currentIndex() == 1 and w.is_bleed
+        press(Qt.Key_Escape)  # second: review closes, bleed stays
         assert w.stack.currentIndex() == 0 and w.is_bleed
-        press(Qt.Key_Escape)  # second: bleed ends
+        press(Qt.Key_Escape)  # third: bleed ends
         assert not w.is_bleed
     finally:
         w.close()

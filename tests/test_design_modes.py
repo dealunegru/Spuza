@@ -247,8 +247,10 @@ def test_review_in_b_has_no_pill_and_keeps_its_keys(win):
     QTest.keyClick(win, Qt.Key_R)
     assert win.stack.currentIndex() == 1 and not win.pill.isVisible() and not win.quiet_bar.isVisible()
     QTest.keyClick(win, Qt.Key_Right)
-    assert win.review.selected_index() == 1
-    QTest.keyClick(win, Qt.Key_Escape)
+    assert win.review.selected_index() == 1  # Right stepped the zoom page to the second marked picture
+    QTest.keyClick(win, Qt.Key_Escape)  # zoom -> grid
+    assert win.stack.currentIndex() == 1 and win.review.stack.currentIndex() == 1
+    QTest.keyClick(win, Qt.Key_Escape)  # grid -> viewer
     assert win.stack.currentIndex() == 0 and win.pill.isVisible()
 
 
