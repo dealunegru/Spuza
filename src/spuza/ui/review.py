@@ -178,6 +178,8 @@ class ReviewGrid(QWidget):
         self._pool = QThreadPool()
         self._pool.setMaxThreadCount(2)
         self._zoom_index: int | None = None
+        self._open_pending = False  # open_set found the set empty: zoom when it first fills, unless the user acts first
+        self._open_prefer: int | None = None
         self._zoom_fit = True
         self._zoom_scale = 1.0  # while not fit: picture pixels per device pixel (1.0 = Z's 100%)
         self._zoom_mem = ZoomMemory()  # where the user looked while zoomed: the next picture opens there (fr9)
@@ -299,6 +301,7 @@ class ReviewGrid(QWidget):
         """Choose the set (kind "marked", or "pill" with a pill name) and list it; the page stays off zoom."""
         self.set_kind, self.set_name = ("pill", str(name)) if kind == "pill" and name else ("marked", None)
         self._zoom_index, self._edge = None, ""
+        self._open_pending = False
         self._zoom_mem.forget()
         self.refresh()
 
@@ -310,9 +313,11 @@ class ReviewGrid(QWidget):
 
     def open_set(self, kind: str = "marked", name: str | None = None, prefer: int | None = None) -> None:
         """Show a set big: set_source, then the zoom page at `prefer` if it is in the set, else its first picture.
-        An empty set shows the empty page."""
+        An empty set shows the empty page; if it fills later (star ratings still being read back), the first
+        refresh that finds pictures lands on the zoom page, unless the user has navigated meanwhile."""
         self.set_source(kind, name)
         if not self._members:
+            self._open_pending, self._open_prefer = True, prefer
             return
         self.show_zoom(prefer if prefer in self._member_set else self._members[0])
 
@@ -375,6 +380,9 @@ class ReviewGrid(QWidget):
             repl = self._neighbour_after_leaving(old, was)
             if repl is not None:
                 self.show_zoom(repl, carry=True)
+        if self._open_pending and self._members and self._zoom_index is None:
+            pref, self._open_pending = self._open_prefer, False
+            self.show_zoom(pref if pref in self._member_set else self._members[0])
         if self._zoom_index is not None:
             self.stack.setCurrentIndex(PAGE_ZOOM)
             self._update_caption()  # "n of N" may have moved
@@ -548,6 +556,7 @@ class ReviewGrid(QWidget):
             i = self.selected_index()
         if i is None:
             return
+        self._open_pending = False
         row = self._row_of(i)
         if row >= 0 and row != self.view.currentIndex().row():
             self.view.setCurrentIndex(self.model.index(row, 0))  # Esc then lands the grid on this picture
@@ -773,6 +782,7 @@ class ReviewGrid(QWidget):
 
     def leave_zoom(self) -> None:
         self._zoom_index = None
+        self._open_pending = False
         self._zoom_mem.forget()
         self._carry_frac = None
         self.stack.setCurrentIndex(PAGE_GRID if self.model.rowCount() else PAGE_EMPTY)
