@@ -257,7 +257,8 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
               turns: Mapping[Path, int] | None = None, crops: Sequence[crop_mod.CropJob] | None = None,
               stories: Sequence[story_mod.StoryJob] | None = None,
               pills: Mapping[Path, Sequence[PillTag]] | None = None,
-              ratings: Mapping[Path, int] | None = None) -> CopyPlan:
+              ratings: Mapping[Path, int] | None = None,
+              crop_marks: Sequence | None = None, story_marks: Sequence | None = None) -> CopyPlan:
     """Decide, per file, copy / skip / rename. Creates nothing.
 
     With ``organise`` each file targets ``dest/raw`` or ``dest/soc`` (companions follow the group's picture:
@@ -271,6 +272,9 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
     equals the source plus the rotation patch plus the embed. The ed crops and stories carry their picture's pills too.
     ``ratings`` maps a source picture file (keyed like ``pills``) to its stars, 0..5 (0 removes a 1..5 rating already in
     the file; a value that is not such an int is ignored): written as xmp:Rating beside the pills, with or without them.
+    ``crop_marks`` / ``story_marks`` run alongside ``crops`` / ``stories``: an entry ``(pills, rating)`` is that ed file's
+    OWN marks (a derived picture's, never its source's); an entry None (or a missing one) keeps the old rule, the
+    source picture's pills and rating.
     """
     dest = Path(dest)
     pills = pills or {}
@@ -349,16 +353,30 @@ def plan_copy(groups: Sequence[Sequence[Path]], dest: Path, organise: bool = Fal
         taken.add((ED_DIR, name.casefold()))
         return name
 
-    for job in crops or ():
+    def marks_of(table, k: int, primary: Path):
+        try:
+            got = table[k] if table is not None and k < len(table) else None
+        except Exception:  # noqa: BLE001 - a malformed table must not stop the plan
+            got = None
+        if got is None:
+            return pills_of(primary), rating_of(primary)
+        try:
+            tags, n = got
+            return tuple(tags or ()), (n if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 5 else None)
+        except Exception:  # noqa: BLE001
+            return pills_of(primary), rating_of(primary)
+
+    for k, job in enumerate(crops or ()):
         name = ed_name(Path(job.primary).stem, f"{ratio_mod.export_suffix(job.ratio or ratio_mod.FREE, job.turns)}.jpg")
         est = estimate_crop_bytes(job)
-        plan.crop_items.append(CopyItem(Path(job.primary), ed / name, est, "crop", crop_job=job,
-                                        pills=pills_of(Path(job.primary)), rating=rating_of(Path(job.primary))))
+        tags, rating = marks_of(crop_marks, k, Path(job.primary))
+        plan.crop_items.append(CopyItem(Path(job.primary), ed / name, est, "crop", crop_job=job, pills=tags, rating=rating))
         plan.total_bytes += est
-    for sjob in stories or ():
+    for k, sjob in enumerate(stories or ()):
         name = ed_name(Path(sjob.primary).stem, "_story.jpg")
+        tags, rating = marks_of(story_marks, k, Path(sjob.primary))
         plan.story_items.append(CopyItem(Path(sjob.primary), ed / name, STORY_BYTES, "story", story_job=sjob,
-                                         pills=pills_of(Path(sjob.primary)), rating=rating_of(Path(sjob.primary))))
+                                         pills=tags, rating=rating))
         plan.total_bytes += STORY_BYTES
     return plan
 

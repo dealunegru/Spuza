@@ -125,7 +125,8 @@ class CopySheet(QDialog):
     def __init__(self, pictures, default_dest=None, parent=None, others=(), unreadable=(), *,
                  organise: bool = True, eject_after: bool = False, quit_after: bool = False,
                  eject_target: Path | None = None, rotations=None, write_rotation: bool = True, crops=None,
-                 stories=None, crop_ratios=None, derived=None, pills=None, write_pills: bool = True, ratings=None,
+                 stories=None, crop_ratios=None, derived=None, derived_pills=None, pills=None, write_pills: bool = True,
+                 ratings=None,
                  start_folder=None, note: str = ""):
         super().__init__(parent)
         # friend r8: where Choose folder opens (default: the destination) and one line saying why the destination is
@@ -169,6 +170,16 @@ class CopySheet(QDialog):
                 continue
             if isinstance(d, derived_mod.Derived) and getattr(p, "primary", None) is not None and self._derived_ok(d):
                 self.derived.append((p, d))
+        # a derived picture's OWN pills: Derived.id -> xmp.PillTag tuple (the window turns the names into tags). Its stars
+        # are Derived.stars. Neither is the source's: the source's marks ride in `pills` / `ratings` for its own copy.
+        self.derived_pills: dict[int, tuple[PillTag, ...]] = {}
+        try:
+            for k, v in dict(derived_pills or {}).items():
+                tags = tuple(t for t in v if isinstance(t, PillTag))
+                if tags:
+                    self.derived_pills[k] = tags
+        except (TypeError, ValueError):
+            self.derived_pills = {}
         # contract fr6: Picture.primary -> spuza.ratio.Ratio of that picture's crop (names its ed file); a value that is
         # not a Ratio is dropped, which exports the crop as Free.
         self.crop_ratios = {k: v for k, v in dict(crop_ratios or {}).items() if isinstance(v, ratio_mod.Ratio)}
@@ -354,10 +365,14 @@ class CopySheet(QDialog):
         for p in self.pictures:
             for t in dict.fromkeys(self.pills.get(getattr(p, "primary", None), ())):
                 counts[t] = counts.get(t, 0) + 1
+        for _p, d in self.derived:
+            for t in dict.fromkeys(self.derived_pills.get(d.id, ())):
+                counts[t] = counts.get(t, 0) + 1
         return list(counts.items())
 
     def _pill_pictures(self) -> int:
-        return sum(1 for p in self.pictures if self.pills.get(getattr(p, "primary", None)))
+        return (sum(1 for p in self.pictures if self.pills.get(getattr(p, "primary", None)))
+                + sum(1 for _p, d in self.derived if self.derived_pills.get(d.id)))
 
     def _build_pills_block(self) -> None:
         """The Pills block (mockup A): what is written, one chip per pill with its count, how many pictures carry pills.
@@ -555,11 +570,24 @@ class CopySheet(QDialog):
                 jobs.append(story_mod.StoryJob(p.primary, getattr(p, "sidecar", None), d.story, self._turns_of(p)))
         return jobs
 
+    def _derived_marks(self, kind) -> list:
+        """(pills, rating) of each derived job of `kind`, in the order `_crop_jobs` / `_story_jobs` list them: the
+        derived picture's own, never its source's. Empty when the write is off (then they take the old rule)."""
+        if not self.write_pills:
+            return []
+        return [(self.derived_pills.get(d.id, ()), d.stars) for _p, d in self.derived if d.kind == kind]
+
     def _plan(self):
         ratings = self._ratings_map()
+        crops, stories = self._crop_jobs(), self._story_jobs()
+        kw = {}
+        if self.write_pills:
+            # legacy per-picture crops/stories (the `crops=` kwargs) come first in the job lists and keep the source's marks
+            kw["crop_marks"] = [None] * (len(crops) - sum(1 for _p, d in self.derived if d.kind == derived_mod.CROP))                 + self._derived_marks(derived_mod.CROP)
+            kw["story_marks"] = [None] * (len(stories) - sum(1 for _p, d in self.derived if d.kind == derived_mod.STORY))                 + self._derived_marks(derived_mod.STORY)
         return copy_mod.plan_copy([p.files for p in self.pictures], self.dest, self.organise, self._turns(),
-                                  self._crop_jobs(), self._story_jobs(), self._pills_map(),
-                                  **({"ratings": ratings} if ratings else {}))
+                                  crops, stories, self._pills_map(),
+                                  **({"ratings": ratings} if ratings else {}), **kw)
 
     def _show_plan(self, plan=None) -> None:
         self.plan = plan or self._plan()
