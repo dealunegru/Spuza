@@ -114,15 +114,14 @@ class _Delegate(QStyledItemDelegate):
                 p.setPen(QColor(c.on_focus))
             p.drawText(tb, Qt.AlignmentFlag.AlignCenter, text)
             tx += tw + 3
-        if d is None:  # the picture's pills: dots, bottom right (the mark check owns the top right)
-            names = s.pill_colors(i)
-            if names:
-                draw_dots_right(p, box.right() - 3, box.bottom() - 9, names, most=STRIP_DOTS)
-        if d is None:  # the rating: small filled stars in the free band under the thumb, at the left
-            n = s.star_count(i)
-            for k in range(n):
-                draw_star(p, box.x() + 2 + STAR_R + k * STAR_PITCH, box.bottom() + 1 + BAND_H / 2, STAR_R, True,
-                          QColor(c.text))
+        # the picture's pills: dots, bottom right (the mark check owns the top right); a derived picture shows its own
+        names = s.pill_colors(i) if d is None else s.derived_pill_colors(d)
+        if names:
+            draw_dots_right(p, box.right() - 3, box.bottom() - 9, names, most=STRIP_DOTS)
+        # the rating: small filled stars in the free band under the thumb, at the left (a derived picture's own)
+        for k in range(s.star_count(i) if d is None else s.derived_star_count(d)):
+            draw_star(p, box.x() + 2 + STAR_R + k * STAR_PITCH, box.bottom() + 1 + BAND_H / 2, STAR_R, True,
+                      QColor(c.text))
         # mark check
         if s.catalog.is_marked(i) if d is None else d.marked:
             dot = QRect(box.right() - 17, box.y() + 3, 14, 14)
@@ -151,6 +150,7 @@ class Filmstrip(QListView):
         self.edit_tag_of = lambda i: []
         self.pills_of = lambda i: ()  # the window assigns it: catalog index -> the pill colour NAMES to draw as dots
         self.stars_of = lambda i: 0  # the window assigns it: catalog index -> the star rating 0..5
+        self.derived_pills_of = lambda d: ()  # the window assigns it: a Derived -> the pill colour NAMES of ITS pills
         self._memo: dict[tuple[int, int], QPixmap] = {}  # (index, quarter turns) -> scaled, rotated pixmap
         # derived id -> (content key, pixmap): ONE entry per derived picture, so a changed item drops its old cut
         self._dmemo: dict[int, tuple[tuple, QPixmap]] = {}
@@ -229,6 +229,18 @@ class Filmstrip(QListView):
             return [str(c) for c in (self.pills_of(i) or ())]
         except Exception:  # noqa: BLE001 - a bad provider shows no dots
             return []
+
+    def derived_pill_colors(self, d) -> list[str]:
+        try:
+            return [str(c) for c in (self.derived_pills_of(d) or ())]
+        except Exception:  # noqa: BLE001 - a bad provider shows no dots
+            return []
+
+    def derived_star_count(self, d) -> int:
+        try:
+            return clamp_stars(d.stars or 0)
+        except Exception:  # noqa: BLE001
+            return 0
 
     def star_count(self, i: int) -> int:
         try:

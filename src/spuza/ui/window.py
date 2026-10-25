@@ -564,6 +564,7 @@ class MainWindow(QMainWindow):
         self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
         self.filmstrip.pills_of = self._pill_colors_of
         self.filmstrip.stars_of = self._stars_of
+        self.filmstrip.derived_pills_of = self._derived_pill_colors
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -1734,6 +1735,15 @@ class MainWindow(QMainWindow):
                 out[p.primary] = tags
         return out
 
+    def _derived_pill_tags(self, pairs) -> dict:
+        """Derived.id -> the XMP tags of the pills that derived picture carries (and the book still knows)."""
+        out = {}
+        for _p, d in pairs:
+            tags = [self.pill_book.tag(n) for n in self._derived_names(d)]
+            if tags:
+                out[d.id] = tags
+        return out
+
     def _copy_ratings(self, pictures) -> dict:
         """Picture.primary -> stars (0 = clear) for the pictures being copied whose stars were set in Spuza. A picture
         never rated in Spuza is left out, so its file's own rating is left alone. Empty when none was."""
@@ -1754,6 +1764,9 @@ class MainWindow(QMainWindow):
         try:
             extra = {"derived": pairs} if pairs else {}  # a factory that knows nothing of derived pictures is called as before
             pills = self._copy_pills(marked)
+            dpills = self._derived_pill_tags(pairs)
+            if dpills:  # a derived picture's own pills (its id -> tags); a factory without derived pills is called as before
+                extra["derived_pills"] = dpills
             if pills:  # same for pills: only a copy with some carries the kwarg (spp-copy: CopySheet(pills=...))
                 extra["pills"] = pills
             ratings = self._copy_ratings(marked)
@@ -2232,6 +2245,22 @@ class MainWindow(QMainWindow):
         pics = self.catalog.pictures
         return [pics[i] for i in indices if 0 <= i < len(pics)]
 
+    def _derived_in_view(self):
+        """The derived picture the pill and star keys act on: the viewer's, when one is on screen (review and compare
+        list originals only, so they never have one), else None and the keys act on the catalog picture(s)."""
+        if not len(self.catalog) or self._compare_shown() or self._review_shown_index() is not _NOT_IN_REVIEW:
+            return None
+        return self._current_derived()
+
+    def _derived_names(self, d) -> tuple[str, ...]:
+        """The names of the pills the derived picture `d` carries that the book still knows, in digit order."""
+        have = {n.casefold() for n in d.pills}
+        return tuple(p.name for p in self.pill_book.pills() if p.name.casefold() in have)
+
+    def _derived_pill_colors(self, d) -> list[str]:
+        """A derived picture -> the colour names of its own pills, for the strip's dots."""
+        return [self.pill_book.by_name(n).color for n in self._derived_names(d)]
+
     def _pill_names_of(self, pic) -> tuple[str, ...]:
         """The names of the pills `pic` carries that the book still knows, in digit order."""
         have = {n.casefold() for n in self.pill_index.get(pic)}
@@ -2241,6 +2270,9 @@ class MainWindow(QMainWindow):
         """The pills the picture(s) in view all carry: the viewer's picture, the review's selection, compare's cell."""
         if not len(self.catalog):
             return ()
+        d = self._derived_in_view()
+        if d is not None:
+            return self._derived_names(d)
         try:
             pics = self._pill_pictures(self._rotation_targets())
         except Exception:  # noqa: BLE001 - a fake review
@@ -2299,6 +2331,9 @@ class MainWindow(QMainWindow):
         """The stars of the picture(s) in view: the viewer's picture, the review's selection (0 when they differ)."""
         if not len(self.catalog):
             return 0
+        d = self._derived_in_view()
+        if d is not None:
+            return clamp_stars(d.stars or 0)
         try:
             pics = self._pill_pictures(self._rotation_targets())
         except Exception:  # noqa: BLE001 - a fake review
@@ -2317,11 +2352,18 @@ class MainWindow(QMainWindow):
         overlay is open, and with no picture."""
         if self._edit is not None or self._overlay_open() or not len(self.catalog):
             return
+        n = clamp_stars(n)
+        d = self._derived_in_view()
+        if d is not None:  # the crop or story fit on screen is rated, not its source
+            self.band.set_stars(d.id, n)
+            self._derived_marks_changed(d)
+            self.say(f"Stars cleared · {native('Ctrl+0')}" if n == 0 else
+                     f"{FILLED * n} {n} star{'s' if n > 1 else ''} · {native(f'Ctrl+{n}')}")
+            return
         pics = self._pill_pictures(self._rotation_targets())
         if not pics:
             self.say("Select a picture first")
             return
-        n = clamp_stars(n)
         for p in pics:
             self.pill_index.set_stars(p, n)
         self._stars_changed(pics)
@@ -2333,6 +2375,11 @@ class MainWindow(QMainWindow):
 
     def _star_bar_rated(self, n: int) -> None:
         self._stars_key(n)
+
+    def _derived_marks_changed(self, d) -> None:
+        """A derived picture's pills or stars changed (the Band already holds them; the session saves with the band)."""
+        self._redraw_pills()
+        self.filmstrip.item_changed(d.source, d.id)
 
     def _stars_changed(self, pics) -> None:
         for pic in pics:
@@ -2379,6 +2426,10 @@ class MainWindow(QMainWindow):
         is open (keyPressEvent hands those digits to the editor)."""
         if not len(self.catalog):
             return
+        d = self._derived_in_view()
+        if d is not None:
+            self._derived_pill_key(d, n)
+            return
         pics = self._pill_pictures(self._rotation_targets())
         if n == 0:
             had = [p for p in pics if self.pill_index.get(p)]
@@ -2404,6 +2455,25 @@ class MainWindow(QMainWindow):
         self._pills_changed(pics)
         state = "off" if all_have else "on"
         self.say(f"{pill.name} {state}" if len(pics) == 1 else f"{pill.name} {state}: {len(pics)} pictures")
+
+    def _derived_pill_key(self, d, n: int) -> None:
+        """Digit n on a derived picture: the same toggle / clear as on an original, on the derived's own pills."""
+        if n == 0:
+            had = bool(d.pills)
+            self.band.set_pills(d.id, ())
+            self._derived_marks_changed(d)
+            self.say("Pills cleared on this picture" if had else "No pills to clear")
+            return
+        pill = self.pill_book.by_digit(n)
+        if pill is None:
+            self._pill_hint(n)
+            return
+        key = pill.name.casefold()
+        has = any(x.casefold() == key for x in d.pills)
+        names = [x for x in d.pills if x.casefold() != key] if has else [*d.pills, pill.name]
+        self.band.set_pills(d.id, names)
+        self._derived_marks_changed(d)
+        self.say(f"{pill.name} {'off' if has else 'on'}")
 
     def _pills_changed(self, pics) -> None:
         """Pictures' pills changed by hand: redraw everything that shows them and queue the (debounced) save."""
@@ -2438,6 +2508,19 @@ class MainWindow(QMainWindow):
 
     def _snap_pills(self) -> None:
         self._pill_snapshot = [p.name for p in self.pill_book.pills()]
+
+    def _sync_derived_pills(self) -> None:
+        """Pills were edited: a name a derived picture carries that the book lost follows a rename (same number of pills,
+        the one at that place) or is dropped, as the index does for originals (PillIndex.rename_pill / drop_pill)."""
+        prev = self._pill_snapshot
+        now = [p.name for p in self.pill_book.pills()]
+        known = {n.casefold() for n in now}
+        gone = {n for d in self.band for n in d.pills if n.casefold() not in known}
+        for name in sorted(gone):
+            if name in prev and len(prev) == len(now):
+                self.band.rename_pill(name, now[prev.index(name)])
+            else:
+                self.band.drop_pill(name)
 
     def _sync_pill_set(self) -> None:
         """Pills were edited: the open pill set follows a pill renamed in place, or closes when its pill is gone."""
@@ -2516,6 +2599,7 @@ class MainWindow(QMainWindow):
         """The manager made, renamed, recoloured or deleted a pill."""
         self._pill_counts = self._star_counts = None
         self._mark_pills_dirty()
+        self._sync_derived_pills()
         self._sync_pill_set()
         self._snap_pills()
         self._redraw_pills()
