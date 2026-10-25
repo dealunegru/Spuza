@@ -311,6 +311,9 @@ def test_overlay_lists_every_action_with_its_key_and_the_context_keys(win):
     for a in act.ACTIONS:
         if a.id in act.PILL_DIGITS:  # a digit row appears only once a pill owns it (test_pills_ui covers it)
             continue
+        if not a.keys:  # menu-only (Start fresh, About Spuza): the overlay lists shortcuts, so it has no row
+            assert a.label not in texts, a.id
+            continue
         assert a.label in texts, a.id
         assert act.native_keys(a) in texts, a.id
     for _g, keys, what in act.CONTEXT_KEYS:

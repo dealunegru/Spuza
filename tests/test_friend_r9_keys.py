@@ -174,3 +174,19 @@ def test_act_about_shows_the_text(w, monkeypatch):
     monkeypatch.setattr(QMessageBox, "about", lambda parent, title, text: seen.append((title, text)))
     w.menu_actions["about"].trigger()
     assert seen == [("About Spuza", w.about_text())]
+
+
+def test_the_overlay_lists_no_keyless_action(w):
+    from PySide6.QtWidgets import QLabel
+
+    from spuza.ui import shortcut_overlay as so
+
+    w.toggle_shortcuts()
+    ov = w._shortcuts
+    labels = ov.findChildren(QLabel)
+    keys = [q.text() for q in labels if q.property("role") == "key"]
+    texts = {q.text() for q in labels}
+    assert keys and all(k.strip() for k in keys)
+    assert "Start fresh" not in texts and "About Spuza" not in texts
+    assert all(k.strip() for _g, _l, k in so.rows())
+    ov.close_overlay()
