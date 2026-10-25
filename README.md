@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.16.0-informational" alt="Version 0.16.0">
+  <img src="https://img.shields.io/badge/version-0.16.1-informational" alt="Version 0.16.1">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -43,6 +43,10 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 [What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Pills](#pills) · [Stars](#stars) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
 
 ## What's new
+
+### 0.16.1
+
+- A review opened on a set that is still empty (the star filter while the stars are being read) now lands on the zoom page once the set fills, instead of the grid.
 
 ### 0.16.0
 

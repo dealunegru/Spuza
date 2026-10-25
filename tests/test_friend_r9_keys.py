@@ -204,7 +204,6 @@ def filtered(w):
     w.open_review()
     pump(lambda: w.stack.currentIndex() == 1)
     pump(lambda: w.review._members == [0, 1, 2])
-    w.review.show_zoom(0)  # the zoom page, whichever page the review opened on
     assert w.review.stack.currentIndex() == 2 and w.review._members == [0, 1, 2]
     return w
 
