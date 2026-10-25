@@ -49,7 +49,7 @@ from spuza.reveal import reveal_menu
 from spuza.ui import theme
 from spuza.ui.pill_tray import draw_dots_right
 from spuza.ui.star_bar import clamp_stars, draw_star
-from spuza.ui.viewer import info_native_size, step_scale
+from spuza.ui.viewer import ZoomMemory, info_native_size, step_scale
 
 STAR_R, STAR_PITCH = 5.0, 11  # the grid's stars: small filled ones right of the kind badge
 THUMB_SIDE = 480  # decode size for the worker
@@ -180,6 +180,8 @@ class ReviewGrid(QWidget):
         self._zoom_index: int | None = None
         self._zoom_fit = True
         self._zoom_scale = 1.0  # while not fit: picture pixels per device pixel (1.0 = Z's 100%)
+        self._zoom_mem = ZoomMemory()  # where the user looked while zoomed: the next picture opens there (fr9)
+        self._carry_frac = None  # the remembered point, as a fraction of the NEW picture's own frame, until applied
         self._zoom_pct = False  # the level was chosen with + / -: the caption shows its percentage
         self._zoom_loading: set[int] = set()  # ZOOM_SIDE decodes in flight
         self._zoom_big: dict[int, QImage] = {}
@@ -297,6 +299,7 @@ class ReviewGrid(QWidget):
         """Choose the set (kind "marked", or "pill" with a pill name) and list it; the page stays off zoom."""
         self.set_kind, self.set_name = ("pill", str(name)) if kind == "pill" and name else ("marked", None)
         self._zoom_index, self._edge = None, ""
+        self._zoom_mem.forget()
         self.refresh()
 
     def rename_set(self, name: str) -> None:
@@ -367,10 +370,11 @@ class ReviewGrid(QWidget):
             self.view.setCurrentIndex(self.model.index(row, 0))
         if self._zoom_index is not None and self._zoom_index not in self._member_set:
             # the picture on the zoom page left the set: the next one that remains, else the previous
+            self._remember_look()  # the replacement is the "next picture": it opens where this one was looked at
             was, self._zoom_index = self._zoom_index, None
             repl = self._neighbour_after_leaving(old, was)
             if repl is not None:
-                self.show_zoom(repl)
+                self.show_zoom(repl, carry=True)
         if self._zoom_index is not None:
             self.stack.setCurrentIndex(PAGE_ZOOM)
             self._update_caption()  # "n of N" may have moved
@@ -529,8 +533,17 @@ class ReviewGrid(QWidget):
         self.refresh()  # on the zoom page a picture that left the set is replaced by the next one
         self.marks_changed.emit()
 
-    def show_zoom(self, i: int | None = None) -> None:
-        """The zoom page on picture i (default: the selected one), fitted."""
+    def _remember_look(self) -> None:
+        """While zoomed, keep the centre of the page (a fraction of the picture as shown) for the next picture."""
+        if self._zoom_index is None or self._zoom_fit:
+            return
+        frac = self._centre_frac()
+        if frac is not None:  # no picture on screen yet: the point kept from the one before stays
+            self._zoom_mem.remember(frac, self._quarters(self._zoom_index))
+
+    def show_zoom(self, i: int | None = None, carry: bool = False) -> None:
+        """The zoom page on picture i (default: the selected one), fitted. `carry` (stepping to the next picture
+        of a zoomed page): keep the level and the remembered point instead; fit stays fit."""
         if i is None:
             i = self.selected_index()
         if i is None:
@@ -538,7 +551,16 @@ class ReviewGrid(QWidget):
         row = self._row_of(i)
         if row >= 0 and row != self.view.currentIndex().row():
             self.view.setCurrentIndex(self.model.index(row, 0))  # Esc then lands the grid on this picture
-        self._zoom_index, self._zoom_fit, self._zoom_pct, self._edge = i, True, False, ""
+        carry = bool(carry) and not self._zoom_fit and self._zoom_index is not None
+        if carry:
+            self._carry_frac = self._zoom_mem.recall(self._quarters(i))
+            self._zoom_index, self._edge = i, ""
+            self._zoom_item = None  # the old picture's centre must not be read for this one
+            self._zoom_native = False
+        else:
+            self._zoom_mem.forget()
+            self._carry_frac = None
+            self._zoom_index, self._zoom_fit, self._zoom_pct, self._edge = i, True, False, ""
         self.stack.setCurrentIndex(PAGE_ZOOM)
         self._update_caption()
         img = self._zoom_big.get(i)
@@ -555,6 +577,8 @@ class ReviewGrid(QWidget):
             self.scene.clear()
             self._zoom_item = None
             self._zoom_native = False
+        if carry:
+            self._want_native()
         if i not in self._zoom_big and i not in self._zoom_loading:
             self._zoom_loading.add(i)
             self._pool.start(_Job(self._sig, self._get_loader(), i, self.catalog.pictures[i].primary, ZOOM_SIDE))
@@ -595,7 +619,8 @@ class ReviewGrid(QWidget):
             self._update_caption()
             self.status.emit(self._edge[0].upper() + self._edge[1:])
             return
-        self.show_zoom(self._members[pos])
+        self._remember_look()
+        self.show_zoom(self._members[pos], carry=True)
 
     def zoom_label(self) -> str:
         """"100%" for Z; the level's own percentage once + or - chose it."""
@@ -636,6 +661,8 @@ class ReviewGrid(QWidget):
             t = self._zoom_scale * self._preview_ratio() / dpr
             if abs(t - 1.0) > 1e-9:
                 self.zoom_view.scale(t, t)
+            if frac is None:
+                frac, self._carry_frac = self._carry_frac, None  # a remembered point beats the AF point
             if frac is None:
                 frac = self._focus_frac(self._zoom_index)  # advanced + focus_point: 100% lands on the AF point
             if frac is not None:
@@ -688,6 +715,7 @@ class ReviewGrid(QWidget):
         frac = None if was_fit else self._centre_frac()
         if new == 0.0:
             self._zoom_fit, self._zoom_pct = True, False
+            self._zoom_mem.forget()
             self._apply_zoom()
         else:
             self._zoom_fit, self._zoom_scale, self._zoom_pct = False, new, True
@@ -736,6 +764,8 @@ class ReviewGrid(QWidget):
         else:
             self._zoom_fit = not self._zoom_fit
             self._zoom_scale, self._zoom_pct = 1.0, False
+            self._zoom_mem.forget()  # Z enters 100% at the AF point / centre and leaves to fit: no look to carry
+            self._carry_frac = None
             self._apply_zoom()
             if not self._zoom_fit:
                 self._want_native()
@@ -743,6 +773,8 @@ class ReviewGrid(QWidget):
 
     def leave_zoom(self) -> None:
         self._zoom_index = None
+        self._zoom_mem.forget()
+        self._carry_frac = None
         self.stack.setCurrentIndex(PAGE_GRID if self.model.rowCount() else PAGE_EMPTY)
         self.view.setFocus()
 

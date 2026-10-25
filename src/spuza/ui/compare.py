@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from spuza import features
 from spuza.ui import theme
+from spuza.ui.viewer import ZoomMemory
 
 MAX_CELLS = 4
 ZOOM_CELLS = 2  # cells at 100% at once: four full GR III decodes held +577 MB working set (measured)
@@ -277,7 +278,11 @@ class _Cell(QGraphicsView):
         self.caption.move(vp.right() - self.caption.width() - 8, vp.bottom() - self.caption.height() - 8)
 
     def resizeEvent(self, e) -> None:  # noqa: N802
-        super().resizeEvent(e)
+        was, self._quiet = self._quiet, True  # Qt re-scrolls on a resize: that is not the user panning
+        try:
+            super().resizeEvent(e)
+        finally:
+            self._quiet = was
         self._apply()
         self._place()
 
@@ -309,6 +314,7 @@ class CompareView(QWidget):
         self._focus = 0  # position in _cells
         self._run = False
         self._zoomed = False
+        self._mem = ZoomMemory()  # where the zoomed cells look, for the next picture(s) of a new open() (fr9)
         self._advance = False
         self._gen = 0
         self._syncing = False
@@ -339,11 +345,17 @@ class CompareView(QWidget):
         keep = keep[:MAX_CELLS]
         if not keep:
             return
+        was_zoomed = self._zoomed
         self._reset()
         self._run = bool(run)
         for i in keep:
             self._add_cell(i)
         self._focus = max(0, min(int(focus), len(keep) - 1))
+        if was_zoomed:  # the next picture(s): still at 100%, looking at the same spot; fit stays fit
+            self._zoomed = True
+            self._enter_cells()
+        else:
+            self._mem.forget()
         self._refresh_chrome()
         self.setFocus()
         self.focus_changed.emit(self.focused_index())
@@ -385,6 +397,7 @@ class CompareView(QWidget):
             return
         idx = self.focused_index()
         self._reset()
+        self._mem.forget()
         self.closed.emit(idx)
 
     def _quarters(self, i: int) -> int:
@@ -535,6 +548,7 @@ class CompareView(QWidget):
             return
         if self._zoomed:
             self._zoomed = False
+            self._mem.forget()
             self._gen += 1  # full-size results still in flight are dropped
             self._pool.clear()
             self._pending.clear()
@@ -546,8 +560,13 @@ class CompareView(QWidget):
                     self._request(c.index, FIT_SIDE)
             return
         self._zoomed = True
+        self._mem.remember((0.5, 0.5))
+        self._enter_cells()
+
+    def _enter_cells(self) -> None:
+        """Open the zoom set at 100% on the remembered point (the middle when there is none), through each turn."""
         for c in self._zoom_set():
-            c.enter_zoom((0.5, 0.5), False)
+            c.enter_zoom(self._mem.recall(c.rotation) or (0.5, 0.5), False)
             self._request(c.index, None)
 
     def _zoom_set(self) -> list[_Cell]:
@@ -559,6 +578,7 @@ class CompareView(QWidget):
         if self._syncing or not self._zoomed:
             return
         frac = src.centre_fraction()
+        self._mem.remember(frac, src.rotation)
         self._syncing = True
         try:
             for c in self._cells:
