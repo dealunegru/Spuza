@@ -84,7 +84,7 @@ def test_quit_and_reopen_restores_marks_and_place(tmp_path, advanced):
     banner = c2.restore()
     assert marks_of(cat2) == {1, 4, 5} and cat2.index == 6
     assert banner.startswith("Restored 3 marks and your place (picture 7) from ")
-    assert banner.endswith(" · U to start fresh")
+    assert banner.endswith(" · Edit > Start fresh to clear the marks")
     c2.tick()
     assert c2.wait_idle()  # restore itself is not a change: nothing to write
 

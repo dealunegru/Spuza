@@ -91,6 +91,9 @@ def test_menu_bar_has_the_six_menus_in_order(win):  # 0.12 added Pills, between 
                                                                               "Pills", "Stars", "Help"]
 
 
+KEYLESS = {"start_fresh", "about"}  # menu only: no key (Start fresh lost its U in 0.16.0; About never had one)
+
+
 def test_every_action_is_in_its_menu_with_keys(win):
     menus = {a.text(): a.menu() for a in win.menuBar().actions()}
     assert list(menus) == list(act.MENUS)
@@ -98,7 +101,7 @@ def test_every_action_is_in_its_menu_with_keys(win):
     assert len(ids) == len(set(ids)) and set(win.menu_actions) == set(ids)
     for a in act.ACTIONS:
         qa = win.menu_actions[a.id]
-        assert a.keys and all(a.keys), a.id
+        assert (a.keys and all(a.keys)) or a.id in KEYLESS, a.id
         assert qa in menus[a.menu].actions(), a.id
         assert qa.text() == a.label and qa.isCheckable() == a.checkable
         assert [s.toString() for s in qa.shortcuts()] == [QKeySequence(k).toString() for k in a.keys]
@@ -116,7 +119,7 @@ def test_the_menu_lists_the_actions_the_issue_names(win):
     assert by_menu["View"][:6] == ["Back", "Next", "Zoom 100%", "Zoom in", "Zoom out", "Full screen"]
     assert by_menu["Picture"] == ["Rotate left", "Rotate right", "Crop", "Story fit", "Remove crop / story"]
     assert by_menu["Pills"] == [f"Pill {n}" for n in range(1, 10)] + ["Clear all pills", "Manage pills…"]
-    assert by_menu["Help"] == ["Keyboard shortcuts"]
+    assert by_menu["Help"] == ["Keyboard shortcuts", "About Spuza"]
 
 
 def test_every_key_in_the_code_has_an_action():

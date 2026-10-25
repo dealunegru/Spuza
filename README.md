@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.15.0-informational" alt="Version 0.15.0">
+  <img src="https://img.shields.io/badge/version-0.16.0-informational" alt="Version 0.16.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -44,6 +44,14 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 ## What's new
 
+### 0.16.0
+
+- A crop or story fit keeps its own pills and stars; it no longer shares its original's (three bugs fixed).
+- The zoom level and the look-at point carry to the next picture in the viewer, on the review zoom page and in compare.
+- Adding a pill (`1` to `9`, the Pills menu or the tray) or 1 to 5 stars (`Ctrl+1` to `Ctrl+5`, the Stars menu or the star bar) shows the next picture, whatever Move on mark says. Clearing, taking a pill off, and a selection of several review pictures stay put.
+- Start fresh has no key any more (it was `U`); it stays in the Edit menu.
+- Help, About Spuza shows the version.
+
 ### 0.15.0
 
 The copy sheet is quicker. **Choose folder...** now starts the copy as soon as you pick the folder; cancel the dialog and nothing changes. If the folder does not have the space, nothing starts and the "Not enough space" line shows. After a copy has finished, choosing another folder copies the same pictures there too.
@@ -74,7 +82,7 @@ Stars are the standard `xmp:Rating`, written into the copies only (never the car
 - **0.5.1**: Spuza has an icon: a slide on a light table. It shows in the Dock, the Mac app, the Windows exe and taskbar, and the window itself.
 - **0.5.0**: Second feedback round. With Move on mark on, unmarking moves on too. Full-bleed shows only the picture; the strip appears for a second when the mouse moves. Copying sorts into `raw`, `soc` and an empty `ed` folder, then ejects the card and quits, each an option in Preferences, all on by default. The copy log lives in Spuza's app-data folder, never in the destination.
 - **0.4.1**: Nothing is left behind on copy: a HIF, XMP, THM or Live Photo MOV travels with its picture, and files that are not pictures are counted. Bursts are listed in the order the camera shot them. HIF, ARW, NEF, NRW, PEF, 3FR, CR2, ORF, RW2 and CR3 open. With two cards in, Spuza says so and `--card` picks one. Releases now include a Windows build.
-- **0.4.0**: four features in advanced mode: Compare (`N`), Focus peaking (`P`), AF point (`O`), and Resume, with Start fresh (`U`).
+- **0.4.0**: four features in advanced mode: Compare (`N`), Focus peaking (`P`), AF point (`O`), and Resume, with Start fresh (Edit menu).
 - **0.3.3**: classic and advanced mode. Advanced mode is a switch in Preferences, and its first setting is the number of decode threads.
 - **0.3.2**: 12 pictures are now decoded ahead and 8 kept behind (it was 8 and 3). A Preferences sheet sets those numbers, and `--ahead` and `--behind` set them for one run.
 - **0.3.1**: the inspector shows aperture, shutter, ISO, focal length and camera. Right-click a picture to show it in Finder or Explorer. The status strip loses the clock and the "next N ready" label, and the filmstrip loses its green bars. Fixes a rare crash caused by cleanup running on the wrong thread.
@@ -169,12 +177,13 @@ Every key in one table. The bar above the picture has icon buttons for the commo
 | `N` | viewer, review (advanced) | **Compare.** Shows this picture and the next side by side; `N` again adds the next one, up to four |
 | `P` | viewer (advanced) | **Focus peaking.** Paints the sharp edges red. Remembered between runs |
 | `O` | viewer (advanced) | **AF point.** Draws a ring where the camera focused; `Z` then opens the 100% view on that spot |
-| `U` | viewer (advanced) | **Start fresh.** Clears this card's marks, crop pictures' marks included (the crop pictures stay), and its saved session. `U` again within 10 seconds undoes it |
 
 Notes on the keys:
 
 - With Move on mark (`A`) on, unmarking also moves on to the next picture.
-- Mark all and Unmark all say how many pictures changed in the status line and never ask first. `Ctrl+Z` puts back exactly the marks you had before. If you marked by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, until the next one, `U` or closing Spuza.
+- Putting a pill on (`1` to `9`) or setting 1 to 5 stars (`Ctrl+1` to `Ctrl+5`) always shows the next picture, with Move on mark on or off. Clearing, taking a pill off and the last picture stay put; in the review grid a selection of pictures stays put too.
+- **Start fresh** (Edit menu, advanced) clears this card's marks, crop pictures' marks included (the crop pictures stay), and its saved session. Choose Start fresh again within 10 seconds to undo it. It has no key.
+- Mark all and Unmark all say how many pictures changed in the status line and never ask first. `Ctrl+Z` puts back exactly the marks you had before. If you marked by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, until the next one, Start fresh or closing Spuza.
 - A turn (`[` `]`) shows on the screen, the filmstrip and the review. The original is never changed (see [Copying](#copying)).
 - In full screen, move the mouse to see the strip for a second.
 - Moving to another picture (`→` `←` `J` `K`) while you crop or fit a story cancels the edit.
@@ -310,7 +319,7 @@ The advanced features, by flag:
 - `compare_view` (`N`): **Compare.**
 - `focus_peaking` (`P`): **Focus peaking.**
 - `focus_point` (`O`): **AF point.**
-- `resume_session` (`U`): **Resume** and Start fresh.
+- `resume_session`: **Resume** and Start fresh (Edit menu).
 - `decode_threads`: **Decode threads.**
 
 <p align="center">

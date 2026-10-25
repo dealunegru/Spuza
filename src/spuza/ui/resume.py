@@ -1,8 +1,8 @@
-"""Resume controller: restore at card open, save on change, U to start fresh (flag resume_session).
+"""Resume controller: restore at card open, save on change, Edit > Start fresh (flag resume_session).
 
 Contract for the window (wired by spz-nx-wire): build one `ResumeController(catalog, root, store)` after the
 catalog is scanned; call `restore()` once after the first picture is painted (it fills the catalog's marks and
-moves its index, the window then re-renders and shows the returned banner); call `start_fresh()` on U and show its
+moves its index, the window then re-renders and shows the returned banner); call `start_fresh()` from Edit > Start fresh and show its
 text; call `flush()` from closeEvent. Saving is polled: a QTimer compares (marks, index) with the last save at most
 once per `interval_ms` and writes off the GUI thread, only while `features.enabled("resume_session")` and the
 "Remember marks" preference is on. In classic mode it neither reads nor writes. Owned by task spz-nx-resume.
@@ -156,7 +156,7 @@ class ResumeController(QObject):
 
     def restore(self) -> str | None:
         """Apply this card's saved session to the catalog; the banner text, e.g. "Restored 37 marks and your place
-        (picture 212) from 16 Oct 21:14 · U to start fresh", or None when nothing was restored."""
+        (picture 212) from 16 Oct 21:14 · Edit > Start fresh to clear the marks", or None when nothing was restored."""
         if not self._saving():
             return None
         c = self._catalog
@@ -189,10 +189,11 @@ class ResumeController(QObject):
         what = " and ".join(parts + ["your place"])
         when = datetime.fromtimestamp(r.saved_at).strftime("%d %b %H:%M")
         extra = f" ({r.dropped} changed or missing skipped)" if r.dropped else ""
-        return f"Restored {what} (picture {c.index + 1}) from {when}{extra} · U to start fresh"
+        return f"Restored {what} (picture {c.index + 1}) from {when}{extra} · Edit > Start fresh to clear the marks"
 
     def start_fresh(self) -> str:
-        """U: clear this card's marks and forget its session; U again within 10 s undoes it. The status text."""
+        """Edit > Start fresh: clear this card's marks and forget its session; Start fresh again within 10 s undoes it.
+        The status text."""
         if not self._active():
             return ""
         c = self._catalog
@@ -216,7 +217,7 @@ class ResumeController(QObject):
         for i in marks:
             c.set_mark(i, False)
         made = tuple(d.id for d in self.band.items if d.marked) if self.band is not None else ()
-        for i in made:  # friend round 7: derived pictures carry their own marks; U clears those too (they stay)
+        for i in made:  # friend round 7: derived pictures carry their own marks; Start fresh clears those too (they stay)
             self.band.set_marked(i, False)
         with self._lock:
             self._pending = None
@@ -236,7 +237,7 @@ class ResumeController(QObject):
         if not total:
             return "Started fresh · nothing was marked" + busy
         word = "mark" if total == 1 else "marks"
-        return f"Started fresh: {total} {word} cleared{busy} · U again within 10 s to undo"
+        return f"Started fresh: {total} {word} cleared{busy} · Start fresh again within 10 s to undo"
 
     def flush(self) -> None:
         """Write now if anything changed since the last save (closeEvent). Blocks at most ~1 s."""
