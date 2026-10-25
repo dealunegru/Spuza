@@ -27,6 +27,14 @@ NONE = Qt.KeyboardModifier.NoModifier
 
 
 @pytest.fixture(autouse=True)
+def no_advance(monkeypatch):
+    """These tests check what a key stores on the picture in view; the advance after a pill or stars (0.16.0) is
+    tested in test_friend_r9_keys.py."""
+    from spuza.ui.window import MainWindow
+    monkeypatch.setattr(MainWindow, "_advance_after_mark", lambda self: None)
+
+
+@pytest.fixture(autouse=True)
 def _env(tmp_path, monkeypatch):
     monkeypatch.setenv("SPUZA_LOGS_DIR", str(tmp_path / "spuza-logs"))
     monkeypatch.setenv("SPUZA_SESSIONS_DIR", str(tmp_path / "env-sessions"))

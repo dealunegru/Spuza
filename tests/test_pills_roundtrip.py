@@ -84,6 +84,7 @@ def journey(tmp_path):
         w.go_to(stem_index(w, stem))
         w.setFocus()
         for n in names:
+            w.go_to(stem_index(w, stem))  # a pill on shows the next picture (0.16.0): come back for the second pill
             QTest.keyClick(w, Qt.Key_1 if n == "Hero" else Qt.Key_2)
         w.catalog.toggle_mark(stem_index(w, stem))
     before = {p: sha(p) for p in sorted(card.iterdir())}

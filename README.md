@@ -47,7 +47,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 ### 0.16.0
 
 - A crop or story fit keeps its own pills and stars; it no longer shares its original's (three bugs fixed).
-- The zoom level and the look-at point carry to the next picture in the viewer, on the review zoom page and in compare.
+- The zoom level and the look-at point carry to the next picture: stepping in the viewer, stepping on the review zoom page, and stepping in compare.
 - Adding a pill (`1` to `9`, the Pills menu or the tray) or 1 to 5 stars (`Ctrl+1` to `Ctrl+5`, the Stars menu or the star bar) shows the next picture, whatever Move on mark says. Clearing, taking a pill off, and a selection of several review pictures stay put.
 - Start fresh has no key any more (it was `U`); it stays in the Edit menu.
 - Help, About Spuza shows the version.
