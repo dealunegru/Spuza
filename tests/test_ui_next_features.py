@@ -1,6 +1,6 @@
 """The four advanced-only features through the real MainWindow, offscreen, with a fake loader.
 
-Compare (N), focus peaking (P), the AF point (O and Z) and resume (U): in classic every key falls through to
+Compare (N), focus peaking (P), the AF point (O and Z) and resume (Start fresh, menu only): in classic every key falls through to
 today's behaviour and nothing is built, shown or written; in advanced each works end to end.
 """
 
@@ -401,11 +401,11 @@ def test_quit_and_reopen_restores_marks_and_place_before_the_first_paint(made):
     assert w2.prefetcher.updates[0] == 4  # the first prefetch was already at the restored place
     pump(lambda: w2.viewer.has_image)
     assert w2.viewer.index == 4
-    assert w2.last_message.startswith("Restored 2 marks and your place (picture 5)") and "U to start fresh" in w2.last_message
+    assert w2.last_message.startswith("Restored 2 marks and your place (picture 5)") and "Edit > Start fresh" in w2.last_message
     assert w2.lbl_marked.text().startswith("2 marked")
 
 
-def test_u_starts_fresh_and_a_second_u_undoes_it(made):
+def test_start_fresh_and_a_second_start_fresh_undoes_it(made):
     w1 = ready(made(True), 2)
     w1.toggle_mark()
     w1.close()
@@ -413,10 +413,10 @@ def test_u_starts_fresh_and_a_second_u_undoes_it(made):
     w2 = made(True)
     pump(lambda: w2.viewer.has_image)
     assert w2.catalog.is_marked(0)
-    key(w2, Qt.Key_U)
+    w2.start_fresh()
     assert not w2.catalog.is_marked(0) and w2.lbl_marked.text().startswith("0 marked")
     assert "Started fresh: 1 mark cleared" in w2.last_message and session_files() == []
-    key(w2, Qt.Key_U)
+    w2.start_fresh()
     assert w2.catalog.is_marked(0) and w2.last_message == "Marks back (1)"
     assert len(session_files()) == 1
 
@@ -543,7 +543,7 @@ def test_window_with_resume_false_neither_restores_nor_saves(made):
     w2 = MainWindow(cat, Prefetcher(cat, loader=loader), ROOT, resume=False)
     assert w2.resume is None and cat.marked_count == 0 and cat.index == 0
     cat.set_mark(3, True)
-    key(w2, Qt.Key_U)
+    w2.start_fresh()
     w2.close()
     assert w2.resume is None and session_files()[0].read_bytes() == before
 

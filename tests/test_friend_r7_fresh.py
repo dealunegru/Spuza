@@ -1,4 +1,4 @@
-"""Friend round 7: U (start fresh) also clears the marks of derived pictures, and its undo restores them."""
+"""Friend round 7: Start fresh also clears the marks of derived pictures, and its undo (Start fresh again) restores them."""
 import pytest
 
 from spuza import derived as dv

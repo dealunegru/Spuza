@@ -13,7 +13,7 @@ from spuza.ui import theme
 
 def rows() -> list[tuple[str, str, str]]:
     """(group, label, keys as this platform writes them) for every action, then the mode-only keys."""
-    out = [(a.group, a.label, act.native_keys(a)) for a in act.ACTIONS]
+    out = [(a.group, a.label, act.native_keys(a)) for a in act.ACTIONS if a.keys]
     out += [(g, what, keys) for g, keys, what in act.CONTEXT_KEYS]
     return out
 
@@ -59,6 +59,8 @@ class ShortcutOverlay(QFrame):
         by_group: dict[str, list[tuple[str, str, bool]]] = {g: [] for g in act.GROUPS}
         book = getattr(parent, "pill_book", None)  # the user's pills name the digit rows; a digit with no pill has none
         for a in act.ACTIONS:
+            if not a.keys:  # menu-only actions (Start fresh, About Spuza) are not shortcuts
+                continue
             label = a.label
             if a.id in act.PILL_DIGITS:
                 pill = book.by_digit(act.PILL_DIGITS[a.id]) if book is not None else None

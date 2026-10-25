@@ -6,7 +6,8 @@ index, ``id`` is unique inside a ``Band`` and never reused while the Band lives.
 
 API
     CROP, STORY                          the two kinds
-    Derived(id, source, kind, crop, ratio, story, marked)   frozen; a crop item carries ``crop`` (fractions of the
+    Derived(id, source, kind, crop, ratio, story, marked, pills, stars)   frozen; ``pills`` (names) and ``stars``
+                                         (None/0/1..5) are the picture's own marks, never the source's; a crop item carries ``crop`` (fractions of the
                                          UN-turned frame, via crop.normalise) and ``ratio`` (None = Free); a story
                                          item carries a ``story.Story``
     Row = (source, id | None)            one filmstrip row; id None is the original
@@ -44,6 +45,8 @@ class Derived:
     ratio: Ratio | None = None
     story: Story | None = None
     marked: bool = True
+    pills: tuple = ()  # the pill NAMES this picture carries (its own; the source's are never inherited)
+    stars: int | None = None  # None never rated, 0 cleared, 1..5
 
 
 def _int(v, floor: int) -> int | None:
@@ -65,6 +68,10 @@ def _valid(d) -> Derived | None:
     if not isinstance(d, Derived) or _int(d.id, 1) is None or _int(d.source, 0) is None:
         return None
     if not isinstance(d.marked, bool) or not (d.ratio is None or isinstance(d.ratio, Ratio)):
+        return None
+    if not isinstance(d.pills, tuple) or not all(isinstance(n, str) for n in d.pills):
+        return None
+    if d.stars is not None and (_int(d.stars, 0) is None or d.stars > 5):
         return None
     if d.kind == CROP:
         rect = normalise(d.crop)
@@ -134,7 +141,7 @@ class Band:
     def replace(self, id, /, **changes) -> Derived | None:
         """New content for ``id`` (crop, ratio, story, marked); same id, source, kind and place. None if refused."""
         old = self.get(id)
-        if old is None or not set(changes) <= {"crop", "ratio", "story", "marked"}:
+        if old is None or not set(changes) <= {"crop", "ratio", "story", "marked", "pills", "stars"}:
             return None
         new = _valid(_dc_replace(old, **changes))
         if new is None:
@@ -158,6 +165,42 @@ class Band:
         if d.marked != bool(on):
             self.replace(id, marked=bool(on))
         return True
+
+    def set_pills(self, id, names) -> bool:
+        """The pill names of ``id`` (de-duplicated, order kept); False when there is no such picture or bad names."""
+        try:
+            kept = tuple(dict.fromkeys(names))
+        except TypeError:
+            return False
+        d = self.get(id)
+        if d is None:
+            return False
+        if d.pills != kept:
+            return self.replace(id, pills=kept) is not None
+        return True
+
+    def set_stars(self, id, n) -> bool:
+        """The stars of ``id`` (0 clears, None un-sets); False when there is no such picture or ``n`` is not 0..5."""
+        d = self.get(id)
+        if d is None:
+            return False
+        if d.stars != n:
+            return self.replace(id, stars=n) is not None
+        return True
+
+    def rename_pill(self, old, new) -> None:
+        """A pill was renamed in the book: every derived picture carrying it carries the new name."""
+        want = str(old).strip().casefold()
+        for d in list(self._items):
+            if any(n.casefold() == want for n in d.pills):
+                self.set_pills(d.id, [new if n.casefold() == want else n for n in d.pills])
+
+    def drop_pill(self, name) -> None:
+        """A pill was deleted from the book: no derived picture carries it."""
+        want = str(name).strip().casefold()
+        for d in list(self._items):
+            if any(n.casefold() == want for n in d.pills):
+                self.set_pills(d.id, [n for n in d.pills if n.casefold() != want])
 
     def reset(self, items) -> None:
         """Restore from a session: ids and relative order kept, duplicates and invalid items dropped."""
@@ -247,6 +290,10 @@ def export_tail(d: Derived, turns: int = 0) -> str:
 
 def to_row(d: Derived) -> dict:
     row: dict = {"id": d.id, "kind": d.kind, "marked": d.marked}
+    if d.pills:
+        row["pills"] = list(d.pills)
+    if d.stars is not None:
+        row["stars"] = d.stars
     if d.kind == STORY:
         s = d.story
         row.update(zoom=s.zoom, dx=s.dx, dy=s.dy)
@@ -273,11 +320,15 @@ def _from_row(row, source) -> Derived | None:
     marked = row.get("marked", True)
     if not isinstance(marked, bool):
         marked = True
+    raw = row.get("pills")
+    pills = tuple(dict.fromkeys(n for n in raw if isinstance(n, str))) if isinstance(raw, (list, tuple)) else ()
+    stars = _int(row.get("stars"), 0)
+    stars = stars if stars is not None and stars <= 5 else None
     if kind == STORY:
         z, dx, dy = (_num(row.get(k)) for k in ("zoom", "dx", "dy"))
         if z is None or dx is None or dy is None or z <= 0:
             return None
-        return Derived(id_, source, STORY, story=Story(z, dx, dy), marked=marked)
+        return Derived(id_, source, STORY, story=Story(z, dx, dy), marked=marked, pills=pills, stars=stars)
     rect = row.get("rect")
     if not isinstance(rect, (list, tuple)) or len(rect) != 4:
         return None
@@ -285,4 +336,5 @@ def _from_row(row, source) -> Derived | None:
     crop = None if any(v is None for v in vals) else normalise(vals)
     if crop is None:
         return None
-    return Derived(id_, source, CROP, crop=crop, ratio=ratio_mod.decode(row.get("ratio")), marked=marked)
+    return Derived(id_, source, CROP, crop=crop, ratio=ratio_mod.decode(row.get("ratio")), marked=marked,
+                   pills=pills, stars=stars)

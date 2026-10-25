@@ -18,7 +18,7 @@ use. The X edit has a ratio strip (keys 1-8, V, 0).
 
 Advanced mode wires four more features, each behind its flag and each a no-op (key falls through, widget
 hidden, nothing written) in classic: N compare (compare_view), P peaking (focus_peaking), O AF point and Z
-landing on it (focus_point), and resume (resume_session; U starts fresh). Their objects are built on first use.
+landing on it (focus_point), and resume (resume_session; Edit > Start fresh). Their objects are built on first use.
 """
 
 from __future__ import annotations
@@ -32,9 +32,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QKeyEvent, QKeySequence, QPixmap, QShortcut, QPainter
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSplitter,
-                               QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+                               QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
+from spuza import __version__
 from spuza import derived as dv
 from spuza import features
 from spuza import pills as pills_mod
@@ -161,6 +162,7 @@ def month_day(d) -> str:
 
 
 _NOT_IN_REVIEW = object()
+ABOUT_URL = "https://github.com/dealunegru/Spuza"
 GRID_KEYS = frozenset({Qt.Key_Space, Qt.Key_M, Qt.Key_Right, Qt.Key_Left, Qt.Key_Up, Qt.Key_Down,
                        Qt.Key_Return, Qt.Key_Enter, Qt.Key_Z, Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus, Qt.Key_Escape,
                        Qt.Key_J, Qt.Key_K})  # J / K step a set on the review's zoom page; the grid ignores them
@@ -564,6 +566,7 @@ class MainWindow(QMainWindow):
         self.viewer.rotation_of = self.filmstrip.rotation_of = self._rotation_of
         self.filmstrip.pills_of = self._pill_colors_of
         self.filmstrip.stars_of = self._stars_of
+        self.filmstrip.derived_pills_of = self._derived_pill_colors
 
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -724,7 +727,7 @@ class MainWindow(QMainWindow):
         pills_sc.setAutoRepeat(False)  # a held key must not stack managers
         for n in range(0, MAX_STARS + 1):  # Ctrl/Cmd+1..5 set stars, Ctrl/Cmd+0 clears (plain digits stay pills)
             star_sc = QShortcut(QKeySequence(f"Ctrl+{n}"), self, context=Qt.ShortcutContext.WindowShortcut,
-                                activated=lambda n=n: self._stars_key(n))
+                                activated=lambda n=n: self._stars_go(n))
             star_sc.setAutoRepeat(False)  # a held key must not toast and save again and again
         quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self, context=Qt.ShortcutContext.WindowShortcut,
                             activated=lambda: self.act_quit())  # StandardKey.Quit is empty on Windows
@@ -875,7 +878,7 @@ class MainWindow(QMainWindow):
 
     def mark_all(self, on: bool) -> None:
         """Mark (or unmark) every picture, derived ones too, never asking first. The marks from before are kept for
-        ONE Ctrl+Z; the snapshot lives until the next Mark all / Unmark all or U (start fresh) replaces it, or the
+        ONE Ctrl+Z; the snapshot lives until the next Mark all / Unmark all or Start fresh replaces it, or the
         window closes."""
         c = self.catalog
         n = len(c) + len(self.band)
@@ -1571,7 +1574,7 @@ class MainWindow(QMainWindow):
                 self.review.stars_of = self._stars_of
             pill_key = getattr(self.review, "pill_key", None)
             if pill_key is not None:
-                pill_key.connect(self._pill_key)
+                pill_key.connect(self._pill_go)
             self.stack.insertWidget(1, self.review)
             self.review.open_index.connect(self._review_open_index)
             self.review.marks_changed.connect(self._review_marks_changed)
@@ -1734,6 +1737,15 @@ class MainWindow(QMainWindow):
                 out[p.primary] = tags
         return out
 
+    def _derived_pill_tags(self, pairs) -> dict:
+        """Derived.id -> the XMP tags of the pills that derived picture carries (and the book still knows)."""
+        out = {}
+        for _p, d in pairs:
+            tags = [self.pill_book.tag(n) for n in self._derived_names(d)]
+            if tags:
+                out[d.id] = tags
+        return out
+
     def _copy_ratings(self, pictures) -> dict:
         """Picture.primary -> stars (0 = clear) for the pictures being copied whose stars were set in Spuza. A picture
         never rated in Spuza is left out, so its file's own rating is left alone. Empty when none was."""
@@ -1754,6 +1766,9 @@ class MainWindow(QMainWindow):
         try:
             extra = {"derived": pairs} if pairs else {}  # a factory that knows nothing of derived pictures is called as before
             pills = self._copy_pills(marked)
+            dpills = self._derived_pill_tags(pairs)
+            if dpills:  # a derived picture's own pills (its id -> tags); a factory without derived pills is called as before
+                extra["derived_pills"] = dpills
             if pills:  # same for pills: only a copy with some carries the kwarg (spp-copy: CopySheet(pills=...))
                 extra["pills"] = pills
             ratings = self._copy_ratings(marked)
@@ -2013,7 +2028,7 @@ class MainWindow(QMainWindow):
         else:
             self.say("AF point: shown" if frac is not None else "AF point: on (none known for this picture)")
 
-    # -- resume (U starts fresh)
+    # -- resume (Edit > Start fresh)
     def _ensure_resume(self):
         if self.resume is None and self._resume_allowed and features.enabled("resume_session"):
             from spuza.session import SessionStore
@@ -2040,7 +2055,7 @@ class MainWindow(QMainWindow):
 
     def start_fresh(self) -> None:
         ctl = self._ensure_resume()
-        self._markall_undo = None  # U has its own undo; a stale Mark all snapshot must not undo over it
+        self._markall_undo = None  # Start fresh has its own undo; a stale Mark all snapshot must not undo over it
         if ctl is None:
             return
         text = ctl.start_fresh()
@@ -2232,6 +2247,22 @@ class MainWindow(QMainWindow):
         pics = self.catalog.pictures
         return [pics[i] for i in indices if 0 <= i < len(pics)]
 
+    def _derived_in_view(self):
+        """The derived picture the pill and star keys act on: the viewer's, when one is on screen (review and compare
+        list originals only, so they never have one), else None and the keys act on the catalog picture(s)."""
+        if not len(self.catalog) or self._compare_shown() or self._review_shown_index() is not _NOT_IN_REVIEW:
+            return None
+        return self._current_derived()
+
+    def _derived_names(self, d) -> tuple[str, ...]:
+        """The names of the pills the derived picture `d` carries that the book still knows, in digit order."""
+        have = {n.casefold() for n in d.pills}
+        return tuple(p.name for p in self.pill_book.pills() if p.name.casefold() in have)
+
+    def _derived_pill_colors(self, d) -> list[str]:
+        """A derived picture -> the colour names of its own pills, for the strip's dots."""
+        return [self.pill_book.by_name(n).color for n in self._derived_names(d)]
+
     def _pill_names_of(self, pic) -> tuple[str, ...]:
         """The names of the pills `pic` carries that the book still knows, in digit order."""
         have = {n.casefold() for n in self.pill_index.get(pic)}
@@ -2241,6 +2272,9 @@ class MainWindow(QMainWindow):
         """The pills the picture(s) in view all carry: the viewer's picture, the review's selection, compare's cell."""
         if not len(self.catalog):
             return ()
+        d = self._derived_in_view()
+        if d is not None:
+            return self._derived_names(d)
         try:
             pics = self._pill_pictures(self._rotation_targets())
         except Exception:  # noqa: BLE001 - a fake review
@@ -2299,6 +2333,9 @@ class MainWindow(QMainWindow):
         """The stars of the picture(s) in view: the viewer's picture, the review's selection (0 when they differ)."""
         if not len(self.catalog):
             return 0
+        d = self._derived_in_view()
+        if d is not None:
+            return clamp_stars(d.stars or 0)
         try:
             pics = self._pill_pictures(self._rotation_targets())
         except Exception:  # noqa: BLE001 - a fake review
@@ -2312,16 +2349,23 @@ class MainWindow(QMainWindow):
         self.inspector.set_stars(n)
         self.star_bar.set_stars(n)
 
-    def _stars_key(self, n: int) -> None:
+    def _stars_key(self, n: int) -> bool:
         """Ctrl/Cmd+n: n stars (0 clears) on the picture(s) in view. Ignored while a crop or story edit or the `?`
-        overlay is open, and with no picture."""
+        overlay is open, and with no picture. True when 1..5 stars were stored (the caller may move on)."""
         if self._edit is not None or self._overlay_open() or not len(self.catalog):
-            return
+            return False
+        n = clamp_stars(n)
+        d = self._derived_in_view()
+        if d is not None:  # the crop or story fit on screen is rated, not its source
+            self.band.set_stars(d.id, n)
+            self._derived_marks_changed(d)
+            self.say(f"Stars cleared · {native('Ctrl+0')}" if n == 0 else
+                     f"{FILLED * n} {n} star{'s' if n > 1 else ''} · {native(f'Ctrl+{n}')}")
+            return n > 0
         pics = self._pill_pictures(self._rotation_targets())
         if not pics:
             self.say("Select a picture first")
-            return
-        n = clamp_stars(n)
+            return False
         for p in pics:
             self.pill_index.set_stars(p, n)
         self._stars_changed(pics)
@@ -2330,9 +2374,43 @@ class MainWindow(QMainWindow):
             self.say(f"Stars cleared · {native('Ctrl+0')}{more}")
         else:
             self.say(f"{FILLED * n} {n} star{'s' if n > 1 else ''} · {native(f'Ctrl+{n}')}{more}")
+        return n > 0 and len(pics) == 1
+
+    def _stars_go(self, n: int) -> None:
+        """A star key, menu row or the star bar: set the stars, and on 1..5 show the next picture (always, whatever
+        "Move on mark" says). Clearing never moves."""
+        at = self._review_zoom_at()
+        if self._stars_key(n):
+            self._advance_after_mark(at)
+
+    def _review_zoom_at(self):
+        """The picture the review's zoom page shows (None: not on that page), noted before a mark is applied."""
+        r = self.review
+        if self.stack.currentIndex() == 1 and r is not None and                 getattr(getattr(r, "stack", None), "currentIndex", lambda: 0)() == 2:
+            return getattr(r, "_zoom_index", None)
+        return None
+
+    def _advance_after_mark(self, at=None) -> None:
+        """After a pill went on or stars were set: the viewer shows the next row (the last stays), the review's zoom
+        page the next picture of its set (no wrap). A review grid selection (a batch) and compare never move."""
+        if self._compare_shown():
+            return
+        if self.stack.currentIndex() == 0:
+            self.step(1)
+            return
+        r = self.review
+        if r is not None and getattr(getattr(r, "stack", None), "currentIndex", lambda: 0)() == 2 and hasattr(r, "step_set"):
+            if at is not None and getattr(r, "_zoom_index", at) != at:
+                return  # the mark took the picture out of the set and review.refresh() already moved on
+            r.step_set(1)
 
     def _star_bar_rated(self, n: int) -> None:
-        self._stars_key(n)
+        self._stars_go(n)
+
+    def _derived_marks_changed(self, d) -> None:
+        """A derived picture's pills or stars changed (the Band already holds them; the session saves with the band)."""
+        self._redraw_pills()
+        self.filmstrip.item_changed(d.source, d.id)
 
     def _stars_changed(self, pics) -> None:
         for pic in pics:
@@ -2374,11 +2452,21 @@ class MainWindow(QMainWindow):
     def _pill_hint(self, n: int) -> None:
         self.say(f"No pill on {n} — {native(MANAGE_SEQ)} to make one")
 
-    def _pill_key(self, n: int) -> None:
+    def _pill_go(self, n: int) -> None:
+        """A digit key, Pills menu row or tray click: toggle the pill, and when it went ON show the next picture
+        (always, whatever "Move on mark" says). Clearing and taking a pill off never move."""
+        at = self._review_zoom_at()
+        if self._pill_key(n):
+            self._advance_after_mark(at)
+
+    def _pill_key(self, n: int) -> bool:
         """Digit n: 1-9 toggle pill n on the picture(s) in view, 0 clears them. Never reached while a crop or story edit
-        is open (keyPressEvent hands those digits to the editor)."""
+        is open (keyPressEvent hands those digits to the editor). True when a pill was put ON one picture."""
         if not len(self.catalog):
-            return
+            return False
+        d = self._derived_in_view()
+        if d is not None:
+            return self._derived_pill_key(d, n)
         pics = self._pill_pictures(self._rotation_targets())
         if n == 0:
             had = [p for p in pics if self.pill_index.get(p)]
@@ -2387,14 +2475,14 @@ class MainWindow(QMainWindow):
             self._pills_changed(pics)
             what = "this picture" if len(pics) == 1 else f"{len(pics)} pictures"
             self.say(f"Pills cleared on {what}" if had else "No pills to clear")
-            return
+            return False
         pill = self.pill_book.by_digit(n)
         if pill is None:
             self._pill_hint(n)
-            return
+            return False
         if not pics:
             self.say("Select a picture first")
-            return
+            return False
         key = pill.name.casefold()
         all_have = all(key in {x.casefold() for x in self.pill_index.get(p)} for p in pics)
         for p in pics:
@@ -2404,6 +2492,27 @@ class MainWindow(QMainWindow):
         self._pills_changed(pics)
         state = "off" if all_have else "on"
         self.say(f"{pill.name} {state}" if len(pics) == 1 else f"{pill.name} {state}: {len(pics)} pictures")
+        return not all_have and len(pics) == 1
+
+    def _derived_pill_key(self, d, n: int) -> bool:
+        """Digit n on a derived picture: the same toggle / clear as on an original, on the derived's own pills."""
+        if n == 0:
+            had = bool(d.pills)
+            self.band.set_pills(d.id, ())
+            self._derived_marks_changed(d)
+            self.say("Pills cleared on this picture" if had else "No pills to clear")
+            return False
+        pill = self.pill_book.by_digit(n)
+        if pill is None:
+            self._pill_hint(n)
+            return False
+        key = pill.name.casefold()
+        has = any(x.casefold() == key for x in d.pills)
+        names = [x for x in d.pills if x.casefold() != key] if has else [*d.pills, pill.name]
+        self.band.set_pills(d.id, names)
+        self._derived_marks_changed(d)
+        self.say(f"{pill.name} {'off' if has else 'on'}")
+        return not has
 
     def _pills_changed(self, pics) -> None:
         """Pictures' pills changed by hand: redraw everything that shows them and queue the (debounced) save."""
@@ -2438,6 +2547,19 @@ class MainWindow(QMainWindow):
 
     def _snap_pills(self) -> None:
         self._pill_snapshot = [p.name for p in self.pill_book.pills()]
+
+    def _sync_derived_pills(self) -> None:
+        """Pills were edited: a name a derived picture carries that the book lost follows a rename (same number of pills,
+        the one at that place) or is dropped, as the index does for originals (PillIndex.rename_pill / drop_pill)."""
+        prev = self._pill_snapshot
+        now = [p.name for p in self.pill_book.pills()]
+        known = {n.casefold() for n in now}
+        gone = {n for d in self.band for n in d.pills if n.casefold() not in known}
+        for name in sorted(gone):
+            if name in prev and len(prev) == len(now):
+                self.band.rename_pill(name, now[prev.index(name)])
+            else:
+                self.band.drop_pill(name)
 
     def _sync_pill_set(self) -> None:
         """Pills were edited: the open pill set follows a pill renamed in place, or closes when its pill is gone."""
@@ -2516,6 +2638,7 @@ class MainWindow(QMainWindow):
         """The manager made, renamed, recoloured or deleted a pill."""
         self._pill_counts = self._star_counts = None
         self._mark_pills_dirty()
+        self._sync_derived_pills()
         self._sync_pill_set()
         self._snap_pills()
         self._redraw_pills()
@@ -2523,7 +2646,7 @@ class MainWindow(QMainWindow):
     def _tray_toggled(self, name: str) -> None:
         pill = self.pill_book.by_name(name)
         if pill is not None:
-            self._pill_key(pill.digit)
+            self._pill_go(pill.digit)
 
     def _tray_more(self) -> None:
         """The tray's "+N": open the Pills menu under it."""
@@ -2614,6 +2737,8 @@ class MainWindow(QMainWindow):
             qa.setShortcutVisibleInContextMenu(True)
             qa.setCheckable(a.checkable)
             qa.triggered.connect(lambda _checked=False, h=a.handler: self._run_action(h))
+            if a.id == "about":
+                qa.setMenuRole(QAction.MenuRole.AboutRole)  # macOS moves it to the application menu
             menus[a.menu].addAction(qa)
             self.menu_actions[a.id] = qa
         self._pills_menu = menus["Pills"]
@@ -2755,58 +2880,65 @@ class MainWindow(QMainWindow):
         self.remove_derived()
 
     def act_pill_1(self) -> None:
-        self._pill_key(1)
+        self._pill_go(1)
 
     def act_pill_2(self) -> None:
-        self._pill_key(2)
+        self._pill_go(2)
 
     def act_pill_3(self) -> None:
-        self._pill_key(3)
+        self._pill_go(3)
 
     def act_pill_4(self) -> None:
-        self._pill_key(4)
+        self._pill_go(4)
 
     def act_pill_5(self) -> None:
-        self._pill_key(5)
+        self._pill_go(5)
 
     def act_pill_6(self) -> None:
-        self._pill_key(6)
+        self._pill_go(6)
 
     def act_pill_7(self) -> None:
-        self._pill_key(7)
+        self._pill_go(7)
 
     def act_pill_8(self) -> None:
-        self._pill_key(8)
+        self._pill_go(8)
 
     def act_pill_9(self) -> None:
-        self._pill_key(9)
+        self._pill_go(9)
 
     def act_pill_clear(self) -> None:
-        self._pill_key(0)
+        self._pill_go(0)
 
     def act_stars_1(self) -> None:
-        self._stars_key(1)
+        self._stars_go(1)
 
     def act_stars_2(self) -> None:
-        self._stars_key(2)
+        self._stars_go(2)
 
     def act_stars_3(self) -> None:
-        self._stars_key(3)
+        self._stars_go(3)
 
     def act_stars_4(self) -> None:
-        self._stars_key(4)
+        self._stars_go(4)
 
     def act_stars_5(self) -> None:
-        self._stars_key(5)
+        self._stars_go(5)
 
     def act_stars_clear(self) -> None:
-        self._stars_key(0)
+        self._stars_go(0)
 
     def act_pills_manage(self) -> None:
         self.open_pill_manager()
 
     def act_help(self) -> None:
         self.toggle_shortcuts()
+
+    def about_text(self) -> str:
+        return f"Spuza {__version__}\n\nA fast photo culler.\n{ABOUT_URL}"
+
+    def act_about(self) -> None:
+        """Help > About Spuza: the name, the version and the project page."""
+        QMessageBox.about(self, "About Spuza", self.about_text())
 
     def act_lights_out(self) -> None:
         self.set_lights_out(not self.lights_out)
@@ -2872,7 +3004,7 @@ class MainWindow(QMainWindow):
             return
         if Qt.Key_0 <= k <= Qt.Key_9 and self._edit is None:  # 1-9 toggle a pill, 0 clears (crop / story keep their digits)
             if not e.isAutoRepeat():  # a held digit must not flip a pill back and forth
-                self._pill_key(k - Qt.Key_0)
+                self._pill_go(k - Qt.Key_0)
         elif k in (Qt.Key_Space, Qt.Key_M):
             if not e.isAutoRepeat():  # a held key marks one picture, never a run (move on mark would)
                 self.toggle_mark()
@@ -2910,9 +3042,6 @@ class MainWindow(QMainWindow):
         elif k == Qt.Key_Backspace and self.stack.currentIndex() == 0:
             if not e.isAutoRepeat():
                 self.remove_derived()
-        elif k == Qt.Key_U and features.enabled("resume_session") and self.stack.currentIndex() == 0:
-            if not e.isAutoRepeat():
-                self.start_fresh()
         elif k == Qt.Key_Question:
             if not e.isAutoRepeat():
                 self.toggle_shortcuts()

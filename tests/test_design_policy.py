@@ -85,9 +85,12 @@ def adv(tmp_path):
 
 
 # -- 1. the table and the code agree -----------------------------------------------------------------
+KEYLESS = {"start_fresh", "about"}  # menu only: no key (Start fresh lost its U in 0.16.0; About never had one)
+
+
 def test_every_action_has_a_key_and_a_label():
     for a in act.ACTIONS:
-        assert a.keys and all(k.strip() for k in a.keys), a.id
+        assert (a.keys and all(k.strip() for k in a.keys)) or a.id in KEYLESS, a.id
         assert all(not QKeySequence(k).isEmpty() for k in a.keys), f"{a.id}: {a.keys} is not a key Qt can parse"
         assert a.label.strip(), a.id
 
@@ -140,7 +143,7 @@ def test_overflow_items_and_every_menu_item_name_a_key(adv):
         for qa in top.menu().actions():
             if qa.isSeparator() or not qa.isVisible():
                 continue
-            assert not qa.shortcut().isEmpty(), (top.text(), qa.text())
+            assert not qa.shortcut().isEmpty() or qa.text() in {"Start fresh", "About Spuza"}, (top.text(), qa.text())
     shown = {qa.text() for qa in adv.quiet_bar.overflow_menu().actions() if qa.isVisible() and not qa.isSeparator()}
     assert shown == {"Move on mark", "Full screen", "Preferences…", "Lights out", "Compare", "Peaking", "AF point"}
 
@@ -185,7 +188,7 @@ PROBES = {
     "compare": ("", "open_compare"), "peaking": ("", "toggle_peaking"), "afpoint": ("", "toggle_marker"),
     "lights_out": ("", "set_lights_out"), "dark_theme": ("", "act_dark_theme"),
     "rotate_left": ("", "rotate"), "rotate_right": ("", "rotate"), "crop": ("", "start_crop"),
-    "story": ("", "start_story"), "remove": ("", "remove_derived"), "help": ("", "toggle_shortcuts"),
+    "story": ("", "start_story"), "remove": ("", "remove_derived"), "help": ("", "toggle_shortcuts"), "about": ("", "act_about"),
     # pills (0.12): the digits call _pill_key(n); Ctrl+Shift+P is a window shortcut
     **{f"pill_{n}": ("", "_pill_key") for n in range(1, 10)}, "pill_clear": ("", "_pill_key"),
     "pills_manage": ("", "open_pill_manager"),

@@ -15,8 +15,10 @@ caches stay the source's; the cut is made when a pixmap is put, so Z and + / - w
 
 from __future__ import annotations
 
+import math
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QPointF, QTimer, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
@@ -33,6 +35,46 @@ FULL_CACHE = 3 # full-resolution decodes kept (a 24 MP image is ~70 MB as a pixm
 ZOOM_STEPS = tuple(n / 4 for n in range(1, 17))  # + / - levels above fit: 25% .. 400% of the picture's own pixels
 _EPS = 1e-6
 STORY_VIEW = (540, 960)  # the size a derived story is drawn at on screen (9:16)
+
+
+def turn_frac(frac, quarters: int):
+    """A fraction (x, y) of a picture's own frame -> the same point as a fraction of the picture turned
+    `quarters` clockwise quarter turns (negative: the way back)."""
+    x, y = frac
+    q = int(quarters) % 4
+    if q == 1:
+        return (1.0 - y, x)
+    if q == 2:
+        return (1.0 - x, 1.0 - y)
+    if q == 3:
+        return (y, 1.0 - x)
+    return (x, y)
+
+
+@dataclass
+class ZoomMemory:
+    """Where the user was looking while zoomed, as a fraction of the picture AS SHOWN (turns included), so it
+    lands on the same detail of a picture of another size or turn. Pure data: no Qt."""
+    frac: tuple[float, float] | None = None
+
+    def remember(self, own_frac, quarters: int = 0) -> None:
+        """Keep `own_frac` (a fraction of the item's own frame, shown turned `quarters`); anything that is not
+        two finite numbers forgets."""
+        try:
+            x, y = float(own_frac[0]), float(own_frac[1])
+            if len(own_frac) != 2 or not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError
+        except (TypeError, ValueError, IndexError, KeyError):
+            self.frac = None
+            return
+        self.frac = turn_frac((min(1.0, max(0.0, x)), min(1.0, max(0.0, y))), quarters)
+
+    def recall(self, quarters: int = 0):
+        """The kept point as a fraction of the own frame of a picture shown turned `quarters`, or None."""
+        return None if self.frac is None else turn_frac(self.frac, -int(quarters))
+
+    def forget(self) -> None:
+        self.frac = None
 
 
 def step_scale(cur: float, fit: float, up: bool):
@@ -275,6 +317,7 @@ class Viewer(QGraphicsView):
         # Where Z lands: a callable returning the (fx, fy) fraction of the image to centre on, or None for
         # the centre. Set by the window (focus_point); None keeps the shipped behaviour.
         self.zoom_target = None
+        self._zoom_memory = ZoomMemory()  # fr9: where the user looked while zoomed, carried to the next picture
         self._scene = QGraphicsScene(self)
         self._item = QGraphicsPixmapItem()
         self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
@@ -410,7 +453,22 @@ class Viewer(QGraphicsView):
         self.message.setVisible(bool(text))
         self._place()
 
+    def zoom_memory(self) -> ZoomMemory:
+        """The remembered look-at point (fr9), updated whenever a picture is left while zoomed."""
+        return self._zoom_memory
+
+    def _remember_place(self) -> None:
+        """Zoomed with a picture on screen: keep the centre as a fraction of the camera's frame, before it goes."""
+        if not (self.zoomed and self.has_image):
+            return
+        frac = self._centre_frac()
+        geo = self._geo.get(str(self.pic.primary)) if self.pic is not None else None
+        if self._shown_sensor and geo is not None:  # the whole sensor is on screen: remember the frame's fraction
+            frac = self._map_frac(frac, geo, False)
+        self._zoom_memory.remember(frac, self._quarters())
+
     def _clear(self, index: int, pic) -> None:
+        self._remember_place()
         self.index, self.pic, self.info, self._preview = index, pic, None, None
         self._derived = None
         self._shown_native = False
@@ -436,13 +494,17 @@ class Viewer(QGraphicsView):
         self._set_message(text)
 
     def show_image(self, index: int, pic, qimg: QImage, info, derived=None) -> None:
+        self._remember_place()
         self.index, self.pic, self.info, self._preview = index, pic, info, qimg
         self._derived = derived
         self.error_text = ""
         self._set_message("")
         hit = self._cached_full(str(pic.primary)) if self.zoomed else None
         full, sensor = hit if hit is not None else (None, False)
-        self._put(full if full is not None else qimg, keep_centre=False, native=full is not None, sensor=sensor)
+        # fr9: while zoomed the remembered point wins over the focus point (the user is comparing one frame)
+        carry = self._zoom_memory.recall(self._quarters()) if self.zoomed else None
+        self._put(full if full is not None else qimg, keep_centre=False, native=full is not None, sensor=sensor,
+                  carry=carry)
         self._paint_pending = index
         self.shown.emit(index)
         if self.zoomed and full is None:
@@ -471,12 +533,17 @@ class Viewer(QGraphicsView):
         return (min(1.0, max(0.0, (frac[0] * w - left) / max(1, cw))),
                 min(1.0, max(0.0, (frac[1] * h - top) / max(1, ch))))
 
-    def _put(self, qimg: QImage, keep_centre: bool, native: bool = False, sensor: bool = False) -> None:
+    def _put(self, qimg: QImage, keep_centre: bool, native: bool = False, sensor: bool = False,
+             carry=None) -> None:
         qimg = self._cut(qimg)
         frac = self._centre_frac() if keep_centre and self.has_image else None
+        if carry is not None:  # a remembered point (fraction of the camera's frame) from the previous picture
+            frac = carry
         geo = self._geo.get(str(self.pic.primary)) if self.pic is not None else None
         if geo is not None and self.zoomed:
-            if frac is not None and sensor != self._shown_sensor:  # the other picture: same subject, other fractions
+            if carry is not None:
+                frac = self._map_frac(carry, geo, True) if sensor else carry
+            elif frac is not None and sensor != self._shown_sensor:  # the other picture: same subject, other fractions
                 frac = self._map_frac(frac, geo, sensor)
             elif frac is None and sensor:  # the crop frame centre (or the target point) in the sensor
                 try:
@@ -577,6 +644,8 @@ class Viewer(QGraphicsView):
 
     def _enter_zoom(self, scale: float, pct_mode: bool) -> None:
         was = self.zoomed
+        if not was:
+            self._zoom_memory.forget()  # a fresh zoom from fit starts at the focus point, not at an old place
         frac = self._centre_frac() if was and self.has_image else None  # a step change keeps the centred point
         self.zoomed, self.zoom_scale, self._pct_mode = True, scale, pct_mode
         self._apply_zoom(frac)
@@ -588,6 +657,7 @@ class Viewer(QGraphicsView):
 
     def _leave_zoom(self) -> None:
         self.zoomed, self._pct_mode = False, False
+        self._zoom_memory.forget()
         if self._preview is not None:
             self._put(self._preview, keep_centre=False)  # the 1:1 pixmap is not needed to fit
         self._sync_hud()

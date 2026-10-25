@@ -49,7 +49,7 @@ ACTIONS = [
     Action("mark_all", "Edit", "Mark all", ("Ctrl+A",), "act_mark_all", "Mark"),
     Action("unmark_all", "Edit", "Unmark all", ("Ctrl+Shift+A",), "act_unmark_all", "Mark"),
     Action("undo_mark_all", "Edit", "Undo mark all", ("Ctrl+Z",), "act_undo_mark_all", "Mark"),
-    Action("start_fresh", "Edit", "Start fresh", ("U",), "act_start_fresh", "Mark", flag="resume_session",
+    Action("start_fresh", "Edit", "Start fresh", (), "act_start_fresh", "Mark", flag="resume_session",
            needs_viewer=True),
     Action("back", "View", "Back", ("Left", "J"), "act_back", "Navigate", state="back"),
     Action("next", "View", "Next", ("Right", "K"), "act_next", "Navigate", state="next"),
@@ -93,6 +93,7 @@ ACTIONS = [
     Action("stars_5", "Stars", "5 stars", ("Ctrl+5",), "act_stars_5", "Stars"),
     Action("stars_clear", "Stars", "Clear stars", ("Ctrl+0",), "act_stars_clear", "Stars"),
     Action("help", "Help", "Keyboard shortcuts", ("?",), "act_help", "App", needs_picture=False),
+    Action("about", "Help", "About Spuza", (), "act_about", "App", needs_picture=False),
 ]
 
 # Keys that only mean something inside a mode, so they are not menu actions: (group, keys, what it does)
