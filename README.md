@@ -48,7 +48,7 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 
 - A crop or story fit keeps its own pills and stars; it no longer shares its original's (three bugs fixed).
 - The zoom level and the look-at point carry to the next picture: stepping in the viewer, stepping on the review zoom page, and stepping in compare.
-- Adding a pill (`1` to `9`, the Pills menu or the tray) or 1 to 5 stars (`Ctrl+1` to `Ctrl+5`, the Stars menu or the star bar) shows the next picture, whatever Move on mark says. Clearing, taking a pill off, and a selection of several review pictures stay put.
+- Adding a pill (`1` to `9`, the Pills menu or the tray) or 1 to 5 stars (`Ctrl+1` to `Ctrl+5`, the Stars menu or the star bar) shows the next picture, whatever Move on mark says. Clearing, taking a pill off, and a pick in the review grid (one picture or several) stay put.
 - Start fresh has no key any more (it was `U`); it stays in the Edit menu.
 - Help, About Spuza shows the version.
 
@@ -181,7 +181,7 @@ Every key in one table. The bar above the picture has icon buttons for the commo
 Notes on the keys:
 
 - With Move on mark (`A`) on, unmarking also moves on to the next picture.
-- Putting a pill on (`1` to `9`) or setting 1 to 5 stars (`Ctrl+1` to `Ctrl+5`) always shows the next picture, with Move on mark on or off. Clearing, taking a pill off and the last picture stay put; in the review grid a selection of pictures stays put too.
+- Putting a pill on (`1` to `9`) or setting 1 to 5 stars (`Ctrl+1` to `Ctrl+5`) always shows the next picture, with Move on mark on or off. Clearing, taking a pill off and the last picture stay put; in the review grid a pick (one picture or several) stays put too.
 - **Start fresh** (Edit menu, advanced) clears this card's marks, crop pictures' marks included (the crop pictures stay), and its saved session. Choose Start fresh again within 10 seconds to undo it. It has no key.
 - Mark all and Unmark all say how many pictures changed in the status line and never ask first. `Ctrl+Z` puts back exactly the marks you had before. If you marked by hand in between, those changes are replaced and the status line says how many. Only the last Mark all or Unmark all can be undone, until the next one, Start fresh or closing Spuza.
 - A turn (`[` `]`) shows on the screen, the filmstrip and the review. The original is never changed (see [Copying](#copying)).

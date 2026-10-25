@@ -34,7 +34,7 @@ KEYS = {n: getattr(Qt, f"Key_{n}") for n in range(10)}
 def no_advance(monkeypatch):
     """These tests check what a pill or star key stores on the picture in view; since 0.16.0 the key then shows the
     next picture. That advance is tested in test_friend_r9_keys.py, so here it is switched off."""
-    monkeypatch.setattr(MainWindow, "_advance_after_mark", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_advance_after_mark", lambda self, at=None: None)
 
 
 @pytest.fixture(autouse=True)

@@ -190,3 +190,40 @@ def test_the_overlay_lists_no_keyless_action(w):
     assert "Start fresh" not in texts and "About Spuza" not in texts
     assert all(k.strip() for _g, _l, k in so.rows())
     ov.close_overlay()
+
+
+# ---- the star filter: a rating can take the picture out of the review set ------------------------------
+
+@pytest.fixture
+def filtered(w):
+    features.set_mode(features.ADVANCED)
+    for i in (0, 1, 2):
+        w.catalog.toggle_mark(i)
+        w.pill_index.set_stars(w.catalog.pictures[i], 3)
+    w._set_min_stars(3)
+    w.open_review()
+    pump(lambda: w.stack.currentIndex() == 1)
+    pump(lambda: w.review._members == [0, 1, 2])
+    w.review.show_zoom(0)  # the zoom page, whichever page the review opened on
+    assert w.review.stack.currentIndex() == 2 and w.review._members == [0, 1, 2]
+    return w
+
+
+def test_a_rating_that_drops_the_picture_lands_on_the_immediate_next(filtered):
+    r = filtered.review
+    key(filtered, Qt.Key_1, CTRL)  # 1 star < 3: picture 0 leaves the set; review moved to 1 by itself
+    assert stars(filtered, 0) == 1 and r._members == [1, 2] and r._zoom_index == 1
+
+
+def test_a_rating_that_drops_the_last_picture_does_not_skip_or_complain(filtered):
+    r = filtered.review
+    r.show_zoom(2)
+    key(filtered, Qt.Key_1, CTRL)
+    assert r._members == [0, 1] and r._zoom_index == 1
+    assert "last picture" not in filtered.last_message
+
+
+def test_a_rating_that_keeps_the_picture_advances_by_exactly_one(filtered):
+    r = filtered.review
+    key(filtered, Qt.Key_4, CTRL)
+    assert r._members == [0, 1, 2] and r._zoom_index == 1

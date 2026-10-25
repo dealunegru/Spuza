@@ -2379,10 +2379,18 @@ class MainWindow(QMainWindow):
     def _stars_go(self, n: int) -> None:
         """A star key, menu row or the star bar: set the stars, and on 1..5 show the next picture (always, whatever
         "Move on mark" says). Clearing never moves."""
+        at = self._review_zoom_at()
         if self._stars_key(n):
-            self._advance_after_mark()
+            self._advance_after_mark(at)
 
-    def _advance_after_mark(self) -> None:
+    def _review_zoom_at(self):
+        """The picture the review's zoom page shows (None: not on that page), noted before a mark is applied."""
+        r = self.review
+        if self.stack.currentIndex() == 1 and r is not None and                 getattr(getattr(r, "stack", None), "currentIndex", lambda: 0)() == 2:
+            return getattr(r, "_zoom_index", None)
+        return None
+
+    def _advance_after_mark(self, at=None) -> None:
         """After a pill went on or stars were set: the viewer shows the next row (the last stays), the review's zoom
         page the next picture of its set (no wrap). A review grid selection (a batch) and compare never move."""
         if self._compare_shown():
@@ -2392,6 +2400,8 @@ class MainWindow(QMainWindow):
             return
         r = self.review
         if r is not None and getattr(getattr(r, "stack", None), "currentIndex", lambda: 0)() == 2 and hasattr(r, "step_set"):
+            if at is not None and getattr(r, "_zoom_index", at) != at:
+                return  # the mark took the picture out of the set and review.refresh() already moved on
             r.step_set(1)
 
     def _star_bar_rated(self, n: int) -> None:
@@ -2445,8 +2455,9 @@ class MainWindow(QMainWindow):
     def _pill_go(self, n: int) -> None:
         """A digit key, Pills menu row or tray click: toggle the pill, and when it went ON show the next picture
         (always, whatever "Move on mark" says). Clearing and taking a pill off never move."""
+        at = self._review_zoom_at()
         if self._pill_key(n):
-            self._advance_after_mark()
+            self._advance_after_mark(at)
 
     def _pill_key(self, n: int) -> bool:
         """Digit n: 1-9 toggle pill n on the picture(s) in view, 0 clears them. Never reached while a crop or story edit

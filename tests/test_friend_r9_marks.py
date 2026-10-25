@@ -31,7 +31,7 @@ def no_advance(monkeypatch):
     """These tests check what a key stores on the picture in view; the advance after a pill or stars (0.16.0) is
     tested in test_friend_r9_keys.py."""
     from spuza.ui.window import MainWindow
-    monkeypatch.setattr(MainWindow, "_advance_after_mark", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_advance_after_mark", lambda self, at=None: None)
 
 
 @pytest.fixture(autouse=True)
