@@ -155,7 +155,10 @@ class Filmstrip(QListView):
         # derived id -> (content key, pixmap): ONE entry per derived picture, so a changed item drops its old cut
         self._dmemo: dict[int, tuple[tuple, QPixmap]] = {}
         self._dver = self.band.version
-        self._nrows = len(self.band.rows(len(catalog)))  # the row count the model last announced
+        self.min_stars = 0  # 0.17.0: hide the cells with fewer stars than this (0: show all); a view, never a mark
+        self._frows: tuple | None = None  # (band rows, min_stars, kept rows): the filtered rows, until refilter()
+        self._maps: tuple | None = None  # (rows, {row: position}, {source: (first, last)}) of the rows last asked for
+        self._announced: tuple = tuple(self.band.rows(len(catalog)))  # the rows the model last announced
         self._loader = ThumbLoader(lambda i: self.catalog.pictures[i].primary, self)
         self._loader.loaded.connect(self._on_loaded)
         self._settle = QTimer(self)
@@ -181,23 +184,81 @@ class Filmstrip(QListView):
 
     # -- rows -------------------------------------------------------------------------------------
     def rows(self) -> tuple:
-        """(catalog index, derived id | None) per cell. The Band caches it, so this is a lookup."""
-        return self.band.rows(len(self.catalog))
+        """(catalog index, derived id | None) per cell: the Band's rows, minus the cells under the star threshold
+        (`min_stars`). Both are cached; `refilter()` drops the filtered one when stars change."""
+        base = self.band.rows(len(self.catalog))
+        if self.min_stars <= 0:
+            return base
+        hit = self._frows
+        if hit is not None and hit[0] is base and hit[1] == self.min_stars:
+            return hit[2]
+        kept = tuple(r for r in base if self._passes(r))
+        self._frows = (base, self.min_stars, kept)
+        return kept
+
+    def _passes(self, row) -> bool:
+        i, did = row
+        if did is None:
+            return self.star_count(i) >= self.min_stars
+        d = self.band.get(did)
+        return d is not None and self.derived_star_count(d) >= self.min_stars
+
+    def hidden_count(self) -> int:
+        """How many cells the star threshold hides right now."""
+        return len(self.band.rows(len(self.catalog))) - len(self.rows())
+
+    def set_min_stars(self, n: int) -> None:
+        self.min_stars = max(0, int(n))
+        self.refilter()
+
+    def refilter(self) -> bool:
+        """The threshold or somebody's stars changed: re-read the rows and, when they differ from what the model
+        announced, reset it (the scroll position is kept). True when the cells changed."""
+        self._frows = None
+        new = self.rows()
+        if new == self._announced:
+            self.viewport().update()
+            return False
+        self._announced = new
+        bar = self.horizontalScrollBar()
+        keep = bar.value()
+        self._model.beginResetModel()
+        self._model.endResetModel()
+        bar.setValue(keep)
+        self._settle.start()
+        return True
+
+    def _row_maps(self) -> tuple:
+        rows = self.rows()
+        hit = self._maps
+        if hit is not None and hit[0] is rows:
+            return hit
+        pos: dict = {}
+        spans: dict[int, tuple[int, int]] = {}
+        for k, (i, did) in enumerate(rows):
+            pos[(i, did)] = k
+            lo = spans.get(i, (k, k))[0]
+            spans[i] = (lo, k)
+        self._maps = (rows, pos, spans)
+        return self._maps
 
     def row_at(self, pos: int):
         rows = self.rows()
         return rows[pos] if 0 <= pos < len(rows) else None
 
     def row_pos(self, i: int, did=None) -> int | None:
-        return self.band.row_of(i, did, len(self.catalog))
+        try:
+            return self._row_maps()[1].get((i, did))
+        except TypeError:
+            return None
 
     def _span(self, i: int) -> tuple[int, int] | None:
-        """First and last cell position of catalog index i: its original and everything derived from it."""
-        lo = self.row_pos(i)
-        if lo is None:
+        """First and last cell position of catalog index i: its original and everything derived from it (those the
+        star threshold leaves in view)."""
+        try:
+            return self._row_maps()[2].get(i)
+        except TypeError:
             return None
-        nxt = self.row_pos(i + 1) if i + 1 < len(self.catalog) else None
-        return lo, (nxt if nxt is not None else len(self.rows())) - 1
 
     def _clicked(self, ix) -> None:
         row = self.row_at(ix.row())
@@ -408,17 +469,7 @@ class Filmstrip(QListView):
         live = {d.id for d in self.band}
         for gone in [k for k in self._dmemo if k not in live]:
             del self._dmemo[gone]
-        n = len(self.rows())
-        if n == self._nrows:
-            self.viewport().update()
-            return
-        self._nrows = n
-        bar = self.horizontalScrollBar()
-        keep = bar.value()
-        self._model.beginResetModel()
-        self._model.endResetModel()
-        bar.setValue(keep)
-        self._settle.start()
+        self.refilter()
 
     def set_highlight(self, indices) -> None:
         """Outline these cells (compare's set); empty clears."""

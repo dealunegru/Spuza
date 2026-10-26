@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml"><img src="https://github.com/dealunegru/Spuza/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/dealunegru/Spuza/releases/latest"><img src="https://img.shields.io/github/v/release/dealunegru/Spuza?label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/version-0.16.1-informational" alt="Version 0.16.1">
+  <img src="https://img.shields.io/badge/version-0.17.0-informational" alt="Version 0.17.0">
 </p>
 
 **Mac** (Apple Silicon), in Terminal:
@@ -43,6 +43,10 @@ Update with `uv tool upgrade spuza`. There is also a [Mac app](#mac-app) on the 
 [What's new](#whats-new) · [The flow](#the-flow) · [Keys](#keys) · [Review](#review) · [Pills](#pills) · [Stars](#stars) · [Crop and story fit](#crop-and-story-fit) · [Copying](#copying) · [Preferences](#preferences) · [Classic and advanced](#classic-and-advanced-mode) · [Formats](#formats) · [Speed](#speed) · [Mac app](#mac-app) · [Command line](#command-line) · [Development](#development)
 
 ## What's new
+
+### 0.17.0
+
+- The **star filter** now hides pictures. The left panel has a STARS group: "★★★★★", "★★★★ and up", down to "★ and up", each with how many pictures it shows. Click one and the filmstrip hides every picture below it, `J` `K` and the arrows step only the ones left, and the picked row (raised, bold) reads "4 of 6" so you know nothing is lost. Click it again, or the All row, to show everything. Marks and Copy ignore the filter, and it is not kept between runs. A new crop or story fit starts with no stars, so a "★ and up" filter hides it until you rate it.
 
 ### 0.16.1
 
@@ -220,12 +224,12 @@ A star rating is one to five stars on a picture, kept apart from the pills.
 
 - **Set them.** `Ctrl+1` to `Ctrl+5` (`Cmd` on a Mac) set the rating and `Ctrl+0` clears it. Or click one of the five stars in the bar after the pill tray; click the lit star again to clear. In the review the keys apply to the selected pictures. The Stars menu lists the same actions, and the `?` overlay has a Stars group.
 - **See them.** Stars show in the inspector, under the filmstrip thumbnails, in the review grid and in Lights out.
-- **Filter.** The left panel has an "at least 1★ to 5★" row. It narrows whichever set is open (All, Marked or a pill) to pictures with that many stars or more, and the counts read "n of m". Click the lit chip to clear it. The main viewer is not filtered.
+- **Filter.** The left panel has a STARS group of five rows: "★★★★★", then "★★★★ and up" down to "★ and up", each with the number of pictures it would show. Pick one and the filmstrip hides every picture below it; the title count and the status bar count the pictures left ("2 of 4"), `J` `K` and the arrows step only through them, and setting or clearing stars moves on to the next visible picture (one step, never two). The picked row is raised and bold and reads "shown of total" ("4 of 6"), and the other counts read "n of m" too (All and Marked count the crops and story fits that pass). The open review set (All, Marked or a pill) is narrowed the same way. Click the picked row, or the All row, to clear it. The filter is a view only: marks, Copy and exports never read it, and it starts off again next time. A crop or story fit has its own stars and starts with none, so any filter from "★ and up" hides a new one until you rate it. If no picture is rated that high the filmstrip is empty, the picture on screen stays, and the status line says so.
 - **Copies carry them.** Copy writes the rating as the standard `xmp:Rating`, beside the pills: inside a JPEG or PNG, and in a `<name>.xmp` sidecar beside a raw or any other file. The card is never written. Windows Explorer shows it on JPEG copies. Copy still copies the marked pictures, and their stars go with them. If you change a rating and copy again, the copy is re-written in place rather than made twice.
 - **Ratings from other apps.** A folder that already carries `xmp:Rating` (from Lightroom, Bridge, Explorer or a camera) shows those stars in Spuza.
 
 <p align="center">
-  <img src="docs/img/stars-filter.png" alt="The left panel with the 4 star chip lit and the counts reading n of m" width="900">
+  <img src="docs/img/stars-filter.png" alt="The left panel with the 4 stars and up row picked, reading 2 of 6, and the filmstrip showing only the pictures with 4 stars or more" width="900">
 </p>
 
 ## Crop and story fit

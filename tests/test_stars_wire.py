@@ -354,18 +354,19 @@ def rate(w, stars: dict):
 
 
 def click_chip(w, n):
-    chip = w.sidebar.star_chip(n)
+    chip = w.sidebar.star_row(n)
     QTest.mouseClick(chip, Qt.MouseButton.LeftButton, pos=QPoint(chip.width() // 2, chip.height() // 2))
 
 
 def test_chip_row_lights_one_and_clicking_it_again_clears(win):
     w = win
-    assert [w.sidebar.star_chip(n).text() for n in range(1, 6)] == [f"{n}★" for n in range(1, 6)]
+    assert [w.sidebar.star_row(n).text() for n in range(5, 0, -1)] == [
+        "★★★★★", "★★★★ and up", "★★★ and up", "★★ and up", "★ and up"]
     click_chip(w, 3)
     assert w.sidebar.min_stars() == 3 and w._min_stars == 3
     click_chip(w, 4)
     assert w.sidebar.min_stars() == 4  # one lit at a time
-    assert [bool(w.sidebar.star_chip(n).property("lit")) for n in range(1, 6)] == [False, False, False, True, False]
+    assert [bool(w.sidebar.star_row(n).property("lit")) for n in range(1, 6)] == [False, False, False, True, False]
     click_chip(w, 4)
     assert w.sidebar.min_stars() == 0 and w._min_stars == 0
 
@@ -447,15 +448,14 @@ def test_a_picture_that_falls_below_the_threshold_leaves_the_open_set(win):
     assert r._zoom_index == 1
 
 
-def test_the_main_viewer_is_not_filtered(win):
+def test_the_main_viewer_follows_the_filter(win):
     w = win
     rate(w, {0: 1, 1: 5})
     click_chip(w, 5)
-    assert w.catalog.index == 0
+    w.go_to(1)
+    assert w.catalog.index == 1  # the only 5-star picture: J/K have nowhere else to go
     w.step(1)
     assert w.catalog.index == 1
-    w.step(1)
-    assert w.catalog.index == 2  # a 0-star picture: J/K still step it
     assert w.filmstrip.star_count(1) == 5 and w.filmstrip.star_count(0) == 1
 
 
