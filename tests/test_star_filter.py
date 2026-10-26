@@ -246,6 +246,17 @@ def test_a_rated_crop_shows_even_when_its_source_is_hidden(w):
     assert (2, None) not in cells(w) and (2, d.id) in cells(w)
 
 
+def test_removing_a_crop_under_the_filter_lands_on_a_visible_picture(w):
+    d = crop_it(w, 2)  # P2 has 0 stars: hidden under the filter; its crop is rated and shown
+    w.band.set_stars(d.id, 1)
+    w._derived_marks_changed(d)
+    click_row(w, 1)
+    assert w._cur_id == d.id and (2, None) not in cells(w)
+    key(w, Qt.Key_Backspace)
+    assert not w.band
+    assert (idx(w), w._cur_id) in cells(w) and idx(w) != 2
+
+
 def test_review_lists_originals_only_and_agrees_with_the_filter(w):
     crop_it(w, 0)
     for i in range(6):

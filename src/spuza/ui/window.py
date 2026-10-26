@@ -1338,6 +1338,7 @@ class MainWindow(QMainWindow):
         self._cur_id = prev[1] if prev[0] == d.source else None
         self._band_changed()
         self._render_current()
+        self._settle_visible()  # the previous row may be a picture the star filter hides
         self.say(f"Removed the {'story' if d.kind == dv.STORY else 'crop'} picture {tag} of {name}; the original is untouched")
 
     def _edit_key(self, e) -> bool:
