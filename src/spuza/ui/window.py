@@ -257,24 +257,42 @@ class _PillRow(QWidget):
         super().mouseReleaseEvent(e)
 
 
-class _StarChip(QLabel):
-    """One "N★" chip of the sidebar's threshold row. A click asks for N, or for none when it is the lit one."""
+class _StarRow(QWidget):
+    """One STARS row of the sidebar: the stars as text, a count. Clickable, like a pill row (not a button: it has no key
+    of its own). Looks like All / Marked; the picked one is raised and bold."""
 
     clicked = Signal()
 
     def __init__(self, n: int, parent=None):
-        super().__init__(f"{n}{FILLED}", parent)
+        super().__init__(parent)
         self.n = n
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setObjectName("starRow")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setToolTip(f"Only pictures with at least {n} star{'s' if n > 1 else ''}")
-        self.setAccessibleName(f"At least {n} stars")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.label = QLabel(star_row_label(n))
+        self.count = QLabel("0")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.label, 1)
+        row.addWidget(self.count)
+        tip = ("Only the 5-star pictures" if n == MAX_STARS else
+               f"Only pictures with at least {n} star{'s' if n > 1 else ''}") + "; click again to show every picture"
+        self.setToolTip(tip)
+        self.setAccessibleName(f"{n} stars" if n == MAX_STARS else f"At least {n} star{'s' if n > 1 else ''}")
+
+    def text(self) -> str:
+        return self.label.text()
 
     def mouseReleaseEvent(self, e) -> None:  # noqa: N802
         if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
             self.clicked.emit()
         super().mouseReleaseEvent(e)
+
+
+def star_row_label(n: int) -> str:
+    """A STARS row's label: "★★★★★" for five, "★★★★ and up" for the rest."""
+    return FILLED * n if n >= MAX_STARS else f"{FILLED * n} and up"
 
 
 def _lead(text: str) -> int:
@@ -284,13 +302,14 @@ def _lead(text: str) -> int:
 
 
 class Sidebar(QWidget):
-    """Source root and counts; 'All' is always above 'Marked', then one row per pill, then the "at least N stars"
-    threshold chips. While a threshold is set every count reads "n of m"."""
+    """Source root and counts; 'All' is always above 'Marked', then one row per pill, then the STARS group: five rows
+    ("★★★★★", then "★★★★ and up" down to "★ and up"), each with how many pictures it would show. The picked row is the
+    star filter: raised and bold, its count reads "shown of total", and every other count reads "n of m" too."""
 
     show_all = Signal()
     show_marked = Signal()
     show_pill = Signal(str)  # a pill row was clicked: its name
-    min_stars_changed = Signal(int)  # the threshold chips: 1..5, or 0 when the lit one was clicked off
+    min_stars_changed = Signal(int)  # a STARS row: 1..5, or 0 when the picked one was clicked off
 
     def __init__(self, root: Path, parent=None):
         super().__init__(parent)
@@ -323,17 +342,14 @@ class Sidebar(QWidget):
         self._open: tuple[str, str | None] | None = None  # ("marked", None) or ("pill", name): the set shown in review
         self._min_stars = 0
         self.stars_head = QLabel("STARS")
-        self.stars_hint = QLabel("at least")
-        self._chips = [_StarChip(n) for n in range(1, MAX_STARS + 1)]
-        chips = QHBoxLayout()
-        chips.setSpacing(2)
-        for chip in self._chips:
-            chip.clicked.connect(lambda n=chip.n: self._chip_clicked(n))
-            chips.addWidget(chip)
         lay.addSpacing(10)
         lay.addWidget(self.stars_head)
-        lay.addWidget(self.stars_hint)
-        lay.addLayout(chips)
+        self._star_rows: list[tuple[_StarRow, QLabel]] = []
+        for n in range(MAX_STARS, 0, -1):  # 5 first: the top row is the strictest
+            row = _StarRow(n)
+            row.clicked.connect(lambda k=n: self._star_row_clicked(k))
+            lay.addWidget(row)
+            self._star_rows.append((row, row.count))
         lay.addStretch(1)
         self.set_root(root)
 
@@ -354,14 +370,27 @@ class Sidebar(QWidget):
         return self._min_stars
 
     def set_min_stars(self, n: int) -> None:
-        """Light the chip of threshold `n` (0: none). Silent: only a click emits min_stars_changed."""
+        """Pick the STARS row of threshold `n` (0: none). Silent: only a click emits min_stars_changed."""
         self._min_stars = max(0, min(MAX_STARS, int(n)))
         self._style_chips()
 
-    def star_chip(self, n: int) -> QLabel:
-        return self._chips[n - 1]
+    def star_row(self, n: int) -> _StarRow:
+        """The row for threshold n (5 is "★★★★★", the others "n★ and up")."""
+        return self._star_rows[MAX_STARS - n][0]
 
-    def _chip_clicked(self, n: int) -> None:
+    def set_star_counts(self, counts, shown: int | None = None, total: int | None = None) -> None:
+        """counts[n]: how many pictures a threshold of n would show (n = 1..5). The picked row reads "shown of total"
+        instead when `shown` and `total` are given."""
+        for n in range(1, MAX_STARS + 1):
+            txt = str(int(counts.get(n, 0)))
+            if n == self._min_stars and shown is not None and total is not None:
+                txt = f"{shown} of {total}"
+            self._star_rows[MAX_STARS - n][1].setText(txt)
+
+    def star_count_texts(self) -> dict[int, str]:
+        return {n: self._star_rows[MAX_STARS - n][1].text() for n in range(1, MAX_STARS + 1)}
+
+    def _star_row_clicked(self, n: int) -> None:
         self.set_min_stars(0 if n == self._min_stars else n)
         self.min_stars_changed.emit(self._min_stars)
 
@@ -369,12 +398,16 @@ class Sidebar(QWidget):
         c = theme.current()
         self.stars_head.setStyleSheet(f"color: {c.text_dim}; font-size: {tk.TYPE['caption']}px; "
                                       f"font-weight: {tk.TYPE['weight_strong']};")
-        self.stars_hint.setStyleSheet(f"color: {c.text_dim};")
-        for chip in self._chips:
-            on = chip.n == self._min_stars
-            chip.setProperty("lit", on)
-            chip.setStyleSheet(f"background: {c.focus if on else c.raised}; color: {c.on_focus if on else c.text};"
-                               " border-radius: 4px; padding: 3px 0px;")
+        for n in range(1, MAX_STARS + 1):
+            row, cnt = self._star_rows[MAX_STARS - n]
+            on = n == self._min_stars
+            row.setProperty("lit", on)
+            row.setStyleSheet(f"#starRow {{ background: {c.raised if on else 'transparent'}; }}")
+            row.label.setStyleSheet(f"color: {c.text}; padding: 4px 6px;")
+            f = row.label.font()
+            f.setBold(on)
+            row.label.setFont(f)
+            cnt.setStyleSheet(f"color: {c.text_dim};")
 
     def set_pills(self, rows) -> None:
         """rows: (name, colour name, picture count[, count that passes the star threshold]) in the book's order.
@@ -700,7 +733,7 @@ class MainWindow(QMainWindow):
         self.viewer.zoom_changed.connect(lambda z: self.buttons["zoom"].setChecked(z))
         self.filmstrip.picked.connect(self.go_to)
         self.filmstrip.picked_derived.connect(self.go_to)
-        self.sidebar.show_all.connect(self.close_review)
+        self.sidebar.show_all.connect(self._sidebar_all)
         self.sidebar.show_marked.connect(lambda: self.open_review())
         self.sidebar.show_pill.connect(self.open_pill_set)
         self.sidebar.min_stars_changed.connect(self._set_min_stars)
@@ -781,22 +814,77 @@ class MainWindow(QMainWindow):
         return d
 
     def step(self, delta: int) -> None:
-        if not self.band:  # no derived picture anywhere: the plain walk over the catalog
+        """Move one visible picture on (1) or back (-1): the strip's rows, so the star filter's hidden pictures are
+        skipped. With no filter and no derived picture it is the plain walk over the catalog."""
+        if not self.band and self._min_stars <= 0:
             self._cur_id = None
             if (self.catalog.next() if delta > 0 else self.catalog.back()):
                 self._moved()
             return
-        pos = self._row_pos()
-        if pos is None:
-            self._cur_id = None
-            pos = self.band.row_of(self.catalog.index, None, len(self.catalog))
-        rows = self._rows()
-        if pos is None or not 0 <= pos + delta < len(rows):
+        self._current_derived()  # drops a selection that no longer exists
+        rows = self.filmstrip.rows()
+        pos = self.filmstrip.row_pos(self.catalog.index, self._cur_id)
+        if pos is None:  # the picture on screen is hidden (a re-rate): the nearest visible one in that direction
+            nxt = self._visible_toward(delta)
+        else:
+            nxt = rows[pos + delta] if 0 <= pos + delta < len(rows) else None
+        if nxt is None:
             return
-        src, did = rows[pos + delta]
-        self.catalog.go(src)
-        self._cur_id = did
+        self.catalog.go(nxt[0])
+        self._cur_id = nxt[1]
         self._moved()
+
+    def _visible_toward(self, delta: int):
+        """From the picture on screen, which is not among the strip's rows: the next visible row going `delta` (1 or
+        -1), or None. The full row list tells where it sits."""
+        n = len(self.catalog)
+        at = self.band.row_of(self.catalog.index, self._cur_id, n)
+        if at is None:
+            at = self.band.row_of(self.catalog.index, None, n)
+        if at is None:
+            return None
+        full = self._rows()
+        seen = set(self.filmstrip.rows())
+        k = at + (1 if delta > 0 else -1)
+        while 0 <= k < len(full):
+            if full[k] in seen:
+                return full[k]
+            k += 1 if delta > 0 else -1
+        return None
+
+    def _settle_visible(self) -> None:
+        """The viewer shows a picture the star filter now hides (a re-rate, a new threshold): move to the next visible
+        one, else the previous one. Does nothing when the picture is visible, nothing is visible (the viewer keeps
+        what it shows; the strip is empty) or the viewer is not the page in front."""
+        if (self._min_stars <= 0 or not len(self.catalog) or self.stack.currentIndex() != 0
+                or self._compare_shown()):
+            return
+        if self.filmstrip.row_pos(self.catalog.index, self._cur_id) is not None or not self.filmstrip.rows():
+            return
+        nxt = self._visible_toward(1) or self._visible_toward(-1)
+        if nxt is not None:
+            self.catalog.go(nxt[0])
+            self._cur_id = nxt[1]
+            self._moved()
+
+    def _position_pair(self) -> tuple[int, int, bool]:
+        """(place, of, hidden) of the picture on screen among the originals the star filter leaves in view; with no
+        filter the catalog's own count. `hidden`: the picture on screen is not one of the strip's cells."""
+        cat = self.catalog
+        if self._min_stars <= 0:
+            return (cat.index + 1 if cat.pictures else 0), len(cat.pictures), False
+        shown = [i for i, did in self.filmstrip.rows() if did is None]
+        hidden = self.filmstrip.row_pos(cat.index, self._cur_id) is None
+        return sum(1 for i in shown if i <= cat.index), len(shown), hidden
+
+    def _position_text(self) -> str:
+        """"2 of 4" in the status bar and the strip: the visible pictures while a star filter is on."""
+        if self._min_stars <= 0:
+            return self.catalog.position_text()
+        k, n, hidden = self._position_pair()
+        if not n:
+            return f"none with {self._min_stars}{FILLED} or more"
+        return f"{n} shown {DOT} this one is hidden" if hidden else f"{k} of {n}"
 
     def go_to(self, i: int, did=None) -> None:
         """Show catalog index i, or the derived picture `did` of it."""
@@ -1176,6 +1264,7 @@ class MainWindow(QMainWindow):
     def _band_changed(self) -> None:
         """The Band was changed (a picture made, replaced, removed or restored): the selection and the strip follow."""
         self._current_derived()  # drops a selection that no longer exists
+        self._star_counts = None  # a derived picture counts toward the STARS rows
         self.filmstrip.band_changed()
 
     def _derived_done(self, d, text: str) -> None:
@@ -1361,13 +1450,14 @@ class MainWindow(QMainWindow):
         total_marked = self._marked_total()
         self._refresh_sidebar_counts()
         self._refresh_sidebar_pills()
-        self.pill.set_state(marked, f"{i + 1} / {len(cat)}" if pic is not None else "0 / 0")
+        k, n, _hid = self._position_pair()
+        self.pill.set_state(marked, f"{k} / {n}" if pic is not None else "0 / 0")
         self._sync_chrome()  # the page, an edit or compare may have changed whether the pill belongs
         self._pills_follow()
         if pic is not None:
             name, kind = (pic.stem, pic.kind) if d is None else (
                 f"{pic.stem} ({dv.tag(d, self._rotation_of(i))})", "story" if d.kind == dv.STORY else "crop")
-            self.viewer.strip.set_state(cat.position_text(), marked, name, kind, total_marked)
+            self.viewer.strip.set_state(self._position_text(), marked, name, kind, total_marked)
             self._show_inspector(marked=marked)
         else:
             self.inspector.set_picture(None)
@@ -1391,8 +1481,8 @@ class MainWindow(QMainWindow):
     def refresh_status(self) -> None:
         cat = self.catalog
         d = self._current_derived()
-        self.lbl_pos.setText(cat.position_text() if d is None else
-                             f"{cat.position_text()} {DOT} {'story' if d.kind == dv.STORY else 'crop'} {dv.tag(d, self._rotation_of(d.source))}")
+        self.lbl_pos.setText(self._position_text() if d is None else
+                             f"{self._position_text()} {DOT} {'story' if d.kind == dv.STORY else 'crop'} {dv.tag(d, self._rotation_of(d.source))}")
         self.lbl_marked.setText(f"{self._marked_total()} marked {DOT} {human_size(cat.marked_bytes)}")
 
     def _on_ready(self, i: int, _img, _info) -> None:
@@ -1666,6 +1756,12 @@ class MainWindow(QMainWindow):
         self.buttons["fullscreen"].setEnabled(True)
         self.refresh_marks()
         self.setFocus()
+
+    def _sidebar_all(self) -> None:
+        """The sidebar's All row: the star filter (when on) is cleared, then review closes as it always did."""
+        if self._min_stars > 0:
+            self._set_min_stars(0)
+        self.close_review()
 
     def _review_open_index(self, i: int) -> None:
         self.catalog.go(i)
@@ -2382,6 +2478,7 @@ class MainWindow(QMainWindow):
         at = self._review_zoom_at()
         if self._stars_key(n):
             self._advance_after_mark(at)
+        self._settle_visible()  # a clear, or a last picture, can leave the one on screen hidden by the filter
 
     def _review_zoom_at(self):
         """The picture the review's zoom page shows (None: not on that page), noted before a mark is applied."""
@@ -2409,6 +2506,8 @@ class MainWindow(QMainWindow):
 
     def _derived_marks_changed(self, d) -> None:
         """A derived picture's pills or stars changed (the Band already holds them; the session saves with the band)."""
+        self._star_counts = None
+        self._refilter_strip()
         self._redraw_pills()
         self.filmstrip.item_changed(d.source, d.id)
 
@@ -2416,38 +2515,71 @@ class MainWindow(QMainWindow):
         for pic in pics:
             self._stars_touched.add(pic.primary)
         self._star_counts = None
+        self._refilter_strip()
         self._mark_pills_dirty()
         self._redraw_pills()
 
+    def _refilter_strip(self) -> None:
+        """Stars changed somewhere: the strip's cells follow (a no-op while no filter is on)."""
+        if self._min_stars > 0 and self.filmstrip.refilter():
+            self.refresh_marks()  # the position text ("2 of 4"), the counts and the pill read the visible cells
+
     def _set_min_stars(self, n: int) -> None:
-        """The sidebar's threshold chips: only pictures with at least n stars (0: all) in the review's open set."""
+        """The sidebar's STARS rows: only pictures with at least n stars (0: all), in the strip, J/K and the review's
+        open set alike. A view: marks, copy plans and exports never read it. Not saved: a new run starts unfiltered."""
         self._min_stars = clamp_stars(n)
         self._star_counts = None
         self.sidebar.set_min_stars(self._min_stars)
+        self.filmstrip.set_min_stars(self._min_stars)
         if self.review is not None and hasattr(self.review, "set_min_stars"):
             self.review.set_min_stars(self._min_stars)
+        self._settle_visible()
         self.refresh_marks()
+        if self._min_stars > 0:
+            shown = self._star_pass()[0]
+            total = len(self.catalog) + len(self.band)
+            if shown:
+                self.say(f"Showing {shown} of {total} pictures with {self._min_stars}{FILLED} or more "
+                         "(the rest are only hidden)")
+            else:
+                self.say(f"No picture has {self._min_stars}{FILLED} or more yet (the rest are only hidden)")
+        else:
+            self.say("Showing every picture")
 
     def _star_pass(self) -> tuple:
-        """(pictures with at least the threshold, {pill name casefolded: how many of them carry it}); cached."""
+        """(cells with at least the threshold, {pill name casefolded: how many originals of them carry it}, [cells
+        with exactly k stars for k in 0..5]); cells are originals and derived pictures. Cached."""
         if self._star_counts is None:
             per: dict[str, int] = {}
             n_all = 0
+            hist = [0] * (MAX_STARS + 1)
             for i, pic in enumerate(self.catalog.pictures):
-                if self._stars_of(i) >= self._min_stars:
+                n = self._stars_of(i)
+                hist[n] += 1
+                if n >= self._min_stars:
                     n_all += 1
                     for name in self.pill_index.get(pic):
                         per[name.casefold()] = per.get(name.casefold(), 0) + 1
-            self._star_counts = (n_all, per)
+            for d in self.band:
+                n = clamp_stars(d.stars or 0)
+                hist[n] += 1
+                if n >= self._min_stars:
+                    n_all += 1
+            self._star_counts = (n_all, per, hist)
         return self._star_counts
 
     def _refresh_sidebar_counts(self) -> None:
         cat = self.catalog
         shown = None
+        total = len(cat) + len(self.band)
+        n_all, _per, hist = self._star_pass()
         if self._min_stars > 0:
             marked = sum(1 for i in range(len(cat.pictures)) if cat.is_marked(i) and self._stars_of(i) >= self._min_stars)
-            shown = (self._star_pass()[0], marked)
-        self.sidebar.set_counts(len(cat) + len(self.band), self._marked_total(), shown)
+            marked += sum(1 for d in self.band if d.marked and clamp_stars(d.stars or 0) >= self._min_stars)
+            shown = (n_all, marked)
+        self.sidebar.set_counts(total, self._marked_total(), shown)
+        self.sidebar.set_star_counts({n: sum(hist[n:]) for n in range(1, MAX_STARS + 1)},
+                                     n_all if self._min_stars > 0 else None, total)
 
     def _pill_hint(self, n: int) -> None:
         self.say(f"No pill on {n} — {native(MANAGE_SEQ)} to make one")
@@ -2699,6 +2831,7 @@ class MainWindow(QMainWindow):
             if rated:
                 self._stars_follow()
                 self.filmstrip.viewport().update()
+                self._refilter_strip()
             if self.review is not None and (getattr(self.review, "set_kind", "marked") == "pill"
                                             or (rated and self._min_stars > 0)):
                 self.review.refresh()
@@ -2710,6 +2843,7 @@ class MainWindow(QMainWindow):
             return
         self._pill_ready = True
         self._star_counts = None
+        self._refilter_strip()
         self._redraw_pills()
 
     def wait_pill_readback(self, timeout_ms: int = 5000) -> bool:
@@ -3071,7 +3205,7 @@ class MainWindow(QMainWindow):
         self.filmstrip.retheme()
         self.inspector.retheme()
         self.ratio_strip.retheme()
-        self.viewer.strip.set_state(self.catalog.position_text(), bool(self.catalog.current) and
+        self.viewer.strip.set_state(self._position_text(), bool(self.catalog.current) and
                                     self.catalog.is_marked(self.catalog.index),
                                     self.catalog.current.stem if self.catalog.current else "",
                                     self.catalog.current.kind if self.catalog.current else "",

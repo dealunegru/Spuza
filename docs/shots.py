@@ -196,7 +196,7 @@ def _run(root: Path, out: Path) -> int:
     save_png("review.png", grab())
     window.stack.setCurrentIndex(0)  # back to the viewer for what follows
     pump(0.3)
-    window._set_min_stars(4)  # the "at least 4 stars" chip (the left panel): counts read "n of m"
+    window._set_min_stars(4)  # the "★★★★ and up" row (the left panel): the strip hides the rest, the picked count reads "n of m"
     pump(0.6)
     save_png("stars-filter.png", grab())
     window._set_min_stars(0)
